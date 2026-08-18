@@ -13,7 +13,7 @@ export class Auditor {
   record(d: DecisionTrace): void { this.traces.push(d); }
   due(): boolean { return this.traces.length >= (this.opts.reviewEvery ?? 20); }
 
-  async review(llm: LLMClient): Promise<{ rubricPatch: string; memoryPatch: string; missionNote: string }> {
+  async review(llm: LLMClient): Promise<{ rubricPatch: string; memoryPatch: string; missionNote: string; usage: { promptTokens: number; completionTokens: number } }> {
     const rubric = readFileSync(join(this.opts.runtimeDir, "RUBRIC.md"), "utf8");
     const dump = this.traces.map((t, i) => `## decision ${i + 1}\ncontext: ${t.contextDigest}\nactions: ${JSON.stringify(t.actions)}\ncost: ${t.cost}`).join("\n\n");
     const r = await llm.chat("decide", [
@@ -23,7 +23,7 @@ export class Auditor {
     const c = r.content;
     const grab = (tag: string) => { const m = c.match(new RegExp(`${tag}:\\s*([\\s\\S]*?)(?=\\n[A-Z]{3,} [A-Z]{3,}:|$)`)); return m ? m[1].trim() : ""; };
     this.traces = []; // batch consumed
-    return { rubricPatch: grab("RUBRIC PATCH"), memoryPatch: grab("MEMORY PATCH"), missionNote: grab("MISSION NOTE") };
+    return { rubricPatch: grab("RUBRIC PATCH"), memoryPatch: grab("MEMORY PATCH"), missionNote: grab("MISSION NOTE"), usage: r.usage };
   }
 
   applyPatches(p: { rubricPatch: string; memoryPatch: string }): void {

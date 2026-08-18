@@ -28,11 +28,12 @@ test("records traces, review due at N, patches committed before applied", async 
   const llm = {
     chat: async (_slot: unknown, _messages: unknown, _opts: unknown) => ({
       content: 'RUBRIC PATCH: - prefer cheap actions when idle\nMEMORY PATCH: + hermes stub works',
-      usage: { promptTokens: 0, completionTokens: 0 }
+      usage: { promptTokens: 7, completionTokens: 3 }
     })
   } satisfies Pick<LLMClient, "chat">;
   const patches = await a.review(llm);
   expect(patches.rubricPatch).toContain("prefer cheap actions");
+  expect(patches.usage).toEqual({ promptTokens: 7, completionTokens: 3 }); // review cost surfaced to the caller
 
   a.applyPatches(patches);
   const rubric = readFileSync(join(dir, "RUBRIC.md"), "utf8");
@@ -63,7 +64,7 @@ test("snapshotRuntime stages existing files even when some are missing", async (
   const llm = {
     chat: async (_slot: unknown, _messages: unknown, _opts: unknown) => ({
       content: 'RUBRIC PATCH: - prefer cheap actions\nMEMORY PATCH: + hermes stub works',
-      usage: { promptTokens: 0, completionTokens: 0 }
+      usage: { promptTokens: 4, completionTokens: 2 }
     })
   } satisfies Pick<LLMClient, "chat">;
 
@@ -71,6 +72,7 @@ test("snapshotRuntime stages existing files even when some are missing", async (
   a.record({ contextDigest: "d2", actions: [{ a: 2 }], cost: 20 });
   a.record({ contextDigest: "d3", actions: [{ a: 3 }], cost: 30 });
   const patches = await a.review(llm);
+  expect(patches.usage).toEqual({ promptTokens: 4, completionTokens: 2 });
   a.applyPatches(patches);
 
   // Verify snapshot commit contains RUBRIC.md

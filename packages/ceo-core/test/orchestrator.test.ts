@@ -33,6 +33,7 @@ test("spawn captures tail, writes full log, summarizes via llm", async () => {
   const r = await o.spawn("hermes", "do the thing");
   expect(r.exitCode).toBe(0);
   expect(r.summary).toBe("stub task done");
+  expect(r.summaryUsage).toEqual({ promptTokens: 1, completionTokens: 1 }); // llm summary cost surfaced
   expect(existsSync(r.logPath)).toBe(true);
   expect(readFileSync(r.logPath, "utf8")).toContain("FINAL: stub completed");
   expect(readFileSync(r.logPath, "utf8")).toContain("line 1:"); // full log, not just tail
@@ -45,14 +46,15 @@ test("timeout kills stuck agent", async () => {
   const r = await o.spawn("hermes", "30", { timeoutMs: 500 });
   expect(r.exitCode).not.toBe(0);
   expect(r.summary).toContain("timeout");
+  expect(r.summaryUsage).toBeNull(); // no llm attached -> no summary tokens
 });
 
 test("no llm -> raw tail truncated as summary", async () => {
   const dir = mkdtempSync(join(tmpdir(), "robojex-orch-"));
   const o = new AgentOrchestrator({ llm: null, runtimeDir: dir, cmds: { hermes: "packages/ceo-core/test/fixtures/stub-agent.sh" } });
   const r = await o.spawn("hermes", "x");
-  expect(r.summary.length).toBeGreaterThan(0);
   expect(r.summary.length).toBeLessThanOrEqual(300);
+  expect(r.summaryUsage).toBeNull();
 });
 
 test("timeout kills entire process group including grandchildren", async () => {

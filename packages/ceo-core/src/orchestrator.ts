@@ -12,7 +12,7 @@ const DEFAULT_CMDS: Record<Framework, (p: string) => string> = {
 };
 function shq(s: string): string { return `'${s.replace(/'/g, "'\\''")}'`; }
 
-export interface SpawnResult { exitCode: number; summary: string; logPath: string; }
+export interface SpawnResult { exitCode: number; summary: string; logPath: string; summaryUsage: { promptTokens: number; completionTokens: number } | null; }
 
 const TAIL_CHARS = 2048;
 
@@ -78,6 +78,7 @@ export class AgentOrchestrator {
         if (typeof pid === "number") this.updateLedger((pids) => pids.filter((p) => p !== pid));
         this.waiters.shift()?.(); // one slot freed, one waiter admitted
         let summary: string;
+        let summaryUsage: SpawnResult["summaryUsage"] = null; // set only on the llm-compress path
         if (errMsg) {
           summary = `error: ${errMsg}`;
         } else if (timedOut) {
@@ -86,9 +87,10 @@ export class AgentOrchestrator {
           try {
             const r = await this.opts.llm.chat("patrol", [{ role: "user", content: `Summarize this sub-agent result in ONE line (<=140 chars). If failed, start with FAIL:. Output:\n${out}` }], { maxTokens: 100 });
             summary = r.content.trim();
+            summaryUsage = r.usage;
           } catch { summary = out.slice(-140); }
         } else summary = out.slice(-140);
-        resolve({ exitCode: code ?? -1, summary, logPath });
+        resolve({ exitCode: code ?? -1, summary, logPath, summaryUsage });
       };
       child.on("close", (code) => { void finish(code); });
       child.on("error", (err) => { void finish(-1, err.message); }); // e.g. ENOENT: resolve, never hang
