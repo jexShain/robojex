@@ -29,7 +29,6 @@
 
 ```
 ┌─ ceo-core(常驻)─────────────────────────────┐
-│ SchedulerLoop ─ ContextAssembler            │
 │ LLMClient(双槽:patrol 便宜 / decide 强)     │
 │ AgentOrchestrator(subprocess 池)            │
 │ TaskBoard(SQLite) Auditor BudgetGovernor    │
@@ -71,6 +70,7 @@
 - **观察**:1fps 低频截图,phash+OCR 产 screen_diff 学习信号;输入注入通道代码级禁用(不注册 injector 回调,非开关)
 - **半接**:低危动作(移动/滚动/普通打字)直通;高危(回车提交/删除/支付页/新站表单)挂审批卡,60s 超时默认拒。**人动输入设备瞬间抢占**(输入事件按 /dev/input 时间戳判定优先级:人>AI)
 - **全接**:直通;仅 `rm -rf`/`sudo`/支付域硬编码黑名单仍拦(防自杀底线,独立于权限边界)
+  高危判定归属:takeoverd 内置规则表(动作类型 × 目标域名/控件类),CEO 在动作信令里也可显式标注 `risk:"high"` 提级。半接/全接模式下截图按需(CEO 决策时请求),不持续推流;仅查看页打开时向人推帧。
 - **热键**:X11 XGrabKey(或 evdev 回退,需 input 组);任何模式下永远生效
 - **CDP 优先**:网页任务优先浏览器通道(DOM 快照代替截图,快且省);桌面注入仅用于本地应用
 
