@@ -12,6 +12,8 @@
 
 ## Global Constraints
 
+- 项目名 **robojex**(npm 包 `@robojex/*`);API key 只放 runtime/config.json(gitignore),严禁入库
+  测试/优化用 DeepSeek 官方:baseUrl `https://api.deepseek.com/v1`,patrol 与 decide 默认 `deepseek-v4-flash`(decide 可在 config 换强模型)
 - Node ≥20,ESM(`"type":"module"`),TypeScript strict;所有代码注释英文
 - 外部命令缺失时降级不崩溃(OCR 缺失→仅 phash;Chrome 缺失→CDP 工具标记不可用)
 - takeoverd 重启回退 observe 模式;观察模式下输入注入通道代码级不注册
@@ -30,14 +32,14 @@
 - Create: `packages/viewer/package.json`, `packages/viewer/tsconfig.json`
 
 **Interfaces:**
-- Produces: npm workspaces 布局;`npm test -ws` 可跑;`@rbj/ceo-core`、`@rbj/takeoverd` 包名
+- Produces: npm workspaces 布局;`npm test -ws` 可跑;`@robojex/ceo-core`、`@robojex/takeoverd` 包名
 
 - [ ] **Step 1: 根 package.json + tsconfig + .gitignore**
 
 ```json
 // package.json
 {
-  "name": "rbj",
+  "name": "robojex",
   "private": true,
   "type": "module",
   "workspaces": ["packages/*"],
@@ -72,21 +74,21 @@ hermes-agent/
 
 ```json
 // packages/ceo-core/package.json
-{ "name": "@rbj/ceo-core", "version": "0.0.1", "type": "module",
+{ "name": "@robojex/ceo-core", "version": "0.0.1", "type": "module",
   "bin": { "ceo": "dist/index.js" },
   "dependencies": { "ws": "^8.18.0", "better-sqlite3": "^11.0.0" } }
 ```
 
 ```json
 // packages/takeoverd/package.json
-{ "name": "@rbj/takeoverd", "version": "0.0.1", "type": "module",
+{ "name": "@robojex/takeoverd", "version": "0.0.1", "type": "module",
   "bin": { "takeoverd": "dist/index.js" },
   "dependencies": { "ws": "^8.18.0", "puppeteer-core": "^23.0.0" } }
 ```
 
 ```json
 // packages/viewer/package.json
-{ "name": "@rbj/viewer", "version": "0.0.1", "type": "module" }
+{ "name": "@robojex/viewer", "version": "0.0.1", "type": "module" }
 ```
 
 每个包 tsconfig.json 仅 `{ "extends": "../../tsconfig.base.json" }`(viewer 无 TS 源,占位即可)。
@@ -943,7 +945,7 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 
 test("add/list/update roundtrip persists across instances", () => {
-  const dir = mkdtempSync(join(tmpdir(), "rbj-board-"));
+  const dir = mkdtempSync(join(tmpdir(), "robojex-board-"));
   const b1 = new TaskBoard(join(dir, "board.sqlite"));
   const t = b1.add({ title: "watch site", priority: 5, assignee: "hermes" });
   expect(t.status).toBe("todo");
@@ -1083,7 +1085,7 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 
 test("spawn captures tail, writes full log, summarizes via llm", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "rbj-orch-"));
+  const dir = mkdtempSync(join(tmpdir(), "robojex-orch-"));
   let llmInput = "";
   const llm = {
     chat: async (_s: any, msgs: any) => {
@@ -1102,7 +1104,7 @@ test("spawn captures tail, writes full log, summarizes via llm", async () => {
 });
 
 test("timeout kills stuck agent", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "rbj-orch-"));
+  const dir = mkdtempSync(join(tmpdir(), "robojex-orch-"));
   const o = new AgentOrchestrator({ llm: null, runtimeDir: dir, cmds: { hermes: "sleep 30" } });
   const r = await o.spawn("hermes", "x", { timeoutMs: 500 });
   expect(r.exitCode).not.toBe(0);
@@ -1110,7 +1112,7 @@ test("timeout kills stuck agent", async () => {
 });
 
 test("no llm -> raw tail truncated as summary", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "rbj-orch-"));
+  const dir = mkdtempSync(join(tmpdir(), "robojex-orch-"));
   const o = new AgentOrchestrator({ llm: null, runtimeDir: dir, cmds: { hermes: "packages/ceo-core/test/fixtures/stub-agent.sh" } });
   const r = await o.spawn("hermes", "x");
   expect(r.summary.length).toBeGreaterThan(0);
@@ -1246,7 +1248,7 @@ import { execSync } from "node:child_process";
 import { expect, test } from "vitest";
 
 function runtimeWithFiles() {
-  const dir = mkdtempSync(join(tmpdir(), "rbj-audit-"));
+  const dir = mkdtempSync(join(tmpdir(), "robojex-audit-"));
   writeFileSync(join(dir, "RUBRIC.md"), "# RUBRIC\n- decide quickly\n");
   writeFileSync(join(dir, "MEMORY.md"), "# MEMORY\n");
   execSync("git init -q", { cwd: dir });
@@ -1348,8 +1350,8 @@ export class Auditor {
     const d = this.opts.runtimeDir;
     const git = (args: string) => execSync(`git ${args}`, { cwd: d });
     if (!existsSync(join(d, ".git"))) git("init -q");
-    git('-c user.email=ceo@rbj -c user.name=ceo-core add MISSION.md RUBRIC.md MEMORY.md 2>/dev/null || true');
-    git('-c user.email=ceo@rbj -c user.name=ceo-core commit -qm "audit snapshot" --allow-empty');
+    git('-c user.email=ceo@robojex -c user.name=ceo-core add MISSION.md RUBRIC.md MEMORY.md 2>/dev/null || true');
+    git('-c user.email=ceo@robojex -c user.name=ceo-core commit -qm "audit snapshot" --allow-empty');
   }
 }
 ```
@@ -1450,7 +1452,7 @@ import { execSync } from "node:child_process";
 import { expect, test, vi } from "vitest";
 
 function makeRuntime() {
-  const dir = mkdtempSync(join(tmpdir(), "rbj-loop-"));
+  const dir = mkdtempSync(join(tmpdir(), "robojex-loop-"));
   writeFileSync(join(dir, "MISSION.md"), "Keep the demo repo healthy: run checks, fix failures.\n");
   writeFileSync(join(dir, "RUBRIC.md"), "# RUBRIC\n- prefer cheap actions\n");
   writeFileSync(join(dir, "MEMORY.md"), "# MEMORY\n");
@@ -1550,7 +1552,7 @@ export class SchedulerLoop {
       { role: "user", content: context },
     ], { json: true, maxTokens: 20 });
     let triage: any; try { triage = JSON.parse(p.content); } catch { return; }
-    if (triage.action !== "act") { await this.maybeAudit(p.usage); return; }
+    if (triage.action !== "act") { await this.maybeAudit(p.usage, []); return; }
 
     // layer 2: strong decide pass
     const dec = await this.d.llm.chat("decide", [
@@ -1578,12 +1580,12 @@ export class SchedulerLoop {
         this.ws.send(JSON.stringify({ t: "ctrl", op: "input", id: crypto.randomUUID(), action: a.input }));
       }
     }
-    await this.maybeAudit({ promptTokens: p.usage.promptTokens + dec.usage.promptTokens, completionTokens: p.usage.completionTokens + dec.usage.completionTokens });
+    await this.maybeAudit({ promptTokens: p.usage.promptTokens + dec.usage.promptTokens, completionTokens: p.usage.completionTokens + dec.usage.completionTokens }, parsed.actions ?? []);
   }
 
-  private async maybeAudit(u: { promptTokens: number; completionTokens: number }): Promise<void> {
+  private async maybeAudit(u: { promptTokens: number; completionTokens: number }, actions: unknown[]): Promise<void> {
     this.d.budget.spend(u);
-    this.d.auditor.record({ contextDigest: `wake#${this.wakeN}`, actions: [], cost: u.promptTokens + u.completionTokens });
+    this.d.auditor.record({ contextDigest: `wake#${this.wakeN}`, actions, cost: u.promptTokens + u.completionTokens });
     if (this.d.auditor.due()) {
       const patches = await this.d.auditor.review(this.d.llm);
       this.d.auditor.applyPatches(patches);
@@ -1639,7 +1641,7 @@ git add -A && git commit -m "feat(ceo-core): scheduler loop with event merge, tw
 ```html
 <!doctype html>
 <!-- packages/viewer/index.html -->
-<html><head><meta charset="utf-8"><title>rbj viewer</title>
+<html><head><meta charset="utf-8"><title>robojex viewer</title>
 <style>
  body{font-family:system-ui;margin:0;background:#111;color:#eee;display:flex;flex-direction:column;height:100vh}
  #mode{padding:8px 16px;font-weight:bold;font-size:18px}
@@ -1658,6 +1660,8 @@ git add -A && git commit -m "feat(ceo-core): scheduler loop with event merge, tw
 <div id="send"><input id="msg" placeholder="message to CEO…"><button onclick="sendMsg()">Send</button></div>
 <script>
  let ws, pendingId = null;
+ const $ = (id) => document.getElementById(id);
+ const events = $('events'), mode = $('mode'), approval = $('approval'), apprAction = $('appr-action'), msg = $('msg');
  function log(s){ const d=document.createElement('div'); d.textContent=new Date().toLocaleTimeString()+' '+s; events.prepend(d); }
  function connect(){
    ws = new WebSocket(`ws://${location.hostname}:7600`);
@@ -1694,7 +1698,7 @@ import { Auditor } from "./auditor.js";
 import { BudgetGovernor } from "./budget.js";
 import { SchedulerLoop } from "./loop.js";
 
-const runtimeDir = process.env.RBJ_RUNTIME ?? join(process.cwd(), "runtime");
+const runtimeDir = process.env.ROBOJEX_RUNTIME ?? join(process.cwd(), "runtime");
 mkdirSync(join(runtimeDir, "runs"), { recursive: true });
 
 // seed files on first boot
@@ -1702,16 +1706,16 @@ const seed = (f: string, content: string) => { const p = join(runtimeDir, f); if
 seed("MISSION.md", "# MISSION\n(Describe long-term goals here. The CEO evolves this file.)\n");
 seed("RUBRIC.md", "# RUBRIC\n- prefer cheap patrol decisions\n- spawn sub-agents instead of doing work inline\n- verify results before marking tasks done\n");
 seed("MEMORY.md", "# MEMORY\n");
-if (!existsSync(join(runtimeDir, ".git"))) { execSync("git init -q", { cwd: runtimeDir }); execSync("git -c user.email=ceo@rbj -c user.name=ceo add -A && git -c user.email=ceo@rbj -c user.name=ceo commit -qm init", { cwd: runtimeDir }); }
+if (!existsSync(join(runtimeDir, ".git"))) { execSync("git init -q", { cwd: runtimeDir }); execSync("git -c user.email=ceo@robojex -c user.name=ceo add -A && git -c user.email=ceo@robojex -c user.name=ceo commit -qm init", { cwd: runtimeDir }); }
 
 let cfg: any = {};
 const cfgPath = join(runtimeDir, "config.json");
 if (existsSync(cfgPath)) cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
 
 if (process.argv.includes("--install-service")) {
-  const unit = (name: string, cmd: string) => `[Unit]\nDescription=rbj ${name}\nAfter=network.target\n\n[Service]\nExecStart=${cmd}\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n`;
-  writeFileSync(join(runtimeDir, "rbj-ceo.service"), unit("ceo", `node ${process.cwd()}/packages/ceo-core/dist/index.js`));
-  writeFileSync(join(runtimeDir, "rbj-takeoverd.service"), unit("takeoverd", `node ${process.cwd()}/packages/takeoverd/dist/index.js`));
+  const unit = (name: string, cmd: string) => `[Unit]\nDescription=robojex ${name}\nAfter=network.target\n\n[Service]\nExecStart=${cmd}\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n`;
+  writeFileSync(join(runtimeDir, "robojex-ceo.service"), unit("ceo", `node ${process.cwd()}/packages/ceo-core/dist/index.js`));
+  writeFileSync(join(runtimeDir, "robojex-takeoverd.service"), unit("takeoverd", `node ${process.cwd()}/packages/takeoverd/dist/index.js`));
   console.log(`systemd units written to ${runtimeDir} — copy to ~/.config/systemd/user/ and enable`);
   process.exit(0);
 }
@@ -1729,6 +1733,21 @@ process.on("SIGINT", () => { loop.stop(); process.exit(0); });
 process.on("SIGTERM", () => { loop.stop(); process.exit(0); });
 ```
 
+
+`runtime/config.json` 示例(该文件在 gitignore 内,key 严禁入库):
+
+```json
+{
+  "baseUrl": "https://api.deepseek.com/v1",
+  "apiKey": "sk-REDACTED",
+  "patrolModel": "deepseek-v4-flash",
+  "decideModel": "deepseek-v4-flash",
+  "budgetMode": "budgeted",
+  "dailyTokens": 2000000,
+  "tickMs": 60000,
+  "takeoverUrl": "ws://127.0.0.1:7600"
+}
+```
 - [ ] **Step 3: 全量测试 + 构建 + 手工冒烟**
 
 Run: `npm test` → 全部 PASS
@@ -1736,7 +1755,7 @@ Run: `npm run build` → 无 TS 错误
 Run(三个终端):
 ```bash
 xvfb-run -a node packages/takeoverd/dist/index.js --port 7600
-RBJ_RUNTIME=/tmp/rbj-demo node packages/ceo-core/dist/index.js   # config.json 填入真实 baseUrl/apiKey 后
+ROBOJEX_RUNTIME=/tmp/robojex-demo node packages/ceo-core/dist/index.js   # config.json 填入真实 baseUrl/apiKey 后
 python3 -m http.server 8123 -d packages/viewer                   # 浏览器开 http://localhost:8123
 ```
 Expected: viewer 显示 OBSERVE 徽章;CEO 日志显示 tick 唤醒;在 viewer 发消息 → CEO 收到 human 事件

@@ -1,4 +1,4 @@
-# CEO Agent 框架设计(rbj)
+# RoboJex CEO Agent 框架设计(robojex)
 
 日期:2026-08-18
 状态:已确认(用户逐项选定关键决策,六节设计全部通过)
@@ -98,7 +98,7 @@
 ## 8. 目录结构
 
 ```
-rbj/
+robojex/
 ├─ package.json(tsconfig, npm workspaces monorepo)
 ├─ packages/ceo-core/
 ├─ packages/takeoverd/
