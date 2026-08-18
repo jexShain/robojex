@@ -1,0 +1,3 @@
+{ "name": "@robojex/takeoverd", "version": "0.0.1", "type": "module",
+  "bin": { "takeoverd": "dist/index.js" },
+  "dependencies": { "ws": "^8.18.0", "puppeteer-core": "^23.0.0" } }
