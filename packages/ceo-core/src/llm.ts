@@ -18,8 +18,8 @@ export class LLMClient {
           headers: { "content-type": "application/json", authorization: `Bearer ${this.cfg.apiKey}` },
           body: JSON.stringify({ model, messages, max_tokens: opts.maxTokens ?? 2048, ...(opts.json ? { response_format: { type: "json_object" } } : {}) }),
         });
-        if (!res.ok) { if (res.status >= 500) { lastErr = new Error(`llm ${res.status}`); await sleep(2 ** attempt * 200); continue; } throw new NonRetryableError(`llm ${res.status}: ${await res.text()}`); }
-        const j = await res.json() as unknown;
+        if (!res.ok) { if (res.status >= 500) { lastErr = new Error(`llm ${res.status}`); if (attempt < 2) await sleep(2 ** attempt * 200); continue; } throw new NonRetryableError(`llm ${res.status}: ${await res.text()}`); }
+        const j = await res.json() as any;
         return {
           content: j.choices?.[0]?.message?.content ?? "",
           usage: { promptTokens: j.usage?.prompt_tokens ?? 0, completionTokens: j.usage?.completion_tokens ?? 0 },
