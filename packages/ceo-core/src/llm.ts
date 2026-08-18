@@ -2,6 +2,7 @@
 export interface LlmConfig { baseUrl: string; apiKey: string; patrolModel: string; decideModel: string; }
 export type Slot = "patrol" | "decide";
 export interface ChatMsg { role: string; content: string; }
+export class NonRetryableError extends Error { constructor(msg: string) { super(msg); this.name = "NonRetryableError"; } }
 
 export class LLMClient {
   constructor(private cfg: LlmConfig, private fetchImpl: typeof fetch = fetch) {}
@@ -17,13 +18,17 @@ export class LLMClient {
           headers: { "content-type": "application/json", authorization: `Bearer ${this.cfg.apiKey}` },
           body: JSON.stringify({ model, messages, max_tokens: opts.maxTokens ?? 2048, ...(opts.json ? { response_format: { type: "json_object" } } : {}) }),
         });
-        if (!res.ok) { if (res.status >= 500) { lastErr = new Error(`llm ${res.status}`); await sleep(2 ** attempt * 200); continue; } throw new Error(`llm ${res.status}: ${await res.text()}`); }
-        const j = await res.json() as any;
+        if (!res.ok) { if (res.status >= 500) { lastErr = new Error(`llm ${res.status}`); await sleep(2 ** attempt * 200); continue; } throw new NonRetryableError(`llm ${res.status}: ${await res.text()}`); }
+        const j = await res.json() as unknown;
         return {
           content: j.choices?.[0]?.message?.content ?? "",
           usage: { promptTokens: j.usage?.prompt_tokens ?? 0, completionTokens: j.usage?.completion_tokens ?? 0 },
         };
-      } catch (e) { lastErr = e; await sleep(2 ** attempt * 200); }
+      } catch (e) {
+        if (e instanceof NonRetryableError) throw e;
+        lastErr = e;
+        if (attempt < 2) await sleep(2 ** attempt * 200);
+      }
     }
     throw lastErr instanceof Error ? lastErr : new Error("llm failed");
   }
