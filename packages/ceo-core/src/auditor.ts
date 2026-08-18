@@ -36,7 +36,13 @@ export class Auditor {
     const d = this.opts.runtimeDir;
     const git = (args: string) => execSync(`git ${args}`, { cwd: d });
     if (!existsSync(join(d, ".git"))) git("init -q");
-    git('-c user.email=ceo@robojex -c user.name=ceo-core add MISSION.md RUBRIC.md MEMORY.md 2>/dev/null || true');
+    const files = ["MISSION.md", "RUBRIC.md", "MEMORY.md"];
+    files.forEach(f => {
+      const p = join(d, f);
+      if (existsSync(p)) {
+        try { git(`add ${f}`); } catch {}
+      }
+    });
     git('-c user.email=ceo@robojex -c user.name=ceo-core commit -qm "audit snapshot" --allow-empty');
   }
 }
