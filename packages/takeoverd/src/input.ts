@@ -29,11 +29,12 @@ export function classifyRisk(a: InputAction): Risk {
 
 export class InputInjector {
   constructor(private modes: ModeStateMachine) {}
-  async exec(a: InputAction): Promise<"done" | "blocked-observe" | "blocked-hard" | "needs-approval"> {
+  async exec(a: InputAction, approved = false): Promise<"done" | "blocked-observe" | "blocked-hard" | "needs-approval"> {
     if (!this.modes.canInject()) return "blocked-observe"; // observe: refuse at the gate
     const risk = classifyRisk(a);
     if (risk === "hard") return "blocked-hard";
-    if (risk === "high" && this.modes.needsApproval()) return "needs-approval";
+    // approval already granted by the caller (server approval flow): skip only this branch
+    if (!approved && risk === "high" && this.modes.needsApproval()) return "needs-approval";
     switch (a.kind) {
       case "key": await pexec("xdotool", ["key", a.key!]); break;
       case "move": await pexec("xdotool", ["mousemove", String(a.x), String(a.y)]); break;

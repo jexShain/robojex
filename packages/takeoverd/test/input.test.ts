@@ -46,3 +46,13 @@ test("exec requires approval for Return key in assist mode", async () => {
   const injector = new InputInjector(modes);
   expect(await injector.exec({ kind: "key", key: "Return" })).toBe("needs-approval");
 });
+test("approved exec still refuses injection in observe mode", async () => {
+  const injector = new InputInjector(new ModeStateMachine()); // boots in observe
+  expect(await injector.exec({ kind: "key", key: "Return" }, true)).toBe("blocked-observe");
+});
+test("approved exec still hard-blocks rm -rf text", async () => {
+  const modes = new ModeStateMachine();
+  modes.next(); // observe -> assist
+  const injector = new InputInjector(modes);
+  expect(await injector.exec({ kind: "type", text: "rm -rf /home" }, true)).toBe("blocked-hard");
+});
