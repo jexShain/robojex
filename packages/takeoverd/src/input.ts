@@ -14,10 +14,16 @@ const HIGH_KEYS = new Set(["Return", "KP_Enter", "Delete", "BackSpace"]);
 const HARD_PATTERNS = [/\brm\s+-[rf]{2}/, /\bsudo\b/];
 
 export type Risk = "low" | "high" | "hard";
+// xdotool type turns \n/\r/\t into real Return/Tab keypresses — treat them as keystrokes, not text
+const CONTROL_CHARS = /[\n\r\t]/;
+
 export function classifyRisk(a: InputAction): Risk {
-  if (a.kind === "type" && a.text && HARD_PATTERNS.some((re) => re.test(a.text))) return "hard";
+  const text = a.kind === "type" ? a.text : undefined;
+  if (text && HARD_PATTERNS.some((re) => re.test(text))) return "hard";
   if (a.risk === "high") return "high";
-  if (a.kind === "key" && a.key && HIGH_KEYS.has(a.key)) return "high";
+  if (text && CONTROL_CHARS.test(text)) return "high";
+  // combo keys like "ctrl+Return" must not smuggle a high-risk member through
+  if (a.kind === "key" && a.key && a.key.split("+").some((k) => HIGH_KEYS.has(k))) return "high";
   return "low";
 }
 
