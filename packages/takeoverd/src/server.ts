@@ -63,11 +63,23 @@ export class TakeoverServer {
   }
 
   private async handle(ws: WebSocket, m: Msg): Promise<void> {
+    try {
+      await this.dispatch(m);
+    } catch {
+      // a throwing handler (e.g. injector.exec rejecting on a missing
+      // xdotool) must still answer the requester instead of silence
+      if (typeof m.id === "string") {
+        this.broadcast({ t: "evt", type: "input_result", id: m.id, result: "error" });
+      }
+    }
+  }
+
+  private async dispatch(m: Msg): Promise<void> {
     if (m.t === "human") { this.broadcast({ t: "human", text: m.text }); return; }
     if (m.t !== "ctrl") return;
     if (m.op === "set_mode") {
-      // modes.set throws on unknown mode; the throw is swallowed by the
-      // message wrapper and the invalid request simply never broadcasts
+      // modes.set throws on unknown mode; the throw is swallowed by handle's
+      // catch and the invalid request simply never broadcasts
       this.deps.modes.set(m.mode as Mode);
       this.broadcast({ t: "evt", type: "mode_changed", mode: m.mode });
       return;
@@ -94,6 +106,10 @@ export class TakeoverServer {
           this.pending.delete(id);
           this.broadcast({ t: "evt", type: "input_result", id, result: "timeout-denied" });
         }, this.deps.approvalTimeoutMs ?? 60_000);
+        // a reused id must not leave the old timer armed — the orphan would
+        // later delete this new entry and broadcast a bogus timeout-denied
+        const prev = this.pending.get(id);
+        if (prev) clearTimeout(prev.timer);
         this.pending.set(id, { action, timer });
         this.broadcast({ t: "evt", type: "approval", id, action });
       } else {
@@ -111,9 +127,18 @@ export class TakeoverServer {
   async stop(): Promise<void> {
     for (const [, p] of this.pending) clearTimeout(p.timer);
     this.pending.clear();
+    // wss.close() delegates to the http server, whose close callback only
+    // fires once every connection is gone — Node never drops live sockets on
+    // its own, so stop() would hang with any connected client. Close each
+    // client first; terminate() (a no-op on already-closed sockets) backstops
+    // a stalled close handshake. The timer is unref'd so it can never hold
+    // the process open after shutdown.
+    for (const c of this.clients) {
+      c.close();
+      setTimeout(() => c.terminate(), 500).unref();
+    }
+    this.clients.clear();
     const wss = this.wss; this.wss = null;
     if (wss) await new Promise<void>((res) => wss.close(() => res()));
-    for (const c of this.clients) c.close();
-    this.clients.clear();
   }
 }
