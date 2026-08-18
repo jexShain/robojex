@@ -50,14 +50,14 @@ export class SchedulerLoop {
     this.queue.push(event);
     // merge events inside a 500ms window into one decision cycle
     if (!this.debounce) {
-      this.debounce = setTimeout(() => { this.debounce = undefined; this.runOnceQueue().catch(() => {}); }, 500);
+      this.debounce = setTimeout(() => { this.debounce = undefined; this.runOnceQueue().catch((e) => console.error(`[ceo] cycle failed: ${e instanceof Error ? e.message : String(e)}`)); }, 500);
     }
   }
 
   private async runOnceQueue(): Promise<void> {
     if (this.running) {
       // a cycle is in flight: leave the queued events in place, retry after it ends
-      if (!this.debounce) this.debounce = setTimeout(() => { this.debounce = undefined; this.runOnceQueue().catch(() => {}); }, 500);
+      if (!this.debounce) this.debounce = setTimeout(() => { this.debounce = undefined; this.runOnceQueue().catch((e) => console.error(`[ceo] cycle failed: ${e instanceof Error ? e.message : String(e)}`)); }, 500);
       return;
     }
     const q = this.queue.splice(0);
@@ -96,7 +96,7 @@ export class SchedulerLoop {
     const p = await this.d.llm.chat("patrol", [
       { role: "system", content: "You triage events for an autonomous CEO agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise." },
       { role: "user", content: context },
-    ], { json: true, maxTokens: 20 });
+    ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
     let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
     if (gate === "patrol-only") { await this.maybeAudit(p.usage, []); return; } // near the cap: no expensive decide pass
     if (triage.action !== "act") { await this.maybeAudit(p.usage, []); return; }
@@ -105,7 +105,7 @@ export class SchedulerLoop {
     const dec = await this.d.llm.chat("decide", [
       { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself.` },
       { role: "user", content: context },
-    ], { json: true });
+    ], { json: true, maxTokens: 4096 });
     let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
 
     for (const a of parsed.actions ?? []) {
