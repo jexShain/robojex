@@ -1,5 +1,6 @@
 // packages/ceo-core/test/loop.test.ts
 import { SchedulerLoop } from "../src/loop.js";
+import type { WsLike } from "../src/loop.js";
 import { LLMClient } from "../src/llm.js";
 import { TaskBoard } from "../src/board.js";
 import { ContextAssembler } from "../src/context.js";
@@ -10,6 +11,8 @@ import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import WebSocket from "ws";
 import { expect, test, vi } from "vitest";
 
 function makeRuntime() {
@@ -145,4 +148,91 @@ test("in-flight guard: concurrent runOnce calls serialize", async () => {
   await Promise.all([first, second]);
   // cycles must not interleave: the second only starts after the first fully ends
   expect(order).toEqual(["start:patrol", "end:patrol", "start:patrol", "end:patrol"]);
+});
+
+// ---- WS resilience: error handling, reconnect backoff, listener re-attach ----
+
+// Real OS sockets cannot be driven by fake timers (ECONNREFUSED arrives via the
+// libuv loop), so poll event-loop turns — same convention as the in-flight guard test.
+async function until(cond: () => boolean, ms = 4000): Promise<void> {
+  for (const end = Date.now() + ms; !cond(); ) {
+    if (Date.now() > end) throw new Error("condition not met in time");
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+function makeWsLoop(dir: string, extra: Record<string, unknown> = {}): SchedulerLoop {
+  const llm = { chat: async () => ({ content: '{"action":"none"}', usage: { promptTokens: 0, completionTokens: 0 } }) } as unknown as LLMClient;
+  return new SchedulerLoop({
+    llm, board: new TaskBoard(join(dir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir: dir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"),
+    runtimeDir: dir, ...extra,
+  });
+}
+
+test("ws: unreachable takeoverd never crashes start(); a reconnect is scheduled", async () => {
+  const dir = makeRuntime();
+  let attempts = 0;
+  const loop = makeWsLoop(dir, {
+    takeoverUrl: "ws://127.0.0.1:1", // nothing listens on port 1: instant ECONNREFUSED
+    reconnectBaseMs: 40,
+    wsFactory: (url: string) => { attempts++; return new WebSocket(url); },
+  });
+  loop.start(60_000); // must neither throw now nor die on the async 'error' event
+  await until(() => attempts >= 2); // first attempt refused, then the reconnect timer fired
+  expect(attempts).toBeGreaterThanOrEqual(2);
+  loop.stop(); // (timer teardown is proven deterministically by the fake-timer test below)
+}, 10_000);
+
+// Minimal fake socket: structurally what the loop needs from a WebSocket.
+class FakeWs extends EventEmitter {
+  readyState = 1; // OPEN
+  sent: string[] = [];
+  send(data: string): void { this.sent.push(data); }
+  close(): void { if (this.readyState === 3) return; this.readyState = 3; this.emit("close"); }
+}
+
+test("ws: error degrades to CLI, reconnect re-attaches listeners, backoff resets on success, stop cleans up", async () => {
+  vi.useFakeTimers();
+  try {
+    const dir = makeRuntime();
+    const sockets: FakeWs[] = [];
+    const loop = makeWsLoop(dir, {
+      takeoverUrl: "ws://fake.local",
+      reconnectBaseMs: 1000,
+      wsFactory: () => { const s = new FakeWs(); sockets.push(s); return s as unknown as WsLike; },
+    });
+    loop.start(60_000);
+    expect(sockets.length).toBe(1);
+
+    // 'error' must be handled exactly like 'close': degrade silently, schedule reconnect
+    sockets[0].emit("error", new Error("connect ECONNREFUSED 127.0.0.1:7600"));
+    sockets[0].emit("close");
+    await vi.advanceTimersByTimeAsync(999);
+    expect(sockets.length).toBe(1); // base backoff honored: nothing before 1000ms
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets.length).toBe(2); // reconnect attempted after the base delay
+
+    // reconnect "succeeds": listeners must be re-attached — a message must reach push()
+    sockets[1].emit("open");
+    sockets[1].emit("message", JSON.stringify({ t: "human", text: "hello ceo" }));
+    await vi.advanceTimersByTimeAsync(700); // 500ms event debounce + cycle microtasks
+    expect(loop.wakeCount()).toBe(1);
+
+    // backoff reset on success: the next failure waits the base delay again, not 2x
+    sockets[1].emit("close");
+    await vi.advanceTimersByTimeAsync(999);
+    expect(sockets.length).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets.length).toBe(3);
+
+    // stop() clears a pending reconnect timer: no socket is ever created afterwards
+    sockets[2].emit("close");
+    loop.stop();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(sockets.length).toBe(3);
+  } finally {
+    vi.useRealTimers();
+  }
 });

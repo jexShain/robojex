@@ -9,18 +9,37 @@ import type { Auditor } from "./auditor.js";
 import type { BudgetGovernor } from "./budget.js";
 import WebSocket from "ws";
 
+// Minimal socket surface the loop needs; ws's WebSocket satisfies it structurally.
+export interface WsLike {
+  readyState: number;
+  on(event: "message", cb: (raw: unknown) => void): unknown;
+  on(event: "open", cb: () => void): unknown;
+  on(event: "close", cb: () => void): unknown;
+  on(event: "error", cb: (err: Error) => void): unknown;
+  send(data: string): unknown;
+  close(): unknown;
+}
+
+const WS_OPEN = 1;
+const RECONNECT_MAX_MS = 60_000;
+
 export interface LoopDeps {
   llm: LLMClient; board: TaskBoard; ctx: ContextAssembler;
   orchestrator: AgentOrchestrator; auditor: Auditor; budget: BudgetGovernor;
   runtimeDir: string; takeoverUrl?: string;
+  wsFactory?: (url: string) => WsLike;   // test seam: substitute sockets
+  reconnectBaseMs?: number;              // test seam: first reconnect delay
 }
 
 export class SchedulerLoop {
   private queue: string[] = [];
-  private timer: NodeJS.Timeout | null = null;
-  private debounce: NodeJS.Timeout | null = null;
+  private timer: NodeJS.Timeout | undefined;
+  private debounce: NodeJS.Timeout | undefined;
   private wakeN = 0;
-  private ws: WebSocket | null = null;
+  private ws: WsLike | null = null;
+  private reconnectTimer: NodeJS.Timeout | undefined;
+  private backoffMs = 1000;
+  private stopped = true; // no reconnect machinery may run before start()
   private running = false;
   private idleWaiters: (() => void)[] = [];
   constructor(private d: LoopDeps) {}
@@ -31,14 +50,14 @@ export class SchedulerLoop {
     this.queue.push(event);
     // merge events inside a 500ms window into one decision cycle
     if (!this.debounce) {
-      this.debounce = setTimeout(() => { this.debounce = null; this.runOnceQueue().catch(() => {}); }, 500);
+      this.debounce = setTimeout(() => { this.debounce = undefined; this.runOnceQueue().catch(() => {}); }, 500);
     }
   }
 
   private async runOnceQueue(): Promise<void> {
     if (this.running) {
       // a cycle is in flight: leave the queued events in place, retry after it ends
-      if (!this.debounce) this.debounce = setTimeout(() => { this.debounce = null; this.runOnceQueue().catch(() => {}); }, 500);
+      if (!this.debounce) this.debounce = setTimeout(() => { this.debounce = undefined; this.runOnceQueue().catch(() => {}); }, 500);
       return;
     }
     const q = this.queue.splice(0);
@@ -122,7 +141,7 @@ export class SchedulerLoop {
           console.log(`[ceo->human] ${a.text}`);
         } else if (a.type === "takeover") {
           if (typeof a.input !== "object" || a.input === null) throw new Error("invalid takeover action: input must be an object");
-          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          if (this.ws && this.ws.readyState === WS_OPEN) {
             this.ws.send(JSON.stringify({ t: "ctrl", op: "input", id: crypto.randomUUID(), action: a.input }));
           }
         }
@@ -149,20 +168,49 @@ export class SchedulerLoop {
 
   start(tickMs = 60_000): void {
     this.stop();
-    if (this.d.takeoverUrl) {
-      this.ws = new WebSocket(this.d.takeoverUrl);
-      this.ws.on("message", (raw) => {
-        try {
-          const m = JSON.parse(String(raw));
-          if (m.t === "evt" && m.type === "screen_diff") this.push(`screen_diff hamming=${m.hamming}`);
-          if (m.t === "evt" && m.type === "mode_changed") this.push(`mode_changed -> ${m.mode}`);
-          if (m.t === "human") this.push(`human: ${m.text}`);
-        } catch { /* ignore malformed */ }
-      });
-      this.ws.on("close", () => { this.ws = null; }); // degrade to pure CLI until reconnect
-    }
+    this.stopped = false;
+    this.backoffMs = this.d.reconnectBaseMs ?? 1000;
+    this.connectWs();
     this.timer = setInterval(() => this.push("tick"), tickMs);
     this.timer.unref();
   }
-  stop(): void { if (this.timer) clearInterval(this.timer); this.timer = null; this.ws?.close(); this.ws = null; if (this.debounce) clearTimeout(this.debounce); this.debounce = null; }
+  stop(): void {
+    this.stopped = true; // first: late socket events must not reschedule anything
+    clearInterval(this.timer);
+    this.timer = undefined;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+    const ws = this.ws;
+    this.ws = null;
+    ws?.close();
+    clearTimeout(this.debounce);
+    this.debounce = undefined;
+  }
+
+  private connectWs(): void {
+    if (!this.d.takeoverUrl) return;
+    const ws = this.d.wsFactory ? this.d.wsFactory(this.d.takeoverUrl) : new WebSocket(this.d.takeoverUrl);
+    this.ws = ws;
+    ws.on("message", (raw) => {
+      try {
+        const m = JSON.parse(String(raw));
+        if (m.t === "evt" && m.type === "screen_diff") this.push(`screen_diff hamming=${m.hamming}`);
+        if (m.t === "evt" && m.type === "mode_changed") this.push(`mode_changed -> ${m.mode}`);
+        if (m.t === "human") this.push(`human: ${m.text}`);
+      } catch { /* ignore malformed */ }
+    });
+    ws.on("open", () => { this.backoffMs = this.d.reconnectBaseMs ?? 1000; }); // healthy link: next failure starts from the base delay
+    ws.on("close", () => { this.onWsDown(ws); }); // degrade to pure CLI until reconnect
+    ws.on("error", () => { this.onWsDown(ws); }); // takeoverd down is operational, not fatal: never crash the CEO
+  }
+
+  private onWsDown(ws: WsLike): void {
+    if (this.ws === ws) this.ws = null; // a late event from an already-replaced socket must not unset the fresh one
+    if (this.stopped) return;
+    if (this.reconnectTimer) return; // 'error' and 'close' both fire: one pending reconnect is enough
+    const delay = this.backoffMs;
+    this.backoffMs = Math.min(this.backoffMs * 2, RECONNECT_MAX_MS);
+    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = undefined; this.connectWs(); }, delay);
+    this.reconnectTimer.unref();
+  }
 }

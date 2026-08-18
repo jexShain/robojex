@@ -45,8 +45,9 @@ export class AgentOrchestrator {
     }
     const id = randomUUID().slice(0, 8);
     const logPath = join(this.opts.runtimeDir, "runs", `${id}.log`);
-    const cmd = this.opts.cmds?.[fw] ?? DEFAULT_CMDS[fw](prompt);
-    const full = `${cmd} ${shq(prompt)}`; // overrides receive the prompt too, same as defaults
+    const override = this.opts.cmds?.[fw];
+    // DEFAULT_CMDS already embed the prompt; only an override needs it appended
+    const full = override !== undefined ? `${override} ${shq(prompt)}` : DEFAULT_CMDS[fw](prompt);
     return new Promise<SpawnResult>((resolve) => {
       // detached: child leads its own process group (pgid == pid) so the whole tree dies together
       const child = pspawn(full, { shell: "/bin/bash", stdio: ["ignore", "pipe", "pipe"], detached: true });

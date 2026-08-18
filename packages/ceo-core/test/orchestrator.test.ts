@@ -3,7 +3,7 @@
 // real `sleep`, so short real-time polling (not fixed sleeps) is used throughout.
 import { AgentOrchestrator } from "../src/orchestrator.js";
 import type { LLMClient, ChatMsg, Slot } from "../src/llm.js";
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, readdirSync, chmodSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -124,4 +124,26 @@ test("spawn of missing command resolves instead of hanging", async () => {
   const r = await o.spawn("hermes", "x", { timeoutMs: 5000 });
   expect(r.exitCode).not.toBe(0);
   expect(r.summary.length).toBeGreaterThan(0);
+});
+
+test("default hermes path passes the prompt exactly once (no double append)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "robojex-orch-"));
+  const argvFile = join(dir, "argv.txt");
+  // fake `hermes` binary on PATH: records its argv, one argument per line
+  const binDir = join(dir, "bin");
+  mkdirSync(binDir);
+  writeFileSync(join(binDir, "hermes"), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${argvFile}\necho fake-hermes-ok\n`);
+  chmodSync(join(binDir, "hermes"), 0o755);
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${prevPath}`;
+  try {
+    const o = new AgentOrchestrator({ llm: null, runtimeDir: dir }); // no cmds override: DEFAULT_CMDS path
+    const r = await o.spawn("hermes", "unique prompt marker zq7", { timeoutMs: 5000 });
+    expect(r.exitCode).toBe(0);
+    const argv = readFileSync(argvFile, "utf8").trim().split("\n");
+    expect(argv).toEqual(["-p", "unique prompt marker zq7", "--yolo"]);
+    expect(argv.filter((a) => a === "unique prompt marker zq7").length).toBe(1); // prompt appears once
+  } finally {
+    process.env.PATH = prevPath;
+  }
 });
