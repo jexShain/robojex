@@ -41,7 +41,7 @@ unzip robojex-linux-x64.zip && cd robojex
 
 ```markdown
 # MISSION
-维护本机文档仓库:每天检查变更,发现错别字就派 hermes 修复。
+维护本机文档仓库：每天检查变更，发现错别字就派 hermes 修复。
 ```
 
 ```bash
@@ -63,30 +63,30 @@ unzip robojex-linux-x64.zip && cd robojex
 
 硬底线（任何模式）：`rm -rf`、`sudo` 硬阻断；人类输入永远优先。本地 Chrome 开调试端口（如 `--remote-debugging-port=9222`）时 takeoverd 自动接入 CDP，Jex 可直接驱动浏览器。
 
-## 配置参考(`runtime/config.json`)
+## 配置参考（`runtime/config.json`）
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `baseUrl` / `apiKey` | — | OpenAI 兼容接口(必填) |
-| `patrolModel` / `decideModel` | — | 巡逻用便宜模型、决策用强模型(可相同) |
-| `budgetMode` | `burn` | `burn` 无限烧 / `budgeted` 按 `dailyTokens` 日预算(按日滚动,全部 LLM 调用记账) |
+| `baseUrl` / `apiKey` | — | OpenAI 兼容接口（必填） |
+| `patrolModel` / `decideModel` | — | 巡逻用便宜模型、决策用强模型（可相同） |
+| `budgetMode` | `burn` | `burn` 无限烧 / `budgeted` 按 `dailyTokens` 日预算（按日滚动，全部 LLM 调用记账） |
 | `tickMs` | `60000` | 决策节拍间隔 |
 | `takeoverUrl` | `ws://127.0.0.1:7600` | takeoverd 地址 |
 | `webhookPort` | `7610` | Tentacles webhook 端口 |
 
-环境变量:`ROBOJEX_RUNTIME` 指定运行目录(默认 `./runtime`);`--install-service` 生成 systemd 用户单元。
+环境变量：`ROBOJEX_RUNTIME` 指定运行目录（默认 `./runtime`）；`--install-service` 生成 systemd 用户单元。
 
-> 推理型模型(如 DeepSeek v4)可用:内部各环节 token 预算已按推理模型调好。
+> 推理型模型（如 DeepSeek v4）可用：内部各环节 token 预算已按推理模型调优。
 
 ## 内置能力
 
-- **ToolScout**:首次启动自动扫描/验证系统工具,用户级自安装(npm/pip,绝不 sudo),`TOOLS.md` 一行式清单进上下文,完整手册按需注入;缺 apt 包只排队到 `PENDING_INSTALLS.md`。
-- **Tentacles(触手)**:`runtime/tentacles/` 放 JSON spec 或 `.mjs` 插件即可接入任意 API/硬件;支持 OpenAPI 导入、硬件自动扫描(串口/摄像头/HID);密钥只写环境变量名。外部系统 `POST http://主机:7610/t/<触手名>` 可唤醒 jex。
-- **元学习**:`MISSION.md`/`RUBRIC.md`/`MEMORY.md` 由审计器改写并做 git 快照(git 缺失时自动降级)。
+- **ToolScout**：首次启动自动扫描 / 验证系统工具，用户级自安装（npm / pip，绝不 sudo），`TOOLS.md` 一行式清单进上下文，完整手册按需注入；缺 apt 包只排队到 `PENDING_INSTALLS.md`。
+- **Tentacles（触手）**：`runtime/tentacles/` 放 JSON spec 或 `.mjs` 插件即可接入任意 API / 硬件；支持 OpenAPI 导入、硬件自动扫描（串口 / 摄像头 / HID）；密钥只写环境变量名。外部系统 `POST http://主机:7610/t/<触手名>` 可唤醒 Jex。
+- **元学习**：`MISSION.md` / `RUBRIC.md` / `MEMORY.md` 由审计器改写并做 git 快照（git 缺失时自动降级）。
 
-## 从源码运行(开发)
+## 从源码运行（开发）
 
-要求 Node ≥ 22.14(内置 node:sqlite)。
+要求 Node ≥ 22.14（内置 node:sqlite）。
 
 ```bash
 npm ci
@@ -96,7 +96,17 @@ node packages/takeoverd/dist/index.js --port 7600 &
 node packages/ceo-core/dist/index.js
 ```
 
-打包发布:打 `v*` tag,GitHub Actions 自动出五平台单文件二进制并挂 Release。
+打包发布：打 `v*` tag，GitHub Actions 自动出五平台单文件二进制并挂 Release。
+
+## WSL2 已知限制
+
+WSL2 无原生 GUI 桌面，以下 takeoverd 功能不可用，Jex 会自动降级运行：
+
+- **屏幕截取**：无法获取宿主桌面画面，视觉感知模块不工作
+- **键鼠注入**：无法向 Windows 侧注入键鼠事件
+- **热键切换**：`Shift+Ctrl` 模式切换不生效，固定在 observe 模式
+
+WSL2 下 Jex 仍可通过 webhook / Tentacles 接收外部唤醒，并派发 sub-agent 执行非桌面类任务（文件操作、API 调用、代码编写等）。
 
 ## 架构文档
 
