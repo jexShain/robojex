@@ -1,4 +1,4 @@
 { "name": "@robojex/ceo-core", "version": "0.0.1", "type": "module",
   "bin": { "ceo": "dist/index.js" },
   "scripts": { "test": "vitest run" },
-  "dependencies": { "ws": "^8.18.0", "better-sqlite3": "^11.0.0" } }
+  "dependencies": { "ws": "^8.18.0" } }

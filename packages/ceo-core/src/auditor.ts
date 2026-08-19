@@ -3,17 +3,17 @@ import { appendFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import type { LLMClient } from "./llm.js";
 
 export interface DecisionTrace { contextDigest: string; actions: unknown[]; cost: number; }
 
 export class Auditor {
   private traces: DecisionTrace[] = []; // in-memory batch, consumed by review()
-  private db: Database.Database;        // durable log, survives CEO restarts
+  private db: DatabaseSync;             // durable log, survives CEO restarts
   constructor(private opts: { runtimeDir: string; reviewEvery?: number }) {
-    this.db = new Database(join(opts.runtimeDir, "traces.sqlite"));
-    this.db.pragma("journal_mode = WAL");
+    this.db = new DatabaseSync(join(opts.runtimeDir, "traces.sqlite"));
+    this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`CREATE TABLE IF NOT EXISTS decisions (
       id TEXT PRIMARY KEY, ts INTEGER, context_digest TEXT, actions TEXT, cost INTEGER)`);
   }

@@ -1,7 +1,7 @@
 // packages/ceo-core/test/auditor.test.ts
 import { Auditor } from "../src/auditor.js";
 import type { LLMClient } from "../src/llm.js";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,10 +90,11 @@ test("record() persists decisions to runtime/traces.sqlite (WAL); rows survive a
   a.record({ contextDigest: "wake#2", actions: [], cost: 7 });
 
   // a fresh connection must see the rows: durability on disk, not just the in-memory review buffer
-  const db = new Database(join(dir, "traces.sqlite"));
-  expect(db.pragma("journal_mode", { simple: true })).toBe("wal");
+  const db = new DatabaseSync(join(dir, "traces.sqlite"));
+  const mode = db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }; // PRAGMA row shape is fixed by SQLite
+  expect(mode.journal_mode).toBe("wal");
   const rows = db.prepare("SELECT id, ts, context_digest, actions, cost FROM decisions ORDER BY ts, rowid")
-    .all() as { id: string; ts: number; context_digest: string; actions: string; cost: number }[];
+    .all() as unknown as { id: string; ts: number; context_digest: string; actions: string; cost: number }[];
   db.close();
   expect(rows.length).toBe(2);
   expect(rows[0].context_digest).toBe("wake#1");
