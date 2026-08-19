@@ -177,6 +177,50 @@ test("a rejected key does not pollute the buffer for later actions", async () =>
   expect(await injector.exec({ kind: "type", text: "hello" })).toBe("done");
 });
 
+test("Delete/KP_Delete never break the window: rm -<Delete>-rf is stopped", async () => {
+  const modes = new ModeStateMachine();
+  modes.next(); modes.next(); // full: Delete/Return skip approval
+  for (const del of ["Delete", "KP_Delete"]) {
+    const injector = new InputInjector(modes, idleHuman);
+    for (const key of ["r", "m", "space", "-", del, "r"]) {
+      expect(await injector.exec({ kind: "key", key })).toBe("done");
+    }
+    // the completing f assembles "rm -rf": Delete appended nothing, cleared nothing
+    expect(await injector.exec({ kind: "key", key: "f" })).toBe("blocked-hard");
+    // the refused f left no trace; a following Return submits nothing dangerous
+    expect(await injector.exec({ kind: "key", key: "Return" })).toBe("done");
+  }
+});
+
+test("KP_Space spells the space: rm<KP_Space>-rf is caught", async () => {
+  const modes = new ModeStateMachine();
+  modes.next(); // assist: every key here is low-risk, no approval needed
+  const injector = new InputInjector(modes, idleHuman);
+  for (const key of ["r", "m", "KP_Space", "-", "r"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  expect(await injector.exec({ kind: "key", key: "f" })).toBe("blocked-hard");
+});
+
+test("raw 0x-hex keysyms are unmappable: blocked-hard, window untouched", async () => {
+  const modes = new ModeStateMachine();
+  modes.next();
+  const injector = new InputInjector(modes, idleHuman);
+  for (const key of ["r", "m", "space"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  // 0x2d IS the minus keysym: refusing it fail-closed beats guessing, and
+  // caller approval cannot vouch for a name we cannot map
+  expect(await injector.exec({ kind: "key", key: "0x2d" })).toBe("blocked-hard");
+  expect(await injector.exec({ kind: "key", key: "0x2d" }, true)).toBe("blocked-hard");
+  expect(await injector.exec({ kind: "key", key: "ctrl+0x2d" })).toBe("blocked-hard");
+  // the refusals left no trace: plain keys still assemble rm -rf afterwards
+  for (const key of ["-", "r"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  expect(await injector.exec({ kind: "key", key: "f" })).toBe("blocked-hard");
+});
+
 // --- human preemption in assist mode (xprintidle) ---
 test("assist injection is refused while the human is active (idle < 2s)", async () => {
   const modes = new ModeStateMachine();

@@ -37,8 +37,12 @@ export interface InjectorDeps {
 const KEY_BUF_MAX = 32; // rolling window of what recent keystrokes would type
 const HUMAN_ACTIVE_MS = 2000; // human touched input within the last 2s -> back off
 
-// Keys that steer focus or end a line: they never put text on it.
-const NO_TEXT_KEYS: Record<string, true> = { tab: true, return: true, kp_enter: true };
+// Keys that never put text on the line: focus steers (Tab/KP_Tab), submits
+// (Return/KP_Enter), deletions (Delete/KP_Delete) — they append nothing and
+// clear nothing.
+const NO_TEXT_KEYS: Record<string, true> = {
+  tab: true, kp_tab: true, return: true, kp_enter: true, delete: true, kp_delete: true,
+};
 // Modifier names xdotool accepts, lowercased, incl. bare L/R keysyms (control_l...).
 const MODIFIERS = new Set<string>();
 for (const base of ["ctrl", "control", "shift", "alt", "meta", "super", "hyper"]) {
@@ -48,7 +52,7 @@ for (const base of ["ctrl", "control", "shift", "alt", "meta", "super", "hyper"]
 }
 // Key names that must join the window as the character they actually type.
 const KEY_NAMES: Record<string, string> = {
-  space: " ", minus: "-", kp_subtract: "-", slash: "/", period: ".",
+  space: " ", kp_space: " ", minus: "-", kp_subtract: "-", slash: "/", period: ".",
   comma: ",", semicolon: ";", equal: "=",
 };
 for (let d = 0; d <= 9; d++) KEY_NAMES[`kp_${d}`] = String(d);
@@ -61,14 +65,25 @@ function pushText(buf: string, text: string): string {
 }
 
 // The window after key `raw` lands on `buf`: BackSpace eats the last char
-// (nothing to eat on an empty buffer), Tab/Return-family keys and any combo —
-// modifiers alone never type — add nothing, every other single key joins as
-// its mapped character or lowercased name.
+// (nothing to eat on an empty buffer), Tab/Delete/Return-family keys, bare
+// modifiers and any combo — modifiers alone never type — add nothing, every
+// other single key joins as its mapped character or lowercased name.
+// Unmappable names never get this far: exec refuses them first.
 function applyKey(buf: string, raw: string): string {
   const k = raw.toLowerCase();
   if (k === "backspace") return buf.slice(0, -1);
   if (NO_TEXT_KEYS[k] || k.includes("+") || MODIFIERS.has(k)) return buf;
   return pushText(buf, KEY_NAMES[k] ?? k);
+}
+
+// A key name whose effect we can reason about: a name one of the tables
+// knows (mapped char, no-text, bare modifier, the BackSpace editor) or a
+// single printable character that types itself. Anything else — 0x-hex
+// keysym spellings like "0x2d", exotic names no table knows — is refused
+// outright: fail closed, prefer a false rejection over an unguessable key.
+function isKnownKey(k: string): boolean {
+  if (k.length === 1) return !CONTROL_CHARS.test(k);
+  return NO_TEXT_KEYS[k] === true || MODIFIERS.has(k) || KEY_NAMES[k] !== undefined || k === "backspace";
 }
 
 async function xprintidleMs(): Promise<number> {
@@ -104,6 +119,12 @@ export class InputInjector {
 
   async exec(a: InputAction, approved = false): Promise<"done" | "blocked-observe" | "blocked-hard" | "needs-approval" | "human-active"> {
     if (!this.modes.canInject()) return "blocked-observe"; // observe: refuse at the gate
+    // Unmappable key names — 0x-hex keysym spellings like "0x2d", any name no
+    // table knows — are refused as blocked-hard before anything else: we
+    // cannot reason about what they would type, so caller approval cannot
+    // vouch for them either. The refusal happens before the window is
+    // touched, so the buffer stays clean.
+    if (a.kind === "key" && !(a.key ?? "").toLowerCase().split("+").every(isKnownKey)) return "blocked-hard";
     // Candidate window: what it would read if this action really landed —
     // keys go through applyKey, type appends its text, click/move change
     // nothing. It is committed only after injection succeeds, so blocked or
