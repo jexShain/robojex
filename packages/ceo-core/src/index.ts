@@ -34,6 +34,14 @@ export function seedRuntimeFiles(runtimeDir: string): void {
 // (API key) into history.
 export function initRuntimeGit(runtimeDir: string, run: (cmd: string, cwd: string) => void = (cmd, cwd) => { execSync(cmd, { cwd }); }): string[] {
   if (existsSync(join(runtimeDir, ".git"))) return [];
+  try {
+    execSync("git --version", { stdio: "ignore" });
+  } catch {
+    // bare machines (binary distribution) may not ship git: run without the
+    // embedded history; audit snapshots degrade the same way at runtime
+    console.warn("[ceo] git not found — runtime evolution history disabled");
+    return [];
+  }
   const cmds: string[] = [];
   const git = (sub: string): void => {
     const c = `git -c user.email=ceo@robojex -c user.name=ceo ${sub}`;

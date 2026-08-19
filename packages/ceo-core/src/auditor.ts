@@ -48,15 +48,25 @@ export class Auditor {
   // BEFORE mutating them, so evolution history stays recoverable.
   snapshotRuntime(): void {
     const d = this.opts.runtimeDir;
-    const git = (args: string) => execSync(`git ${args}`, { cwd: d });
-    if (!existsSync(join(d, ".git"))) git("init -q");
-    const files = ["MISSION.md", "RUBRIC.md", "MEMORY.md"];
-    files.forEach(f => {
-      const p = join(d, f);
-      if (existsSync(p)) {
-        try { git(`add ${f}`); } catch {}
+    try {
+      const git = (args: string) => execSync(`git ${args}`, { cwd: d });
+      if (!existsSync(join(d, ".git"))) git("init -q");
+      const files = ["MISSION.md", "RUBRIC.md", "MEMORY.md"];
+      files.forEach(f => {
+        const p = join(d, f);
+        if (existsSync(p)) {
+          try { git(`add ${f}`); } catch {}
+        }
+      });
+      git('-c user.email=ceo@robojex -c user.name=ceo-core commit -qm "audit snapshot" --allow-empty');
+    } catch {
+      // git missing (bare binary distribution): patches still apply, history
+      // tracking is unavailable — same degradation as first-boot
+      if (!Auditor.gitWarned) {
+        console.warn("[audit] git unavailable — snapshot history disabled");
+        Auditor.gitWarned = true;
       }
-    });
-    git('-c user.email=ceo@robojex -c user.name=ceo-core commit -qm "audit snapshot" --allow-empty');
+    }
   }
+  private static gitWarned = false;
 }
