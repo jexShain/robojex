@@ -166,8 +166,10 @@ function main(): void {
   process.on("SIGTERM", stop);
 }
 
-// run only when executed as the entry module (node dist/index.js), never on import
+// run only when executed as the entry module (node dist/index.js), never on import;
+// a pkg binary always runs as main (import.meta.url is unavailable there)
 const isMain = (() => {
+  if ((process as NodeJS.Process & { pkg?: unknown }).pkg) return true;
   try { return import.meta.url === pathToFileURL(realpathSync(process.argv[1] ?? "")).href; }
   catch { return false; }
 })();

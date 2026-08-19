@@ -14,21 +14,25 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   process.exit(1);
 }
 
-const modes = new ModeStateMachine();            // boots in observe — safe default
-const screen = new ScreenPipeline();
-const injector = new InputInjector(modes);
-const hotkey = new HotkeyWatcher();
-// CDP bridge: attach when a local Chrome debug port answers, degrade silently otherwise
-let cdp: CdpChannel = new NullCdp();
-const puppeteerCdp = new PuppeteerCdp();
-if (await puppeteerCdp.available()) cdp = puppeteerCdp;
-const server = new TakeoverServer({ modes, injector, screen, hotkey, cdp, port });
+async function main(): Promise<void> {
+  const modes = new ModeStateMachine();            // boots in observe — safe default
+  const screen = new ScreenPipeline();
+  const injector = new InputInjector(modes);
+  const hotkey = new HotkeyWatcher();
+  // CDP bridge: attach when a local Chrome debug port answers, degrade silently otherwise
+  let cdp: CdpChannel = new NullCdp();
+  const puppeteerCdp = new PuppeteerCdp();
+  if (await puppeteerCdp.available()) cdp = puppeteerCdp;
+  const server = new TakeoverServer({ modes, injector, screen, hotkey, cdp, port });
 
-screen.start(1000);                              // observe cadence: 1 fps
-hotkey.start();
-await server.start(port);
-console.log(`takeoverd listening on :${port}, mode=${modes.current}`);
+  screen.start(1000);                              // observe cadence: 1 fps
+  hotkey.start();
+  await server.start(port);
+  console.log(`takeoverd listening on :${port}, mode=${modes.current}`);
 
-const shutdown = async () => { screen.stop(); hotkey.stop(); await server.stop(); process.exit(0); };
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+  const shutdown = async () => { screen.stop(); hotkey.stop(); await server.stop(); process.exit(0); };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+}
+
+void main();

@@ -39,8 +39,9 @@ export interface LoopDeps {
   reconnectBaseMs?: number;              // test seam: first reconnect delay
 }
 
-// packages/ceo-core/{src,dist} -> repo root -> skills/
-const DEFAULT_SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "skills");
+// packages/ceo-core/{src,dist} -> repo root -> skills/; under a pkg binary
+const DEFAULT_SKILLS_DIR = process.env.ROBOJEX_SKILLS_DIR
+  ?? (import.meta.url ? join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "skills") : join(dirname(process.execPath), "skills"));
 
 // Verified tool names that are also everyday English words: attaching their
 // manuals on a bare word-boundary hit would fire on half of all prompts.
