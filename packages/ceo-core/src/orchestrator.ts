@@ -86,7 +86,7 @@ export class AgentOrchestrator {
           summary = "timeout";
         } else if (this.opts.llm) {
           try {
-            const r = await this.opts.llm.chat("patrol", [{ role: "user", content: `Summarize this sub-agent result in ONE line (<=140 chars). If failed, start with FAIL:. Output:\n${out}` }], { maxTokens: 100 });
+            const r = await this.opts.llm.chat("patrol", [{ role: "user", content: `Summarize this sub-agent result in ONE line (<=140 chars). If failed, start with FAIL:. Output:\n${out}` }], { maxTokens: 512 }); // reasoning models spend tokens before content
             summary = r.content.trim();
             summaryUsage = r.usage;
           } catch { summary = out.slice(-140); }
