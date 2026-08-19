@@ -158,15 +158,24 @@ async function readCapped(res: Response, maxBytes: number): Promise<string> {
 }
 
 // Lowercase kebab slug for generated names (hardware devices, imported ops).
+// Non-ASCII chars are stripped so the result is always header-safe.
 function slug(s: string): string {
   const t = s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return t.slice(0, HW_NAME_MAX) || "device";
 }
 
+// Strip non-ASCII characters from a string for use in ByteString-only contexts
+// (HTTP headers). Replaces runs of non-ASCII with a single ASCII-safe marker.
+function toAsciiSafe(s: string): string {
+  return s.replace(/[\x80-\uffff]+/g, "?").slice(0, HW_NAME_MAX);
+}
+
 // One hardware tentacle; the blurb doubles as the probe contract: probeOne
 // reads the "(device: <path>)" note back out and checks the node exists.
+// Hardware tentacle factory. desc may contain non-ASCII chars from lsusb;
+// blurb is ASCII-sanitized to keep it safe for HTTP headers / ByteString APIs.
 const hardwareTentacle = (namePart: string, desc: string, devicePath: string): TentacleDefinition =>
-  ({ name: `hw-${slug(namePart)}`, kind: "hardware", ops: [], enabled: true, blurb: `${desc} (device: ${devicePath})` });
+  ({ name: `hw-${slug(namePart)}`, kind: "hardware", ops: [], enabled: true, blurb: `${toAsciiSafe(desc)} (device: ${devicePath})` });
 
 interface OpenapiDoc {
   info?: { title?: string };
