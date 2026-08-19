@@ -10,7 +10,7 @@ import type { HotkeyWatcher } from "./hotkey.js";
 import type { CdpChannel } from "./cdp.js";
 
 type Msg = Record<string, unknown> & { t?: string };
-type InjectResult = "done" | "blocked-observe" | "blocked-hard" | "needs-approval";
+type InjectResult = "done" | "blocked-observe" | "blocked-hard" | "needs-approval" | "human-active";
 
 export interface ServerDeps {
   modes: ModeStateMachine;
@@ -57,10 +57,18 @@ export class TakeoverServer {
     });
     this.deps.hotkey?.onToggle(() => {
       this.deps.modes.next();
+      this.applyPolling();
       this.broadcast({ t: "evt", type: "mode_changed", mode: this.deps.modes.current });
     });
     this.deps.screen?.onEvent((e) => this.broadcast({ t: "evt", ...e }));
+    this.applyPolling();
     await new Promise<void>((res) => this.wss!.once("listening", res));
+  }
+
+  // observe continuously diffs the screen at 1 fps; assist/full poll on CEO
+  // request only (screenshot op) — polling follows every mode transition.
+  private applyPolling(): void {
+    this.deps.screen?.setPolling(this.deps.modes.current === "observe");
   }
 
   private async handle(ws: WebSocket, m: Msg): Promise<void> {
@@ -82,6 +90,7 @@ export class TakeoverServer {
       // modes.set throws on unknown mode; the throw is swallowed by handle's
       // catch and the invalid request simply never broadcasts
       this.deps.modes.set(m.mode as Mode);
+      this.applyPolling();
       this.broadcast({ t: "evt", type: "mode_changed", mode: m.mode });
       return;
     }

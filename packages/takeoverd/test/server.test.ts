@@ -1,6 +1,8 @@
 // packages/takeoverd/test/server.test.ts
 import { TakeoverServer } from "../src/server.js";
 import { ModeStateMachine } from "../src/modes.js";
+import { ScreenPipeline } from "../src/screen.js";
+import { HotkeyWatcher } from "../src/hotkey.js";
 import type { CdpChannel } from "../src/cdp.js";
 import type { InputInjector } from "../src/input.js";
 import WebSocket from "ws";
@@ -235,5 +237,37 @@ test("observe mode gates cdp ops: channel untouched, result blocked-observe", as
   expect(await nextMsg(ceo)).toMatchObject({ t: "evt", type: "cdp_result", op: "cdp_snapshot", result: "blocked-observe" });
 
   expect(calls).toEqual([]); // the gate answers before the channel is ever reached
+  ceo.close();
+});
+
+test("mode changes drive screen polling: observe on, assist/full off", async () => {
+  const modes = new ModeStateMachine();
+  class FakeScreen extends ScreenPipeline {
+    calls: boolean[] = [];
+    setPolling(enabled: boolean): void { this.calls.push(enabled); }
+  }
+  class FakeHotkey extends HotkeyWatcher {
+    toggles: (() => void)[] = [];
+    onToggle(cb: () => void): void { this.toggles.push(cb); }
+    start(): void {}
+    stop(): void {}
+  }
+  const screen = new FakeScreen();
+  const hotkey = new FakeHotkey();
+  server = new TakeoverServer({ modes, port: 7601, injector: null, screen, hotkey });
+  await server.start(7601);
+  expect(screen.calls).toEqual([true]); // boots in observe -> 1 fps polling
+
+  const ceo = await connect();
+  ceo.send(JSON.stringify({ t: "ctrl", op: "set_mode", mode: "assist" }));
+  await nextMsg(ceo);
+  expect(screen.calls).toEqual([true, false]); // assist: polling stops
+
+  ceo.send(JSON.stringify({ t: "ctrl", op: "set_mode", mode: "full" }));
+  await nextMsg(ceo);
+  expect(screen.calls).toEqual([true, false, false]); // full: still stopped
+
+  hotkey.toggles[0]!(); // ctrl+shift combo cycles full -> observe
+  expect(screen.calls).toEqual([true, false, false, true]); // back to observe: resumed
   ceo.close();
 });

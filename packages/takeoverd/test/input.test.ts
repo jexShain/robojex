@@ -1,7 +1,7 @@
 // packages/takeoverd/test/input.test.ts
 import { classifyRisk, InputInjector } from "../src/input.js";
 import { ModeStateMachine } from "../src/modes.js";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 test("plain typing is low risk", () => {
   expect(classifyRisk({ kind: "type", text: "hello world" })).toBe("low");
@@ -55,4 +55,78 @@ test("approved exec still hard-blocks rm -rf text", async () => {
   modes.next(); // observe -> assist
   const injector = new InputInjector(modes);
   expect(await injector.exec({ kind: "type", text: "rm -rf /home" }, true)).toBe("blocked-hard");
+});
+
+// --- cross-action keystroke buffer: hard patterns assembled key by key ---
+// idle human + stubbed exec: tests never touch a real display
+const idleHuman = { idleFn: async () => 60_000, execFn: async () => ({ stdout: "" }) };
+
+test("keystrokes r m space - r f: each alone low, buffered join hits rm -rf", async () => {
+  const modes = new ModeStateMachine();
+  modes.next(); // observe -> assist
+  const injector = new InputInjector(modes, idleHuman);
+  for (const key of ["r", "m", "space", "-", "r"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  // the completing "f" turns the buffered window into "rm -rf" -> hard
+  expect(await injector.exec({ kind: "key", key: "f" })).toBe("blocked-hard");
+});
+
+test("keystrokes assembling sudo across keys are hard-blocked", async () => {
+  const modes = new ModeStateMachine();
+  modes.next();
+  const injector = new InputInjector(modes, idleHuman);
+  for (const key of ["s", "u", "d"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  expect(await injector.exec({ kind: "key", key: "o" })).toBe("blocked-hard");
+});
+
+test("type/click/move clear the keystroke buffer", async () => {
+  const modes = new ModeStateMachine();
+  modes.next();
+  const injector = new InputInjector(modes, idleHuman);
+  expect(await injector.exec({ kind: "key", key: "r" })).toBe("done");
+  expect(await injector.exec({ kind: "key", key: "m" })).toBe("done");
+  // non-key actions break the sequence: the tail alone must not read as rm -rf
+  expect(await injector.exec({ kind: "type", text: "hi" })).toBe("done");
+  expect(await injector.exec({ kind: "click", button: "left" })).toBe("done");
+  expect(await injector.exec({ kind: "move", x: 1, y: 1 })).toBe("done");
+  for (const key of ["space", "-", "r", "f", "space"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+});
+
+// --- human preemption in assist mode (xprintidle) ---
+test("assist injection is refused while the human is active (idle < 2s)", async () => {
+  const modes = new ModeStateMachine();
+  modes.next();
+  const injector = new InputInjector(modes, { idleFn: async () => 500, execFn: async () => ({ stdout: "" }) });
+  expect(await injector.exec({ kind: "type", text: "hello" })).toBe("human-active");
+});
+
+test("missing xprintidle (ENOENT) skips the preemption check and warns once", async () => {
+  const modes = new ModeStateMachine();
+  modes.next();
+  const enoent = async () => {
+    const e = new Error("spawn xprintidle ENOENT") as NodeJS.ErrnoException;
+    e.code = "ENOENT";
+    throw e;
+  };
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const injector = new InputInjector(modes, { idleFn: enoent, execFn: async () => ({ stdout: "" }) });
+    expect(await injector.exec({ kind: "type", text: "hello" })).toBe("done");
+    expect(await injector.exec({ kind: "type", text: "again" })).toBe("done");
+    expect(warn).toHaveBeenCalledTimes(1);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test("full mode bypasses the human-active check", async () => {
+  const modes = new ModeStateMachine();
+  modes.next(); modes.next(); // assist -> full
+  const injector = new InputInjector(modes, { idleFn: async () => 100, execFn: async () => ({ stdout: "" }) });
+  expect(await injector.exec({ kind: "type", text: "hello" })).toBe("done");
 });

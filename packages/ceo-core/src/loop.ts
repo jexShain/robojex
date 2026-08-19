@@ -1,5 +1,6 @@
 // packages/ceo-core/src/loop.ts
 import { readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LLMClient } from "./llm.js";
@@ -162,7 +163,7 @@ export class SchedulerLoop {
         } else if (a.type === "takeover") {
           if (typeof a.input !== "object" || a.input === null) throw new Error("invalid takeover action: input must be an object");
           if (this.ws && this.ws.readyState === WS_OPEN) {
-            this.ws.send(JSON.stringify({ t: "ctrl", op: "input", id: crypto.randomUUID(), action: a.input }));
+            this.ws.send(JSON.stringify({ t: "ctrl", op: "input", id: randomUUID(), action: a.input }));
           }
         } else if (a.type === "cdp") {
           if (a.op !== "cdp_open" && a.op !== "cdp_snapshot") throw new Error("invalid cdp action: op must be 'cdp_open' or 'cdp_snapshot'");

@@ -48,7 +48,8 @@ export function hamming(a: bigint, b: bigint): number {
 type DiffEvent = { type: "screen_diff"; hamming: number; ts: number };
 
 export class ScreenPipeline {
-  private timer: NodeJS.Timeout | null = null;
+  private timer: NodeJS.Timeout | undefined;
+  private intervalMs: number | null = null;
   private prev: bigint | null = null;
   private last: bigint | null = null;
   private cbs: ((e: DiffEvent) => void)[] = [];
@@ -71,10 +72,20 @@ export class ScreenPipeline {
     this.prev = h;
     return null;
   }
+  // Boot arms continuous polling — the daemon starts in observe, where screen
+  // diffs are the wake signal.
   start(intervalMs: number): void {
-    this.stop();
-    this.timer = setInterval(() => { this.pollOnce().catch(() => {}); }, intervalMs);
-    this.timer.unref();
+    this.intervalMs = intervalMs;
+    this.setPolling(true);
   }
-  stop(): void { if (this.timer) clearInterval(this.timer); this.timer = null; }
+  // Polling is observe-only: in assist/full the daemon captures a frame solely
+  // when the CEO asks (screenshot op), instead of burning CPU at 1 fps.
+  setPolling(enabled: boolean): void {
+    this.stop();
+    if (enabled && this.intervalMs !== null) {
+      this.timer = setInterval(() => { this.pollOnce().catch(() => {}); }, this.intervalMs);
+      this.timer.unref();
+    }
+  }
+  stop(): void { clearInterval(this.timer); this.timer = undefined; }
 }

@@ -1,6 +1,6 @@
 // packages/takeoverd/test/screen.test.ts
-import { phash, hamming, grabGrayText } from "../src/screen.js";
-import { expect, test } from "vitest";
+import { phash, hamming, grabGrayText, ScreenPipeline } from "../src/screen.js";
+import { expect, test, vi } from "vitest";
 
 const N = 32;
 function flat(v: number): Uint8Array { return new Uint8Array(N * N).fill(v); }
@@ -24,4 +24,28 @@ test("grabGrayText parses ImageMagick txt:- output", () => {
   const txt = "32x32\n0,0: (30%)\n1,0: (50%)\n";
   const g = grabGrayText(txt, 2, 1);
   expect(Array.from(g)).toEqual([77, 127]); // 0.30*255≈77, 0.50*255≈127
+});
+
+test("setPolling(false) halts interval polling; setPolling(true) resumes it", async () => {
+  vi.useFakeTimers();
+  try {
+    class CountingPipeline extends ScreenPipeline {
+      polls = 0;
+      async pollOnce(): Promise<null> { this.polls++; return null; }
+    }
+    const p = new CountingPipeline();
+    p.start(10);
+    await vi.advanceTimersByTimeAsync(35);
+    expect(p.polls).toBeGreaterThanOrEqual(2);
+    p.setPolling(false);
+    const halted = p.polls;
+    await vi.advanceTimersByTimeAsync(35);
+    expect(p.polls).toBe(halted);
+    p.setPolling(true);
+    await vi.advanceTimersByTimeAsync(25);
+    expect(p.polls).toBeGreaterThan(halted);
+    p.stop();
+  } finally {
+    vi.useRealTimers();
+  }
 });
