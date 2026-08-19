@@ -5,9 +5,10 @@ import { LLMClient } from "../src/llm.js";
 import { TaskBoard } from "../src/board.js";
 import { ContextAssembler } from "../src/context.js";
 import { AgentOrchestrator } from "../src/orchestrator.js";
+import { ToolScout } from "../src/toolscout.js";
 import { Auditor } from "../src/auditor.js";
 import { BudgetGovernor } from "../src/budget.js";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
@@ -475,3 +476,127 @@ test("spawn settlement handlers that themselves throw stay contained: one log li
     err.mockRestore();
   }
 }, 10_000);
+
+
+// ---- ToolScout wiring: tools block in decide, background scan, manual attachment ----
+
+test("decide prompt carries the AVAILABLE TOOLS block at the tail; patrol stays lean", async () => {
+  const runtimeDir = makeRuntime();
+  const users: { slot: string; content: string }[] = [];
+  const chat = vi.fn(async (slot: string, msgs: { role: string; content: string }[]) => {
+    if (msgs[1]) users.push({ slot, content: String(msgs[1].content) });
+    return slot === "patrol"
+      ? { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } }
+      : { content: '{"actions":[]}', usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir,
+    scout: { readToolsBlock: () => "- jq (data) — JSON processor [vjq-1.7] verified 2026-01-01" } as unknown as ToolScout,
+  });
+  await loop.runOnce("tick");
+
+  const decideUser = users.find((u) => u.slot === "decide")!.content;
+  expect(decideUser).toContain("# AVAILABLE TOOLS");
+  expect(decideUser).toContain("[vjq-1.7] verified");
+  // the tools block rides only on the decide pass, never on patrol
+  expect(users.find((u) => u.slot === "patrol")!.content).not.toContain("AVAILABLE TOOLS");
+});
+
+test("toolscout action: scout.run fires in the background, cycle never blocks, one run per cycle", async () => {
+  const runtimeDir = makeRuntime();
+  // gated scan: the test decides when "verification" finishes
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => { release = r; });
+  const run = vi.fn(async () => {
+    await gate;
+    return { verified: [{ name: "jq", category: "data", version: "jq-1.7" }], manualsGenerated: 1, pendingInstalls: [] };
+  });
+  const scout = { run, readToolsBlock: () => "", verifiedNames: () => [], readManual: () => null };
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return {
+      content: JSON.stringify({ actions: [
+        { type: "toolscout", query: "pdf tooling" },
+        { type: "toolscout", query: "again" }, // same cycle: re-entry must be suppressed
+      ] }),
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const loop = new SchedulerLoop({
+      llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+      scout: scout as unknown as ToolScout,
+    });
+    await loop.runOnce("tick"); // returns although the scan gate is still closed
+    expect(run).toHaveBeenCalledTimes(1);
+
+    release();
+    await until(() => log.mock.calls.some((c) => String(c[0]).includes("toolscout: 1 verified")));
+    expect(log).toHaveBeenCalledWith("[ceo] toolscout: 1 verified");
+    expect(err).not.toHaveBeenCalled();
+  } finally {
+    log.mockRestore();
+    err.mockRestore();
+  }
+}, 10_000);
+
+test("spawn prompt: verified tool names in the prompt attach their manuals via word-boundary match", async () => {
+  const runtimeDir = makeRuntime();
+  // real scout over the runtime dir: TOOLS.md + manuals already on disk
+  const scout = new ToolScout({ llm: null, runtimeDir, whichFn: async () => null, spawnFn: async () => ({ code: 0, stdout: "", stderr: "" }) });
+  writeFileSync(join(runtimeDir, "TOOLS.md"),
+    "- jq (data) — JSON processor [vjq-1.7] verified 2026-01-01\n- curl (network) — fetch URLs [v8.0] verified 2026-01-01\n");
+  mkdirSync(join(runtimeDir, "tool-manuals"), { recursive: true });
+  writeFileSync(join(runtimeDir, "tool-manuals", "jq.md"), "jq manual: filters JSON streams.");
+  writeFileSync(join(runtimeDir, "tool-manuals", "curl.md"), "curl manual.");
+  const spawnFn = vi.fn(async () => ({ exitCode: 0, summary: "ok", logPath: "/dev/null", summaryUsage: null }));
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return {
+      content: JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "jq job", prompt: "summarize results.json with jq and report" }] }),
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, scout,
+  });
+  await loop.runOnce("tick");
+
+  const sent = spawnFn.mock.calls[0]?.[1] as string; // orchestrator.spawn(fw, prompt)
+  expect(sent).toContain("summarize results.json with jq and report"); // original prompt intact
+  expect(sent).toContain("# TOOL MANUALS");
+  expect(sent).toContain("jq manual: filters JSON streams.");
+  expect(sent).not.toContain("curl manual."); // curl is verified but never mentioned in the prompt
+});
+
+test("spawn prompt: a tool name inside a larger word does not match (jqx is not jq)", async () => {
+  const runtimeDir = makeRuntime();
+  const scout = new ToolScout({ llm: null, runtimeDir, whichFn: async () => null, spawnFn: async () => ({ code: 0, stdout: "", stderr: "" }) });
+  writeFileSync(join(runtimeDir, "TOOLS.md"), "- jq (data) — JSON processor [vjq-1.7] verified 2026-01-01\n");
+  mkdirSync(join(runtimeDir, "tool-manuals"), { recursive: true });
+  writeFileSync(join(runtimeDir, "tool-manuals", "jq.md"), "jq manual.");
+  const spawnFn = vi.fn(async () => ({ exitCode: 0, summary: "ok", logPath: "/dev/null", summaryUsage: null }));
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return {
+      content: JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "jqx job", prompt: "check the jqx config file" }] }),
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, scout,
+  });
+  await loop.runOnce("tick");
+  const sent = spawnFn.mock.calls[0]?.[1] as string;
+  expect(sent).toBe("check the jqx config file"); // word boundary held: no manual block
+});

@@ -11,6 +11,7 @@ import { AgentOrchestrator } from "./orchestrator.js";
 import { Auditor } from "./auditor.js";
 import { BudgetGovernor, type BudgetMode } from "./budget.js";
 import { SchedulerLoop } from "./loop.js";
+import { ToolScout } from "./toolscout.js";
 
 // runtime state that must never enter git history (config.json holds the API key)
 export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\npids.json\nruns/\nshots/\n";
@@ -97,11 +98,19 @@ function main(): void {
   const orchestrator = new AgentOrchestrator({ llm, runtimeDir });
   orchestrator.reapOrphans(); // a crashed CEO's detached sub-agents must die before new work starts
   const budgetCfg = resolveBudgetConfig(cfg);
+  const scout = new ToolScout({ llm, runtimeDir });
+  // first boot: build the verified tool inventory once, in the background —
+  // later refreshes come from the CEO's own toolscout actions
+  if (!existsSync(join(runtimeDir, "TOOLS.md"))) {
+    void scout.run().then((r) => console.log(`[ceo] toolscout: ${r.verified.length} verified`))
+      .catch((e: unknown) => console.error(`[ceo] toolscout failed: ${e instanceof Error ? e.message : String(e)}`));
+  }
   const loop = new SchedulerLoop({
     llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
     orchestrator, auditor: new Auditor({ runtimeDir }),
     budget: new BudgetGovernor(budgetCfg.budgetMode, budgetCfg.dailyTokens), runtimeDir,
     takeoverUrl: cfg.takeoverUrl ?? "ws://127.0.0.1:7600",
+    scout,
   });
   loop.start(cfg.tickMs ?? 60_000);
   console.log("ceo-core running (Ctrl+C to stop)");

@@ -10,6 +10,7 @@ import type { AgentOrchestrator } from "./orchestrator.js";
 import type { Auditor } from "./auditor.js";
 import type { BudgetGovernor } from "./budget.js";
 import { manualsBlock } from "./skills.js";
+import type { ToolScout } from "./toolscout.js";
 import WebSocket from "ws";
 
 // Minimal socket surface the loop needs; ws's WebSocket satisfies it structurally.
@@ -31,6 +32,7 @@ export interface LoopDeps {
   orchestrator: AgentOrchestrator; auditor: Auditor; budget: BudgetGovernor;
   runtimeDir: string; takeoverUrl?: string;
   skillsDir?: string;                   // repo-root skills/ by default
+  scout?: ToolScout | null;             // autonomous tool inventory; absent = wiring off
   wsFactory?: (url: string) => WsLike;   // test seam: substitute sockets
   reconnectBaseMs?: number;              // test seam: first reconnect delay
 }
@@ -49,6 +51,7 @@ export class SchedulerLoop {
   private stopped = true; // no reconnect machinery may run before start()
   private running = false;
   private idleWaiters: (() => void)[] = [];
+  private scoutBusy = false; // one ToolScout inventory pass may run at a time
   constructor(private d: LoopDeps) {}
 
   wakeCount(): number { return this.wakeN; }
@@ -110,9 +113,10 @@ export class SchedulerLoop {
 
     // layer 2: strong decide pass — the only prompt that carries the framework manuals
     const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
+    const tools = this.d.scout?.readToolsBlock() ?? ""; // inventory tail: only the decide pass pays for it
     const dec = await this.d.llm.chat("decide", [
-      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself.` },
-      { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") },
+      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale.` },
+      { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") },
     ], { json: true, maxTokens: 4096 });
     let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
 
@@ -138,7 +142,8 @@ export class SchedulerLoop {
           // background: the cycle moves on to the next action; the card settles
           // when the sub-agent exits, and the completion re-wakes the CEO
           const title = t.title;
-          void this.d.orchestrator.spawn(a.framework, a.prompt).then((r) => {
+          const prompt = this.withToolManuals(a.prompt);
+          void this.d.orchestrator.spawn(a.framework, prompt).then((r) => {
             if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
             this.d.board.update(t.id, {
               status: r.exitCode === 0 && !r.summary.startsWith("FAIL") ? "done" : "blocked",
@@ -182,6 +187,18 @@ export class SchedulerLoop {
           // orchestrator has no per-task kill interface yet: record the
           // steering intent for the operator; real kill+respawn is deferred
           console.log(`[ceo] steer noted (kill+respawn deferred): ${card.title} <- ${a.correction}`);
+        } else if (a.type === "toolscout") {
+          if (a.query !== undefined && typeof a.query !== "string") throw new Error("invalid toolscout action: query must be a string");
+          // fire-and-forget: a full scan+verify+manuals pass can take minutes;
+          // the cycle never waits on it, and only one may be in flight
+          if (this.d.scout && !this.scoutBusy) {
+            this.scoutBusy = true;
+            void this.d.scout.run().then((r) => {
+              console.log(`[ceo] toolscout: ${r.verified.length} verified`);
+            }).catch((err: unknown) => {
+              console.error(`[ceo] toolscout failed: ${err instanceof Error ? err.message : String(err)}`);
+            }).finally(() => { this.scoutBusy = false; });
+          }
         }
       } catch (e) {
         // one bad action must not kill the rest of the wake: block its task (if any) and move on
@@ -191,6 +208,28 @@ export class SchedulerLoop {
       }
     }
     await this.maybeAudit({ promptTokens: p.usage.promptTokens + dec.usage.promptTokens, completionTokens: p.usage.completionTokens + dec.usage.completionTokens }, parsed.actions ?? []);
+  }
+
+  // Attach the manuals of verified tools the spawn prompt actually names:
+  // just-in-time tool knowledge with no permanent context tax. Word-boundary
+  // matching keeps "jqx" from pulling in the jq manual.
+  private withToolManuals(prompt: string): string {
+    const scout = this.d.scout;
+    if (!scout) return prompt;
+    const parts: string[] = [];
+    let total = 0;
+    for (const name of scout.verifiedNames()) {
+      if (total >= 2400) break; // manual budget: the prompt must stay small
+      const boundary = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+      if (!boundary.test(prompt)) continue;
+      const manual = scout.readManual(name);
+      if (manual === null) continue;
+      const piece = `## ${name}\n${manual.slice(0, 800)}`;
+      if (total + piece.length > 2400) break;
+      parts.push(piece);
+      total += piece.length;
+    }
+    return parts.length ? `${prompt}\n\n# TOOL MANUALS\n${parts.join("\n\n")}` : prompt;
   }
 
   private async maybeAudit(u: { promptTokens: number; completionTokens: number }, actions: unknown[]): Promise<void> {
