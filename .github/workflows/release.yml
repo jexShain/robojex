@@ -1,0 +1,73 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { plat: linux,   arch: x64,   ext: '' }
+          - { plat: linux,   arch: arm64, ext: '' }
+          - { plat: macos,   arch: x64,   ext: '' }
+          - { plat: macos,   arch: arm64, ext: '' }
+          - { plat: win,     arch: x64,   ext: '.exe' }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck + tests
+        run: |
+          npx tsc -b packages/ceo-core packages/takeoverd
+          npx vitest run
+
+      - name: Bundle (single CJS per entry, zero externals)
+        run: |
+          npx esbuild packages/ceo-core/dist/index.js --bundle --platform=node --format=cjs --target=node22 --outfile=build/robojex-ceo.cjs
+          npx esbuild packages/takeoverd/dist/index.js --bundle --platform=node --format=cjs --target=node22 --outfile=build/takeoverd.cjs
+
+      - name: pkg into single-file binaries
+        run: |
+          npx pkg build/robojex-ceo.cjs -t node22-${{ matrix.plat }}-${{ matrix.arch }} --output dist/pkg/robojex-ceo${{ matrix.ext }} --public --public-packages "*"
+          npx pkg build/takeoverd.cjs -t node22-${{ matrix.plat }}-${{ matrix.arch }} --output dist/pkg/robojex-takeoverd${{ matrix.ext }} --public --public-packages "*"
+
+      - name: Assemble release bundle
+        run: |
+          mkdir -p dist/robojex
+          cp dist/pkg/robojex-ceo${{ matrix.ext }} dist/pkg/robojex-takeoverd${{ matrix.ext }} dist/robojex/
+          cp -r viewer dist/robojex/ 2>/dev/null || cp -r packages/viewer dist/robojex/viewer
+          cp -r skills dist/robojex/skills
+          cat > dist/robojex/README.txt <<'EOF'
+          robojex — autonomous CEO agent
+          Usage:
+            ./robojex-takeoverd [--port 7600]     # desktop takeover daemon (observe mode by default)
+            ./robojex-ceo                         # CEO loop; configure runtime/config.json first
+          Layout: binaries + skills/ (framework manuals) + viewer/ (open viewer/index.html)
+          Config: create runtime/config.json (see repo README); secrets live only there.
+          EOF
+          cd dist && zip -r "robojex-${{ matrix.plat }}-${{ matrix.arch }}.zip" robojex && cd ..
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: robojex-${{ matrix.plat }}-${{ matrix.arch }}
+          path: dist/robojex-${{ matrix.plat }}-${{ matrix.arch }}.zip
+
+      - name: Attach to release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/robojex-${{ matrix.plat }}-${{ matrix.arch }}.zip
