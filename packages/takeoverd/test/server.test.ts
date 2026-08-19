@@ -98,6 +98,22 @@ test("observe blocks at gate; low-risk assist skips approval; hard text never pe
   ceo.close();
 });
 
+test("tryExec mirror gate: unknown kinds (not key/move/click/type) return blocked-hard", async () => {
+  const modes = new ModeStateMachine();
+  modes.set("assist");
+  server = new TakeoverServer({ modes, port: 7601, injector: null, screen: null, hotkey: null });
+  await server.start(7601);
+  const ceo = await connect();
+  
+  // Unknown kind: should be blocked-hard (same as classifyRisk hard)
+  ceo.send(JSON.stringify({ t: "ctrl", op: "input", id: "u1", action: { kind: "unknown_kind" } }));
+  expect(await nextMsg(ceo)).toMatchObject({ t: "evt", type: "input_result", id: "u1", result: "blocked-hard" });
+  
+  ceo.close();
+});
+
+
+
 test("stop() resolves promptly even with a client still connected", async () => {
   const modes = new ModeStateMachine();
   server = new TakeoverServer({ modes, port: 7601, injector: null, screen: null, hotkey: null });

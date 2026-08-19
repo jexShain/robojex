@@ -7,7 +7,7 @@ import { ContextAssembler } from "../src/context.js";
 import { AgentOrchestrator } from "../src/orchestrator.js";
 import { Auditor } from "../src/auditor.js";
 import { BudgetGovernor } from "../src/budget.js";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
@@ -307,6 +307,22 @@ test("ws: cdp_result events are mapped to a push event", async () => {
   await until(() => loop.wakeCount() === 1); // debounce + cycle driven by the cdp event
   loop.stop();
 }, 10_000);
+
+test("ws: screen_diff events include ocrText when available", async () => {
+  const dir = makeRuntime();
+  const sockets: FakeWs[] = [];
+  const loop = makeWsLoop(dir, {
+    takeoverUrl: "ws://fake.local",
+    wsFactory: () => { const s = new FakeWs(); sockets.push(s); return s as unknown as WsLike; },
+  });
+  loop.start(60_000);
+  sockets[0].emit("message", JSON.stringify({ t: "evt", type: "screen_diff", hamming: 42, ocrText: "hello world" }));
+  await until(() => loop.wakeCount() === 1);
+  loop.stop();
+}, 10_000);
+
+
+
 
 // ---- WS resilience: error handling, reconnect backoff, listener re-attach ----
 

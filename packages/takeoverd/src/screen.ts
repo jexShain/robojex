@@ -28,6 +28,7 @@ export async function grabGray(w: number, h: number, display = process.env.DISPL
 // Capture the root window as a PNG temp file and run tesseract over it.
 // Returns the recognized text, or null when OCR is unavailable on this host.
 let ocrWarned = false;
+let lastOcrFailureWasEnoent = false;
 export async function grabOcrText(display = process.env.DISPLAY): Promise<string | null> {
   const env = { ...process.env, DISPLAY: display ?? ":0" };
   const png = join(tmpdir(), `robojex-ocr-${randomUUID()}.png`);
@@ -36,11 +37,14 @@ export async function grabOcrText(display = process.env.DISPLAY): Promise<string
     await pexec(stage, ["-window", "root", `png:${png}`], { env, maxBuffer: 1 << 22 });
     stage = "tesseract";
     const { stdout } = await pexec(stage, [png, "stdout"], { env, maxBuffer: 1 << 22 });
+    lastOcrFailureWasEnoent = false;
     return stdout.trim();
   } catch (e) {
     // OCR is optional machinery: a missing binary must degrade to "no text",
     // never to a crashed poller. Warn once per process, then stay silent-null.
-    if ((e as NodeJS.ErrnoException)?.code === "ENOENT" && !ocrWarned) {
+    const isEnoent = (e as NodeJS.ErrnoException)?.code === "ENOENT";
+    if (isEnoent) lastOcrFailureWasEnoent = true;
+    if (isEnoent && !ocrWarned) {
       ocrWarned = true;
       console.warn(`[takeoverd] ${stage} unavailable: OCR text capture disabled`);
     }
@@ -48,6 +52,11 @@ export async function grabOcrText(display = process.env.DISPLAY): Promise<string
   } finally {
     rmSync(png, { force: true });
   }
+}
+
+// Exported helper: did the most recent grabOcrText failure come from ENOENT?
+export function grabOcrLastFailureWasEnoent(): boolean {
+  return lastOcrFailureWasEnoent;
 }
 
 // 32x32 gray -> 2D DCT-II -> top-left 8x8 coeffs (skip DC) -> median threshold -> 64-bit hash
@@ -98,7 +107,7 @@ export class ScreenPipeline {
         // binary is known missing it must not respawn per poll.
         if (this.ocrUsable !== false) {
           const text = await grabOcrText();
-          if (text === null) this.ocrUsable = false;
+          if (text === null && grabOcrLastFailureWasEnoent()) this.ocrUsable = false;
           else if (text) e.ocrText = text.slice(0, 500);
         }
         for (const cb of this.cbs) cb(e);

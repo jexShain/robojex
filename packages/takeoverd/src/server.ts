@@ -40,6 +40,8 @@ export class TakeoverServer {
   // works even before the real injector is wired (deps.injector === null).
   private async tryExec(action: InputAction, approved: boolean): Promise<InjectResult> {
     if (!this.deps.modes.canInject()) return "blocked-observe";
+    // Mirror gate: refuse unknown kinds same batch as classifyRisk hard
+    if (!["key", "move", "click", "type"].includes(action.kind)) return "blocked-hard";
     const risk = classifyRisk(action);
     if (risk === "hard") return "blocked-hard";
     if (!approved && risk === "high" && this.deps.modes.needsApproval()) return "needs-approval";

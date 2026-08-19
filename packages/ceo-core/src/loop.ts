@@ -232,7 +232,7 @@ export class SchedulerLoop {
     ws.on("message", (raw) => {
       try {
         const m = JSON.parse(String(raw));
-        if (m.t === "evt" && m.type === "screen_diff") this.push(`screen_diff hamming=${m.hamming}`);
+        if (m.t === "evt" && m.type === "screen_diff") this.push(`screen_diff hamming=${m.hamming}${m.ocrText ? ` ocr="${String(m.ocrText).slice(0,120)}"` : ""}`);
         if (m.t === "evt" && m.type === "mode_changed") this.push(`mode_changed -> ${m.mode}`);
         if (m.t === "evt" && m.type === "cdp_result") this.push(`cdp_${m.op}: ${String(m.result ?? "").slice(0, 200)}`);
         if (m.t === "human") this.push(`human: ${m.text}`);

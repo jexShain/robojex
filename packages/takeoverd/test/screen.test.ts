@@ -120,3 +120,37 @@ test("pollOnce attaches ocrText (first 500 chars) to diff events when OCR answer
     rmSync(bin, { recursive: true, force: true });
   }
 });
+
+test("grabOcrText: transient failure (non-zero exit) does not latch ocrUsable; next poll retries", async () => {
+  const bin = makeOcrBin();
+  // First call: tesseract exits non-zero (transient failure)
+  writeFileSync(join(bin, "tesseract"), `#!/bin/sh\nexit 1\n`);
+  chmodSync(join(bin, "tesseract"), 0o755);
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}:${prevPath ?? ""}`;
+  try {
+    const pipeline = new ScreenPipeline(1); // low threshold for faster diff
+    const events: DiffEvent[] = [];
+    pipeline.onEvent((e) => events.push(e));
+    
+    await pipeline.pollOnce(); // arm prev, no diff yet
+    // First poll: OCR fails, but should NOT latch ocrUsable=false
+    const e1 = await pipeline.pollOnce(); // pixel moved -> diff -> OCR attempted
+    expect(e1?.type).toBe("screen_diff");
+    expect(e1?.ocrText).toBeUndefined();
+    expect(events).toHaveLength(1);
+    
+    // Fix tesseract to succeed on subsequent polls
+    writeFileSync(join(bin, "tesseract"), `#!/bin/sh\nprintf 'Detected'\n`);
+    chmodSync(join(bin, "tesseract"), 0o755);
+    
+    // Second poll: should retry OCR and succeed
+    const e2 = await pipeline.pollOnce(); // pixel moved -> diff -> OCR retry
+    expect(e2?.type).toBe("screen_diff");
+    expect(e2?.ocrText).toBe("Detected");
+    expect(events).toHaveLength(2);
+  } finally {
+    process.env.PATH = prevPath;
+    rmSync(bin, { recursive: true, force: true });
+  }
+});
