@@ -109,7 +109,12 @@ export class ScreenPipeline {
   onEvent(cb: (e: DiffEvent) => void): void { this.cbs.push(cb); }
   lastHash(): bigint { return this.last ?? 0n; }
   async pollOnce(): Promise<DiffEvent | null> {
-    const g = await grabGray(32, 32);
+    let g: Uint8Array;
+    try {
+      g = await grabGray(32, 32);
+    } catch {
+      return null; // ImageMagick import missing or display error
+    }
     const h = phash(g, 32);
     this.last = h;
     if (this.prev !== null) {

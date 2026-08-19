@@ -89,7 +89,13 @@ export class HotkeyWatcher {
     });
     // Failed spawns (e.g. xinput missing -> ENOENT) surface as an async
     // 'error' event; without a listener Node rethrows it uncaught.
-    proc.on("error", () => { if (this.proc === proc) this.proc = null; });
+    proc.on("error", (e) => {
+      if (this.proc === proc) this.proc = null;
+      const isEnoent = (e as NodeJS.ErrnoException)?.code === "ENOENT";
+      if (isEnoent && !this.stopping) {
+        console.warn("[takeoverd] xinput unavailable: hotkey toggle (Ctrl+Shift) disabled");
+      }
+    });
     proc.on("exit", () => {
       if (this.proc !== proc) return; // stale exit from an already-replaced proc
       this.proc = null;

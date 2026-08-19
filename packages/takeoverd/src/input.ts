@@ -94,6 +94,7 @@ async function xprintidleMs(): Promise<number> {
 export class InputInjector {
   private keyBuf = "";
   private idleWarned = false;
+  private execWarned = false;
   constructor(private modes: ModeStateMachine, private deps: InjectorDeps = {}) {}
 
   private run(cmd: string, args: string[]): Promise<{ stdout: string }> {
@@ -142,6 +143,7 @@ export class InputInjector {
       const idle = await this.idleMs();
       if (idle !== null && idle < HUMAN_ACTIVE_MS) return "human-active";
     }
+    try {
     switch (a.kind) {
       case "key": await this.run("xdotool", ["key", a.key!]); break;
       case "move": await this.run("xdotool", ["mousemove", String(a.x), String(a.y)]); break;
@@ -151,6 +153,14 @@ export class InputInjector {
         // Unknown action kinds (schema drift, hostile input) fail closed:
         // never execute a kind we cannot reason about, whatever the approval
         return "blocked-hard";
+    }
+    } catch (e) {
+      const isEnoent = (e as NodeJS.ErrnoException)?.code === "ENOENT";
+      if (isEnoent && !this.execWarned) {
+        this.execWarned = true;
+        console.warn("[takeoverd] xdotool unavailable: input injection disabled");
+      }
+      throw e; // re-raise so server.handle catches and broadcasts "error"
     }
     // a submitted line is gone: Return/KP_Enter restart the window from empty
     this.keyBuf = a.kind === "key" && (a.key === "Return" || a.key === "KP_Enter") ? "" : candidate;
