@@ -11,6 +11,7 @@ import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import { expect, test, vi } from "vitest";
@@ -48,16 +49,19 @@ test("end to end: mission -> decide -> spawn -> audit -> rubric evolves", async 
     llm, board, ctx: new ContextAssembler(), orchestrator, auditor, budget, runtimeDir,
   });
 
-  await loop.runOnce("tick");       // patrol=act -> decide=spawn -> stub runs -> summary -> trace recorded
-  await loop.runOnce("tick");       // patrol=none -> cheap exit; audit due -> review -> patches applied
+  await loop.runOnce("tick");       // patrol=act -> decide=spawn (fired in background) -> trace + review#1
+  await loop.runOnce("tick");       // patrol=none -> cheap exit; audit due -> review#2 applies patches
+  // spawn is backgrounded: the card settles only when the sub-agent exits
+  await until(() => board.list()[0]?.status === "done");
+  loop.stop();                      // cancels the agent_done debounce: no stray cycle may spend tokens
 
   const tasks = board.list();
   expect(tasks.length).toBe(1);
   expect(tasks[0].status).toBe("done");
   expect(readFileSync(join(runtimeDir, "RUBRIC.md"), "utf8")).toContain("verify spawn results");
   expect(readFileSync(join(runtimeDir, "MEMORY.md"), "utf8")).toContain("stub agent reliable");
-  // full token ledger: run1 = patrol 12 + decide 70 + sub-agent summary 12 + review#1 10;
-  // run2 = patrol 12 + review#2 40 -> 156 total (summary + review usage must be booked)
+  // full token ledger: run1 = patrol 12 + decide 70 + review#1 10; run2 = patrol 12
+  // + review#2 40; sub-agent summary 12 booked when the card settles -> 156 total
   expect(budget.line()).toContain("spent 156 tokens");
 }, 30_000);
 
@@ -114,6 +118,93 @@ test("patrol-only gate: patrol runs, decide never called", async () => {
   expect(chat.mock.calls[0]?.[0]).toBe("patrol");
 });
 
+test("decide prompt carries the framework manuals; patrol prompt stays lean", async () => {
+  const runtimeDir = makeRuntime();
+  const users: { slot: string; content: string }[] = [];
+  const chat = vi.fn(async (slot: string, msgs: { role: string; content: string }[]) => {
+    if (msgs[1]) users.push({ slot, content: String(msgs[1].content) });
+    return slot === "patrol"
+      ? { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } }
+      : { content: '{"actions":[]}', usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const skillsDir = fileURLToPath(new URL("../../../skills/", import.meta.url)); // repo-root skills/
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir, skillsDir,
+  });
+  await loop.runOnce("tick");
+
+  const decideUser = users.find((u) => u.slot === "decide")!.content;
+  expect(decideUser).toContain("# FRAMEWORK MANUALS");
+  expect(decideUser).toContain("Hermes Agent");    // hermes.md full text
+  expect(decideUser).toContain("Claude Code");     // claude-code.md full text
+  // manuals ride only on the expensive decide pass, never on patrol
+  expect(users.find((u) => u.slot === "patrol")!.content).not.toContain("FRAMEWORK MANUALS");
+});
+
+test("skills dir missing manuals: no manual block in the decide prompt, cycle still runs", async () => {
+  const runtimeDir = makeRuntime();
+  const users: { slot: string; content: string }[] = [];
+  const chat = vi.fn(async (slot: string, msgs: { role: string; content: string }[]) => {
+    if (msgs[1]) users.push({ slot, content: String(msgs[1].content) });
+    return slot === "patrol"
+      ? { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } }
+      : { content: '{"actions":[]}', usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"),
+    runtimeDir, skillsDir: join(runtimeDir, "no-such-skills"),
+  });
+  await loop.runOnce("tick"); // must not throw on the absent dir
+  expect(users.find((u) => u.slot === "decide")!.content).not.toContain("# FRAMEWORK MANUALS");
+});
+
+test("spawn is backgrounded: the cycle returns immediately, the card settles later", async () => {
+  const runtimeDir = makeRuntime();
+  // gated sub-agent: the test decides when "execution" finishes
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => { release = r; });
+  const spawnFn = vi.fn(async () => {
+    await gate;
+    return { exitCode: 0, summary: "all good", logPath: "/dev/null", summaryUsage: null };
+  });
+  let decides = 0;
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    decides++;
+    return {
+      content: decides === 1
+        ? JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "bg job", prompt: "work" }] })
+        : '{"actions":[]}',
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board, ctx: new ContextAssembler(),
+    orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+
+  await loop.runOnce("tick");   // returns even though the sub-agent gate is still closed
+  expect(spawnFn).toHaveBeenCalledTimes(1);
+  expect(board.list()[0]?.status).toBe("running"); // in flight, not settled
+  expect(loop.wakeCount()).toBe(1);
+  const second = loop.runOnce("tick"); // next cycle starts without waiting on the sub-agent
+  expect(loop.wakeCount()).toBe(2);
+  await second;
+  expect(board.list().length).toBe(1);  // the second cycle spawned nothing new
+
+  release();                     // sub-agent finishes -> card settles, completion re-wakes the CEO
+  await until(() => board.list()[0]?.status === "done");
+  expect(board.list()[0]?.resultSummary).toBe("all good");
+  await until(() => loop.wakeCount() === 3); // agent_done event drove one more cycle
+  loop.stop();
+}, 10_000);
+
 test("in-flight guard: concurrent runOnce calls serialize", async () => {
   const runtimeDir = makeRuntime();
   const order: string[] = [];
@@ -149,6 +240,19 @@ test("in-flight guard: concurrent runOnce calls serialize", async () => {
   // cycles must not interleave: the second only starts after the first fully ends
   expect(order).toEqual(["start:patrol", "end:patrol", "start:patrol", "end:patrol"]);
 });
+
+test("ws: cdp_result events are mapped to a push event", async () => {
+  const dir = makeRuntime();
+  const sockets: FakeWs[] = [];
+  const loop = makeWsLoop(dir, {
+    takeoverUrl: "ws://fake.local",
+    wsFactory: () => { const s = new FakeWs(); sockets.push(s); return s as unknown as WsLike; },
+  });
+  loop.start(60_000);
+  sockets[0].emit("message", JSON.stringify({ t: "evt", type: "cdp_result", op: "cdp_snapshot", result: "page text" }));
+  await until(() => loop.wakeCount() === 1); // debounce + cycle driven by the cdp event
+  loop.stop();
+}, 10_000);
 
 // ---- WS resilience: error handling, reconnect backoff, listener re-attach ----
 

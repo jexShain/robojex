@@ -1,6 +1,7 @@
 // packages/takeoverd/test/server.test.ts
 import { TakeoverServer } from "../src/server.js";
 import { ModeStateMachine } from "../src/modes.js";
+import type { CdpChannel } from "../src/cdp.js";
 import type { InputInjector } from "../src/input.js";
 import WebSocket from "ws";
 import { expect, test, afterEach, vi } from "vitest";
@@ -190,4 +191,26 @@ test("injector exec failure still answers the requester with result error", asyn
     realSleep(1000).then(() => "missing"),
   ]);
   expect(res).toMatchObject({ t: "evt", type: "input_result", id: "e1", result: "error" });
+});
+
+test("cdp_open/cdp_snapshot are forwarded to the cdp channel; results broadcast", async () => {
+  const modes = new ModeStateMachine();
+  const calls: string[] = [];
+  const cdp: CdpChannel = {
+    available: async () => true,
+    open: async (url: string) => { calls.push(`open:${url}`); return "Example Domain"; },
+    snapshot: async () => { calls.push("snapshot"); return "page text"; },
+  };
+  server = new TakeoverServer({ modes, port: 7601, injector: null, screen: null, hotkey: null, cdp });
+  await server.start(7601);
+  const ceo = await connect();
+
+  ceo.send(JSON.stringify({ t: "ctrl", op: "cdp_open", url: "https://example.com" }));
+  expect(await nextMsg(ceo)).toMatchObject({ t: "evt", type: "cdp_result", op: "cdp_open", url: "https://example.com", result: "Example Domain" });
+
+  ceo.send(JSON.stringify({ t: "ctrl", op: "cdp_snapshot" }));
+  expect(await nextMsg(ceo)).toMatchObject({ t: "evt", type: "cdp_result", op: "cdp_snapshot", result: "page text" });
+
+  expect(calls).toEqual(["open:https://example.com", "snapshot"]);
+  ceo.close();
 });

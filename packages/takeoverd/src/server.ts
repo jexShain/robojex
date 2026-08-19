@@ -7,6 +7,7 @@ import type { InputInjector, InputAction } from "./input.js";
 import { grabGray } from "./screen.js";
 import type { ScreenPipeline } from "./screen.js";
 import type { HotkeyWatcher } from "./hotkey.js";
+import type { CdpChannel } from "./cdp.js";
 
 type Msg = Record<string, unknown> & { t?: string };
 type InjectResult = "done" | "blocked-observe" | "blocked-hard" | "needs-approval";
@@ -16,10 +17,10 @@ export interface ServerDeps {
   injector: InputInjector | null;
   screen: ScreenPipeline | null;
   hotkey: HotkeyWatcher | null;
+  cdp?: CdpChannel | null; // null / absent: cdp signaling is a no-op
   port?: number;
   approvalTimeoutMs?: number;
 }
-
 export class TakeoverServer {
   private wss: WebSocketServer | null = null;
   private clients = new Set<WebSocket>();
@@ -120,6 +121,20 @@ export class TakeoverServer {
     if (m.op === "screenshot" && this.deps.screen) {
       const g = await grabGray(64, 36);
       this.broadcast({ t: "evt", type: "screenshot_gray", w: 64, h: 36, data: Array.from(g) });
+      return;
+    }
+    if (m.op === "cdp_open" && this.deps.cdp) {
+      const url = typeof m.url === "string" ? m.url : "";
+      // a rejected cdp call still answers everyone — never silence
+      const result = await this.deps.cdp.open(url)
+        .catch((e: unknown) => `cdp-error: ${e instanceof Error ? e.message : String(e)}`);
+      this.broadcast({ t: "evt", type: "cdp_result", op: "cdp_open", url, result });
+      return;
+    }
+    if (m.op === "cdp_snapshot" && this.deps.cdp) {
+      const result = await this.deps.cdp.snapshot()
+        .catch((e: unknown) => `cdp-error: ${e instanceof Error ? e.message : String(e)}`);
+      this.broadcast({ t: "evt", type: "cdp_result", op: "cdp_snapshot", result });
       return;
     }
   }

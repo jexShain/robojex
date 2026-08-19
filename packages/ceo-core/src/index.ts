@@ -13,7 +13,7 @@ import { BudgetGovernor } from "./budget.js";
 import { SchedulerLoop } from "./loop.js";
 
 // runtime state that must never enter git history (config.json holds the API key)
-export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\npids.json\nruns/\nshots/\n";
+export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\npids.json\nruns/\nshots/\n";
 const SEED_DOCS = ["MISSION.md", "RUBRIC.md", "MEMORY.md"] as const;
 
 export function seedRuntimeFiles(runtimeDir: string): void {

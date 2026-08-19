@@ -1,12 +1,14 @@
 // packages/ceo-core/src/loop.ts
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { LLMClient } from "./llm.js";
 import type { TaskBoard } from "./board.js";
 import type { ContextAssembler } from "./context.js";
 import type { AgentOrchestrator } from "./orchestrator.js";
 import type { Auditor } from "./auditor.js";
 import type { BudgetGovernor } from "./budget.js";
+import { manualsBlock } from "./skills.js";
 import WebSocket from "ws";
 
 // Minimal socket surface the loop needs; ws's WebSocket satisfies it structurally.
@@ -27,9 +29,13 @@ export interface LoopDeps {
   llm: LLMClient; board: TaskBoard; ctx: ContextAssembler;
   orchestrator: AgentOrchestrator; auditor: Auditor; budget: BudgetGovernor;
   runtimeDir: string; takeoverUrl?: string;
+  skillsDir?: string;                   // repo-root skills/ by default
   wsFactory?: (url: string) => WsLike;   // test seam: substitute sockets
   reconnectBaseMs?: number;              // test seam: first reconnect delay
 }
+
+// packages/ceo-core/{src,dist} -> repo root -> skills/
+const DEFAULT_SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "skills");
 
 export class SchedulerLoop {
   private queue: string[] = [];
@@ -101,10 +107,11 @@ export class SchedulerLoop {
     if (gate === "patrol-only") { await this.maybeAudit(p.usage, []); return; } // near the cap: no expensive decide pass
     if (triage.action !== "act") { await this.maybeAudit(p.usage, []); return; }
 
-    // layer 2: strong decide pass
+    // layer 2: strong decide pass — the only prompt that carries the framework manuals
+    const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
     const dec = await this.d.llm.chat("decide", [
       { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself.` },
-      { role: "user", content: context },
+      { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") },
     ], { json: true, maxTokens: 4096 });
     let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
 
@@ -127,11 +134,20 @@ export class SchedulerLoop {
             throw new Error(`invalid spawn action: ${problems.join("; ")}`);
           }
           this.d.board.update(t.id, { status: "running" });
-          const r = await this.d.orchestrator.spawn(a.framework, a.prompt);
-          if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
-          this.d.board.update(t.id, {
-            status: r.exitCode === 0 && !r.summary.startsWith("FAIL") ? "done" : "blocked",
-            resultSummary: r.summary, attempts: 1,
+          // background: the cycle moves on to the next action; the card settles
+          // when the sub-agent exits, and the completion re-wakes the CEO
+          const title = t.title;
+          void this.d.orchestrator.spawn(a.framework, a.prompt).then((r) => {
+            if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
+            this.d.board.update(t.id, {
+              status: r.exitCode === 0 && !r.summary.startsWith("FAIL") ? "done" : "blocked",
+              resultSummary: r.summary, attempts: 1,
+            });
+            this.push(`agent_done: ${title} -> ${r.summary}`);
+          }).catch((err: unknown) => {
+            const reason = err instanceof Error ? err.message : String(err);
+            console.error(`[ceo] action failed: ${reason}`);
+            this.d.board.update(t.id, { status: "blocked", resultSummary: `action failed: ${reason}`, attempts: 1 });
           });
         } else if (a.type === "mission_update") {
           if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid mission_update action: text must be a non-empty string");
@@ -196,6 +212,7 @@ export class SchedulerLoop {
         const m = JSON.parse(String(raw));
         if (m.t === "evt" && m.type === "screen_diff") this.push(`screen_diff hamming=${m.hamming}`);
         if (m.t === "evt" && m.type === "mode_changed") this.push(`mode_changed -> ${m.mode}`);
+        if (m.t === "evt" && m.type === "cdp_result") this.push(`cdp_${m.op}: ${String(m.result ?? "").slice(0, 200)}`);
         if (m.t === "human") this.push(`human: ${m.text}`);
       } catch { /* ignore malformed */ }
     });

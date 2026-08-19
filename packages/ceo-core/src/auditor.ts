@@ -2,15 +2,27 @@
 import { appendFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import Database from "better-sqlite3";
 import type { LLMClient } from "./llm.js";
 
 export interface DecisionTrace { contextDigest: string; actions: unknown[]; cost: number; }
 
 export class Auditor {
-  private traces: DecisionTrace[] = [];
-  constructor(private opts: { runtimeDir: string; reviewEvery?: number }) {}
+  private traces: DecisionTrace[] = []; // in-memory batch, consumed by review()
+  private db: Database.Database;        // durable log, survives CEO restarts
+  constructor(private opts: { runtimeDir: string; reviewEvery?: number }) {
+    this.db = new Database(join(opts.runtimeDir, "traces.sqlite"));
+    this.db.pragma("journal_mode = WAL");
+    this.db.exec(`CREATE TABLE IF NOT EXISTS decisions (
+      id TEXT PRIMARY KEY, ts INTEGER, context_digest TEXT, actions TEXT, cost INTEGER)`);
+  }
 
-  record(d: DecisionTrace): void { this.traces.push(d); }
+  record(d: DecisionTrace): void {
+    this.traces.push(d);
+    this.db.prepare("INSERT INTO decisions (id, ts, context_digest, actions, cost) VALUES (?, ?, ?, ?, ?)")
+      .run(randomUUID(), Date.now(), d.contextDigest, JSON.stringify(d.actions), d.cost);
+  }
   due(): boolean { return this.traces.length >= (this.opts.reviewEvery ?? 20); }
 
   async review(llm: LLMClient): Promise<{ rubricPatch: string; memoryPatch: string; missionNote: string; usage: { promptTokens: number; completionTokens: number } }> {

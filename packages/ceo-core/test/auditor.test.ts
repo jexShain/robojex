@@ -1,6 +1,7 @@
 // packages/ceo-core/test/auditor.test.ts
 import { Auditor } from "../src/auditor.js";
 import type { LLMClient } from "../src/llm.js";
+import Database from "better-sqlite3";
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,4 +81,26 @@ test("snapshotRuntime stages existing files even when some are missing", async (
   expect(diffTree).toContain("RUBRIC.md");
   // MEMORY.md should also be in snapshot
   expect(diffTree).toContain("MEMORY.md");
+});
+
+test("record() persists decisions to runtime/traces.sqlite (WAL); rows survive a reopen", () => {
+  const dir = mkdtempSync(join(tmpdir(), "robojex-audit-traces-"));
+  const a = new Auditor({ runtimeDir: dir, reviewEvery: 10 });
+  a.record({ contextDigest: "wake#1", actions: [{ type: "spawn", framework: "hermes" }], cost: 42 });
+  a.record({ contextDigest: "wake#2", actions: [], cost: 7 });
+
+  // a fresh connection must see the rows: durability on disk, not just the in-memory review buffer
+  const db = new Database(join(dir, "traces.sqlite"));
+  expect(db.pragma("journal_mode", { simple: true })).toBe("wal");
+  const rows = db.prepare("SELECT id, ts, context_digest, actions, cost FROM decisions ORDER BY ts, rowid")
+    .all() as { id: string; ts: number; context_digest: string; actions: string; cost: number }[];
+  db.close();
+  expect(rows.length).toBe(2);
+  expect(rows[0].context_digest).toBe("wake#1");
+  expect(JSON.parse(rows[0].actions)).toEqual([{ type: "spawn", framework: "hermes" }]);
+  expect(rows[0].cost).toBe(42);
+  expect(typeof rows[0].ts).toBe("number");
+  expect(rows[1].context_digest).toBe("wake#2");
+  expect(JSON.parse(rows[1].actions)).toEqual([]);
+  expect(rows[1].cost).toBe(7);
 });
