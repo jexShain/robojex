@@ -318,10 +318,16 @@ export class TentacleManager {
   list(): TentacleDefinition[] { return [...this.defs.values()]; }
 
   // Auth headers resolved at call time — the key itself is never on disk.
+  // Authorization headers follow the Bearer convention (OpenAI-compatible APIs
+  // and most REST services reject a bare key); other headers pass through raw.
   private authHeaders(t: TentacleDefinition): Record<string, string> {
     if (!t.auth) return {};
     const key = process.env[t.auth.apiKeyEnv];
-    return key === undefined ? {} : { [t.auth.header]: key };
+    if (key === undefined) return {};
+    if (/^authorization$/i.test(t.auth.header) && !/^bearer\s/i.test(key)) {
+      return { [t.auth.header]: `Bearer ${key}` };
+    }
+    return { [t.auth.header]: key };
   }
 
   // Load every spec and plugin from runtime/tentacles/. Invalid JSON specs are

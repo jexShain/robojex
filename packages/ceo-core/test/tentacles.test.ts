@@ -144,6 +144,26 @@ test("call rest: auth header pulled from the apiKeyEnv variable, {arg} path temp
   await expect(mgr.call("users-api", "nope")).rejects.toThrow(/unknown op/);
 });
 
+test("call rest: Authorization header auto-prefixes Bearer for OpenAI-compatible APIs", async () => {
+  const runtimeDir = makeRuntime();
+  const { fetchImpl, calls } = fetchOf({ "https://api.example.com/v1/models": { status: 200, body: "[]" } });
+  seedSpecs(runtimeDir, [restDef({
+    name: "oa-api", endpoint: "https://api.example.com/v1",
+    auth: { header: "Authorization", apiKeyEnv: "TENTACLES_BEARER_KEY" },
+    ops: [{ name: "models", method: "GET", path: "/models", description: "list models" }],
+    blurb: "openai-style",
+  })]);
+  const mgr = new TentacleManager({ llm: null, runtimeDir, fetchImpl });
+  await mgr.loadAll();
+  process.env.TENTACLES_BEARER_KEY = "sk-plain";
+  try {
+    await mgr.call("oa-api", "models");
+    expect((calls[0].init.headers as Record<string, string>)["Authorization"]).toBe("Bearer sk-plain");
+  } finally {
+    delete process.env.TENTACLES_BEARER_KEY;
+  }
+});
+
 test("call rest: a hanging endpoint rejects after the call timeout; auth header is omitted when the env var is unset", async () => {
   const runtimeDir = makeRuntime();
   const hang = (async () => new Promise<Response>(() => { /* never settles */ })) as unknown as typeof fetch;
