@@ -27,7 +27,7 @@ export interface ScoutReport {
 
 // Test seams: the real implementations shell out; tests inject fakes.
 export type WhichFn = (name: string) => Promise<string | null>;
-export type SpawnFn = (cmd: string, args: string[], opts?: { timeoutMs?: number }) => Promise<{ code: number; stdout: string; stderr: string }>;
+export type SpawnFn = (cmd: string, args: string[], opts?: { timeoutMs?: number; env?: NodeJS.ProcessEnv }) => Promise<{ code: number; stdout: string; stderr: string }>;
 
 export const SEED_TOOLS: SeedTool[] = [
   // ---- system: packaging, transfer, process/session management ----
@@ -154,7 +154,7 @@ const defaultWhich: WhichFn = (name) => new Promise((resolve) => {
 
 // ES2022 target has no Promise.withResolvers typings; executor form matches loop.ts
 const defaultSpawn: SpawnFn = (cmd, args, o = {}) => new Promise((resolve, reject) => {
-  const child = pspawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = pspawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env: o.env });
   let stdout = "", stderr = "", timedOut = false;
   const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, o.timeoutMs ?? VERIFY_TIMEOUT_MS);
   child.stdout?.setEncoding("utf8");
@@ -206,7 +206,7 @@ export class ToolScout {
       // stdout first; nc-style probes answer on stderr only when stdout is empty
       const line = r.stdout.split("\n").map((s) => s.trim()).find((s) => s.length > 0)
         ?? r.stderr.split("\n").map((s) => s.trim()).find((s) => s.length > 0);
-      return line ? line.slice(0, 80) : null;
+      return line ? line.slice(0, 40) : null; // short tag: this line ships in the standing TOOLS.md context
     } catch {
       return null;
     }
@@ -221,7 +221,7 @@ export class ToolScout {
       const inst = t.install;
       if (!inst) continue;
       if (inst.npm) {
-        try { await this.spawn("npm", ["install", "-g", inst.npm], { timeoutMs: INSTALL_TIMEOUT_MS }); }
+        try { await this.spawn("npm", ["install", "-g", inst.npm], { timeoutMs: INSTALL_TIMEOUT_MS, env: { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --dns-result-order=ipv4first`.trim() } }); }
         catch (e) { console.error(`[toolscout] npm install ${inst.npm} failed: ${e instanceof Error ? e.message : String(e)}`); }
       } else if (inst.pip) {
         try { await this.spawn("pip", ["install", "--user", inst.pip], { timeoutMs: INSTALL_TIMEOUT_MS }); }
