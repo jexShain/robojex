@@ -195,6 +195,7 @@ test("injector exec failure still answers the requester with result error", asyn
 
 test("cdp_open/cdp_snapshot are forwarded to the cdp channel; results broadcast", async () => {
   const modes = new ModeStateMachine();
+  modes.set("full"); // inject-capable mode: the cdp channel is reachable
   const calls: string[] = [];
   const cdp: CdpChannel = {
     available: async () => true,
@@ -212,5 +213,27 @@ test("cdp_open/cdp_snapshot are forwarded to the cdp channel; results broadcast"
   expect(await nextMsg(ceo)).toMatchObject({ t: "evt", type: "cdp_result", op: "cdp_snapshot", result: "page text" });
 
   expect(calls).toEqual(["open:https://example.com", "snapshot"]);
+  ceo.close();
+});
+
+test("observe mode gates cdp ops: channel untouched, result blocked-observe", async () => {
+  const modes = new ModeStateMachine(); // boots in observe
+  const calls: string[] = [];
+  const cdp: CdpChannel = {
+    available: async () => true,
+    open: async (url: string) => { calls.push(`open:${url}`); return "Example Domain"; },
+    snapshot: async () => { calls.push("snapshot"); return "page text"; },
+  };
+  server = new TakeoverServer({ modes, port: 7601, injector: null, screen: null, hotkey: null, cdp });
+  await server.start(7601);
+  const ceo = await connect();
+
+  ceo.send(JSON.stringify({ t: "ctrl", op: "cdp_open", url: "https://example.com" }));
+  expect(await nextMsg(ceo)).toMatchObject({ t: "evt", type: "cdp_result", op: "cdp_open", result: "blocked-observe" });
+
+  ceo.send(JSON.stringify({ t: "ctrl", op: "cdp_snapshot" }));
+  expect(await nextMsg(ceo)).toMatchObject({ t: "evt", type: "cdp_result", op: "cdp_snapshot", result: "blocked-observe" });
+
+  expect(calls).toEqual([]); // the gate answers before the channel is ever reached
   ceo.close();
 });

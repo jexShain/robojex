@@ -123,6 +123,12 @@ export class TakeoverServer {
       this.broadcast({ t: "evt", type: "screenshot_gray", w: 64, h: 36, data: Array.from(g) });
       return;
     }
+    // cdp browsing drives the live desktop: observe mode gates it exactly like
+    // input injection, and the refusal is broadcast — never silence
+    if ((m.op === "cdp_open" || m.op === "cdp_snapshot") && !this.deps.modes.canInject()) {
+      this.broadcast({ t: "evt", type: "cdp_result", op: m.op, result: "blocked-observe" });
+      return;
+    }
     if (m.op === "cdp_open" && this.deps.cdp) {
       const url = typeof m.url === "string" ? m.url : "";
       // a rejected cdp call still answers everyone — never silence

@@ -110,7 +110,7 @@ export class SchedulerLoop {
     // layer 2: strong decide pass — the only prompt that carries the framework manuals
     const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
     const dec = await this.d.llm.chat("decide", [
-      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself.` },
+      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself.` },
       { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") },
     ], { json: true, maxTokens: 4096 });
     let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
@@ -148,6 +148,10 @@ export class SchedulerLoop {
             const reason = err instanceof Error ? err.message : String(err);
             console.error(`[ceo] action failed: ${reason}`);
             this.d.board.update(t.id, { status: "blocked", resultSummary: `action failed: ${reason}`, attempts: 1 });
+          }).catch((err: unknown) => {
+            // terminal guard: a crash inside the settlement handlers above must
+            // not escape as an unhandled rejection and take the process down
+            console.error(`[ceo] spawn handler crashed: ${err instanceof Error ? err.message : String(err)}`);
           });
         } else if (a.type === "mission_update") {
           if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid mission_update action: text must be a non-empty string");
@@ -159,6 +163,14 @@ export class SchedulerLoop {
           if (typeof a.input !== "object" || a.input === null) throw new Error("invalid takeover action: input must be an object");
           if (this.ws && this.ws.readyState === WS_OPEN) {
             this.ws.send(JSON.stringify({ t: "ctrl", op: "input", id: crypto.randomUUID(), action: a.input }));
+          }
+        } else if (a.type === "cdp") {
+          if (a.op !== "cdp_open" && a.op !== "cdp_snapshot") throw new Error("invalid cdp action: op must be 'cdp_open' or 'cdp_snapshot'");
+          // browser observation rides the takeover link; the server re-gates by mode
+          if (this.ws && this.ws.readyState === WS_OPEN) {
+            this.ws.send(JSON.stringify({ t: "ctrl", op: a.op, url: a.url }));
+          } else {
+            console.error(`[ceo] cdp action dropped: takeover link down`);
           }
         }
       } catch (e) {

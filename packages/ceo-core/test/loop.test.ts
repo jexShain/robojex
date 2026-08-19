@@ -340,3 +340,68 @@ test("ws: error degrades to CLI, reconnect re-attaches listeners, backoff resets
     vi.useRealTimers();
   }
 });
+
+test("ws: cdp action from decide signals the socket; drop is logged when the link is down", async () => {
+  const dir = makeRuntime();
+  const sockets: FakeWs[] = [];
+  const systems: { slot: string; content: string }[] = [];
+  const chat = vi.fn(async (slot: string, msgs: { role: string; content: string }[]) => {
+    if (msgs[0]) systems.push({ slot, content: String(msgs[0].content) });
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return { content: JSON.stringify({ actions: [{ type: "cdp", op: "cdp_open", url: "https://example.com" }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(dir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir: dir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"),
+    runtimeDir: dir, takeoverUrl: "ws://fake.local",
+    wsFactory: () => { const s = new FakeWs(); sockets.push(s); return s as unknown as WsLike; },
+  });
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    loop.start(60_000);
+    sockets[0].emit("open");
+    sockets[0].emit("message", JSON.stringify({ t: "human", text: "browse" }));
+    await until(() => sockets[0].sent.length === 1);
+    expect(JSON.parse(sockets[0].sent[0])).toEqual({ t: "ctrl", op: "cdp_open", url: "https://example.com" });
+
+    // link down: the same decision again — logged and dropped, never sent
+    sockets[0].readyState = 3;
+    sockets[0].emit("message", JSON.stringify({ t: "human", text: "browse again" }));
+    await until(() => err.mock.calls.some((c) => String(c[0]).includes("cdp action dropped")));
+    expect(sockets[0].sent.length).toBe(1);
+
+    // the decide system prompt advertises the new action type
+    expect(systems.find((s) => s.slot === "decide")!.content).toContain("cdp_open");
+  } finally {
+    err.mockRestore();
+    loop.stop();
+  }
+}, 10_000);
+
+test("spawn settlement handlers that themselves throw stay contained: one log line, no unhandled rejection", async () => {
+  const runtimeDir = makeRuntime();
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return { content: JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "doomed job", prompt: "work" }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const spawnFn = vi.fn(async () => { throw new Error("spawn boom"); });
+  const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
+  const realUpdate = board.update.bind(board);
+  let updates = 0;
+  // update #2 is the settlement write: make the store blow up inside the
+  // catch handler itself — its throw must not pierce the process
+  board.update = (id, patch) => { if (++updates === 2) throw new Error("sqlite locked"); realUpdate(id, patch); };
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const loop = new SchedulerLoop({
+      llm: { chat } as unknown as LLMClient, board, ctx: new ContextAssembler(),
+      orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+    });
+    await loop.runOnce("tick"); // fires the background settlement chain
+    await until(() => err.mock.calls.some((c) => String(c[0]).includes("spawn handler crashed")));
+  } finally {
+    err.mockRestore();
+  }
+}, 10_000);
