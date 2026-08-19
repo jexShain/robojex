@@ -40,6 +40,10 @@ export interface LoopDeps {
 // packages/ceo-core/{src,dist} -> repo root -> skills/
 const DEFAULT_SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "skills");
 
+// Verified tool names that are also everyday English words: attaching their
+// manuals on a bare word-boundary hit would fire on half of all prompts.
+const GENERIC_NAMES = ["go", "make", "file", "http", "convert", "identify", "just", "delta"];
+
 export class SchedulerLoop {
   private queue: string[] = [];
   private timer: NodeJS.Timeout | undefined;
@@ -51,7 +55,6 @@ export class SchedulerLoop {
   private stopped = true; // no reconnect machinery may run before start()
   private running = false;
   private idleWaiters: (() => void)[] = [];
-  private scoutBusy = false; // one ToolScout inventory pass may run at a time
   constructor(private d: LoopDeps) {}
 
   wakeCount(): number { return this.wakeN; }
@@ -115,7 +118,7 @@ export class SchedulerLoop {
     const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
     const tools = this.d.scout?.readToolsBlock() ?? ""; // inventory tail: only the decide pass pays for it
     const dec = await this.d.llm.chat("decide", [
-      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale.` },
+      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list.` },
       { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") },
     ], { json: true, maxTokens: 4096 });
     let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
@@ -190,14 +193,14 @@ export class SchedulerLoop {
         } else if (a.type === "toolscout") {
           if (a.query !== undefined && typeof a.query !== "string") throw new Error("invalid toolscout action: query must be a string");
           // fire-and-forget: a full scan+verify+manuals pass can take minutes;
-          // the cycle never waits on it, and only one may be in flight
-          if (this.d.scout && !this.scoutBusy) {
-            this.scoutBusy = true;
-            void this.d.scout.run().then((r) => {
+          // the cycle never waits on it, and ToolScout.run itself collapses
+          // re-entry while a pass is in flight
+          if (this.d.scout) {
+            void this.d.scout.run(typeof a.query === "string" ? a.query : undefined).then((r) => {
               console.log(`[ceo] toolscout: ${r.verified.length} verified`);
             }).catch((err: unknown) => {
               console.error(`[ceo] toolscout failed: ${err instanceof Error ? err.message : String(err)}`);
-            }).finally(() => { this.scoutBusy = false; });
+            });
           }
         }
       } catch (e) {
@@ -212,7 +215,9 @@ export class SchedulerLoop {
 
   // Attach the manuals of verified tools the spawn prompt actually names:
   // just-in-time tool knowledge with no permanent context tax. Word-boundary
-  // matching keeps "jqx" from pulling in the jq manual.
+  // matching keeps "jqx" from pulling in the jq manual — except for names that
+  // are everyday English words ("go check the file"), which count only when
+  // backticked or heading their own line like a command-list entry.
   private withToolManuals(prompt: string): string {
     const scout = this.d.scout;
     if (!scout) return prompt;
@@ -220,8 +225,11 @@ export class SchedulerLoop {
     let total = 0;
     for (const name of scout.verifiedNames()) {
       if (total >= 2400) break; // manual budget: the prompt must stay small
-      const boundary = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
-      if (!boundary.test(prompt)) continue;
+      const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const named = GENERIC_NAMES.includes(name)
+        ? new RegExp(`\`${esc}\``).test(prompt) || new RegExp(`\n${esc} `).test(prompt)
+        : new RegExp(`\\b${esc}\\b`).test(prompt);
+      if (!named) continue;
       const manual = scout.readManual(name);
       if (manual === null) continue;
       const piece = `## ${name}\n${manual.slice(0, 800)}`;

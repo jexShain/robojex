@@ -14,7 +14,7 @@ import { SchedulerLoop } from "./loop.js";
 import { ToolScout } from "./toolscout.js";
 
 // runtime state that must never enter git history (config.json holds the API key)
-export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\npids.json\nruns/\nshots/\n";
+export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\n";
 const SEED_DOCS = ["MISSION.md", "RUBRIC.md", "MEMORY.md"] as const;
 
 export function seedRuntimeFiles(runtimeDir: string): void {
@@ -98,7 +98,8 @@ function main(): void {
   const orchestrator = new AgentOrchestrator({ llm, runtimeDir });
   orchestrator.reapOrphans(); // a crashed CEO's detached sub-agents must die before new work starts
   const budgetCfg = resolveBudgetConfig(cfg);
-  const scout = new ToolScout({ llm, runtimeDir });
+  const budget = new BudgetGovernor(budgetCfg.budgetMode, budgetCfg.dailyTokens);
+  const scout = new ToolScout({ llm, runtimeDir, spend: (u) => budget.spend(u) }); // scout LLM calls are budget burn too
   // first boot: build the verified tool inventory once, in the background —
   // later refreshes come from the CEO's own toolscout actions
   if (!existsSync(join(runtimeDir, "TOOLS.md"))) {
@@ -108,7 +109,7 @@ function main(): void {
   const loop = new SchedulerLoop({
     llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
     orchestrator, auditor: new Auditor({ runtimeDir }),
-    budget: new BudgetGovernor(budgetCfg.budgetMode, budgetCfg.dailyTokens), runtimeDir,
+    budget, runtimeDir,
     takeoverUrl: cfg.takeoverUrl ?? "ws://127.0.0.1:7600",
     scout,
   });

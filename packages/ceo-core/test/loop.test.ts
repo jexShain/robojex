@@ -504,7 +504,7 @@ test("decide prompt carries the AVAILABLE TOOLS block at the tail; patrol stays 
   expect(users.find((u) => u.slot === "patrol")!.content).not.toContain("AVAILABLE TOOLS");
 });
 
-test("toolscout action: scout.run fires in the background, cycle never blocks, one run per cycle", async () => {
+test("toolscout action: scout.run fires in the background with the query; reentry suppression lives inside ToolScout", async () => {
   const runtimeDir = makeRuntime();
   // gated scan: the test decides when "verification" finishes
   let release: () => void = () => {};
@@ -519,7 +519,7 @@ test("toolscout action: scout.run fires in the background, cycle never blocks, o
     return {
       content: JSON.stringify({ actions: [
         { type: "toolscout", query: "pdf tooling" },
-        { type: "toolscout", query: "again" }, // same cycle: re-entry must be suppressed
+        { type: "toolscout", query: "again" }, // same cycle: both fire; ToolScout's own guard collapses them
       ] }),
       usage: { promptTokens: 50, completionTokens: 20 },
     };
@@ -534,7 +534,9 @@ test("toolscout action: scout.run fires in the background, cycle never blocks, o
       scout: scout as unknown as ToolScout,
     });
     await loop.runOnce("tick"); // returns although the scan gate is still closed
-    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(2);                    // the loop always fires run()
+    expect(run).toHaveBeenNthCalledWith(1, "pdf tooling");   // and forwards the query verbatim
+    expect(run).toHaveBeenNthCalledWith(2, "again");
 
     release();
     await until(() => log.mock.calls.some((c) => String(c[0]).includes("toolscout: 1 verified")));
@@ -598,5 +600,52 @@ test("spawn prompt: a tool name inside a larger word does not match (jqx is not 
   });
   await loop.runOnce("tick");
   const sent = spawnFn.mock.calls[0]?.[1] as string;
+
   expect(sent).toBe("check the jqx config file"); // word boundary held: no manual block
+});
+
+test("spawn prompt: generic words (go/file/http) attach manuals only backticked or line-start; other names keep word-boundary match", async () => {
+  const runtimeDir = makeRuntime();
+  const scout = new ToolScout({ llm: null, runtimeDir, whichFn: async () => null, spawnFn: async () => ({ code: 0, stdout: "", stderr: "" }) });
+  writeFileSync(join(runtimeDir, "TOOLS.md"),
+    "- jq (data) — JSON processor [vjq-1.7] verified 2026-01-01\n" +
+    "- go (dev) — Go toolchain [vgo1.21] verified 2026-01-01\n" +
+    "- make (dev) — build automation [v4.3] verified 2026-01-01\n" +
+    "- file (system) — file types [v5] verified 2026-01-01\n" +
+    "- http (network) — HTTPie [v3] verified 2026-01-01\n");
+  mkdirSync(join(runtimeDir, "tool-manuals"), { recursive: true });
+  writeFileSync(join(runtimeDir, "tool-manuals", "jq.md"), "jq manual.");
+  writeFileSync(join(runtimeDir, "tool-manuals", "go.md"), "go manual.");
+  writeFileSync(join(runtimeDir, "tool-manuals", "make.md"), "make manual.");
+  writeFileSync(join(runtimeDir, "tool-manuals", "file.md"), "file manual.");
+  writeFileSync(join(runtimeDir, "tool-manuals", "http.md"), "http manual.");
+  const spawnFn = vi.fn(async () => ({ exitCode: 0, summary: "ok", logPath: "/dev/null", summaryUsage: null }));
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return {
+      content: JSON.stringify({ actions: [
+        { type: "spawn", framework: "hermes", title: "prose", prompt: "go check the file at http://x" },
+        { type: "spawn", framework: "hermes", title: "backtick jq", prompt: "use `jq` here" },
+        { type: "spawn", framework: "hermes", title: "backtick go", prompt: "`go` version" },
+        { type: "spawn", framework: "hermes", title: "command list", prompt: "run these steps:\ngo version\nmake it so" },
+      ] }),
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, scout,
+  });
+  await loop.runOnce("tick");
+
+  const sent = spawnFn.mock.calls.map((c) => c[1] as string);
+  expect(sent).toHaveLength(4);
+  expect(sent[0]).toBe("go check the file at http://x"); // pure prose names no manual
+  expect(sent[1]).toContain("jq manual.");               // jq is not generic: plain word match
+  expect(sent[1]).not.toContain("go manual.");
+  expect(sent[2]).toContain("go manual.");               // backticks make the generic name explicit
+  expect(sent[2]).not.toContain("jq manual.");
+  expect(sent[3]).toContain("go manual.");               // a generic name heading its own line is a command
+  expect(sent[3]).toContain("make manual.");
 });

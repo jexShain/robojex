@@ -161,3 +161,127 @@ test("verifiedNames/readManual: names parsed from TOOLS.md; manuals read back on
   expect(scout.readManual("jq")).toBe("manual body");
   expect(scout.readManual("ffmpeg")).toBeNull();              // no file written yet
 });
+
+test("run: a call while a pass is in flight returns the last report (or empty) instead of re-scanning", async () => {
+  const runtimeDir = makeRuntime();
+  let gate1: () => void = () => {};
+  let gate2: () => void = () => {};
+  const g1 = new Promise<void>((r) => { gate1 = r; });
+  const g2 = new Promise<void>((r) => { gate2 = r; });
+  // gating the FIRST seed (crontab) makes the hang land before run() even
+  // returns, so busy-state assertions stay deterministic
+  let crontabAsks = 0;
+  const whichFn: WhichFn = async (n) => {
+    if (n === "jq") return "/fake/bin/jq";
+    if (n === "crontab") {
+      crontabAsks++;
+      await (crontabAsks === 1 ? g1 : g2); // pass 1 hangs in scan(), pass 3 too
+    }
+    return null;
+  };
+  const scout = new ToolScout({ llm: null, runtimeDir, whichFn, spawnFn: rawSpawn({ jq: "jq-1.7" }) });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const first = scout.run();
+    const second = await scout.run();  // busy: immediate empty report, no scan
+    expect(second).toEqual({ verified: [], manualsGenerated: 0, pendingInstalls: [] });
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    gate1();
+    const r1 = await first;
+    expect(r1.verified.map((v) => v.name)).toEqual(["jq"]);
+
+    const third = scout.run();          // free again: a fresh pass starts and hangs
+    const fourth = await scout.run();   // busy again: the previous report comes back
+    expect(fourth).toEqual(r1);
+    expect(crontabAsks).toBe(2);        // the busy returns never reached scan()
+    expect(warn).toHaveBeenCalledTimes(2);
+
+    gate2();
+    expect((await third).verified.map((v) => v.name)).toEqual(["jq"]);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test("writeManuals: every manual LLM call is booked through the spend hook", async () => {
+  const runtimeDir = makeRuntime();
+  const spent: { promptTokens: number; completionTokens: number }[] = [];
+  const chat = vi.fn(async () => ({
+    content: "Purpose: JSON wrangling.\n## Common commands\n- jq . f.json\n- jq '.a[]' f.json\n- jq -s . f.json\nCaution: slurps whole files.",
+    usage: { promptTokens: 3, completionTokens: 4 },
+  }));
+  const scout = new ToolScout({
+    llm: { chat } as unknown as LLMClient, runtimeDir,
+    whichFn: whichOf(["jq", "rg"]), spawnFn: rawSpawn({ jq: "jq-1.7", rg: "ripgrep 14.0.0" }),
+    spend: (u) => spent.push({ ...u }),
+  });
+
+  const r = await scout.run();
+
+  expect(r.manualsGenerated).toBe(2);
+  expect(chat).toHaveBeenCalledTimes(2);                    // one patrol call per manual
+  expect(spent).toHaveLength(2);                            // and each one is booked
+  expect(spent).toEqual([{ promptTokens: 3, completionTokens: 4 }, { promptTokens: 3, completionTokens: 4 }]);
+});
+
+test("run(query): LLM-extracted candidates verify and land in TOOLS.md; seed dupes and bad names are dropped", async () => {
+  const runtimeDir = makeRuntime();
+  const chat = vi.fn(async (_slot: string, msgs: { role: string; content: string }[]) => {
+    const user = String(msgs[1]?.content ?? "");
+    if (user.startsWith("Task:")) {
+      return { content: '{"names":["jq", "not a tool!", "newtool", "jq"]}', usage: { promptTokens: 5, completionTokens: 6 } };
+    }
+    if (user.includes("one sentence")) {
+      return { content: "newtool slices and dices JSON streams.", usage: { promptTokens: 2, completionTokens: 3 } };
+    }
+    return { content: "Purpose: JSON wrangling.\n## Common commands\n- newtool a\n- newtool b\n- newtool c\nCaution: sharp edges.", usage: { promptTokens: 2, completionTokens: 3 } };
+  });
+  const scout = new ToolScout({
+    llm: { chat } as unknown as LLMClient, runtimeDir,
+    whichFn: whichOf(["jq", "newtool"]), spawnFn: rawSpawn({ jq: "jq-1.7", newtool: "newtool 0.1" }),
+  });
+
+  const r = await scout.run("slice JSON out of API dumps");
+
+  const md = readFileSync(join(runtimeDir, "TOOLS.md"), "utf8");
+  expect(md.match(/^- jq /gm)).toHaveLength(1);  // jq came back from the LLM too: seed line wins, no duplicate
+  expect(md).toContain("- newtool (system) — newtool slices and dices JSON streams. [vnewtool 0.1] verified");
+  expect(r.verified.map((v) => v.name).sort()).toEqual(["jq", "newtool"]);
+  expect(readFileSync(join(runtimeDir, "tool-manuals", "newtool.md"), "utf8")).toContain("Purpose: JSON wrangling.");
+});
+
+test("run(query): extraction failure or garbage JSON degrades to the plain seed pass", async () => {
+  const runtimeDir = makeRuntime();
+  const down = vi.fn(async (_slot: string, msgs: { role: string; content: string }[]) => {
+    if (String(msgs[1]?.content ?? "").startsWith("Task:")) throw new Error("llm down");
+    return { content: "Purpose: JSON wrangling.\n## Common commands\n- jq . f.json\n- jq '.a[]' f.json\n- jq -s . f.json\nCaution: slurps.", usage: { promptTokens: 1, completionTokens: 1 } };
+  });
+  const scout = new ToolScout({ llm: { chat: down } as unknown as LLMClient, runtimeDir, whichFn: whichOf(["jq"]), spawnFn: rawSpawn({ jq: "jq-1.7" }) });
+  const r = await scout.run("anything");
+  expect(r.verified.map((v) => v.name)).toEqual(["jq"]);
+  expect(readFileSync(join(runtimeDir, "TOOLS.md"), "utf8")).toContain("- jq (data) — ");
+
+  const garbage = new ToolScout({
+    llm: { chat: vi.fn(async () => ({ content: "not json at all", usage: { promptTokens: 1, completionTokens: 1 } })) } as unknown as LLMClient,
+    runtimeDir: makeRuntime(), whichFn: whichOf(["jq"]), spawnFn: rawSpawn({ jq: "jq-1.7" }),
+  });
+  expect((await garbage.run("anything")).verified.map((v) => v.name)).toEqual(["jq"]);
+});
+
+test("verify: empty stdout falls back to the first non-empty stderr line (nc-style probes)", async () => {
+  const runtimeDir = makeRuntime();
+  const nc = SEED_TOOLS.find((t) => t.name === "nc")!;
+  const scout = new ToolScout({
+    llm: null, runtimeDir, whichFn: whichOf([]),
+    spawnFn: async () => ({ code: 1, stdout: "", stderr: "\nOpenBSD netcat (Debian)\nusage: nc [-46DdFhlnrstkUvzC]" }),
+  });
+  expect(await scout.verify(nc)).toBe("OpenBSD netcat (Debian)");
+});
+
+test("readToolsBlock: whitespace-only TOOLS.md reads as empty", () => {
+  const runtimeDir = makeRuntime();
+  const scout = new ToolScout({ llm: null, runtimeDir, whichFn: whichOf([]), spawnFn: rawSpawn({}) });
+  writeFileSync(join(runtimeDir, "TOOLS.md"), "  \n\n\t \n");
+  expect(scout.readToolsBlock()).toBe("");
+});

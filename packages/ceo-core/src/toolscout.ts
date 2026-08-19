@@ -144,6 +144,9 @@ const INSTALL_TIMEOUT_MS = 60_000;
 const TOOLS_CAP = 80;            // max tool lines written to TOOLS.md
 const MANUAL_MAX_CHARS = 800;    // per-manual cap
 const TOOLS_BLOCK_MAX = 4096;    // TOOLS.md slice served into decide prompts
+const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/; // candidate names the query pass may accept
+const QUERY_NAMES_CAP = 10;      // max dynamic candidates per query
+const DISCOVERED_BLURB = "(discovered via query)"; // fallback when blurb generation fails
 
 const defaultWhich: WhichFn = (name) => new Promise((resolve) => {
   execFile("which", [name], (err, stdout) => resolve(err || !stdout.trim() ? null : stdout.trim()));
@@ -170,8 +173,14 @@ export class ToolScout {
   private which: WhichFn;
   private spawn: SpawnFn;
   private timeoutMs: number;
+  private busy = false;          // one inventory pass may run at a time
+  private lastReport: ScoutReport | null = null; // served to callers that re-enter mid-pass
 
-  constructor(private opts: { llm: LLMClient | null; runtimeDir: string; whichFn?: WhichFn; spawnFn?: SpawnFn; timeoutMs?: number }) {
+  constructor(private opts: {
+    llm: LLMClient | null; runtimeDir: string;
+    whichFn?: WhichFn; spawnFn?: SpawnFn; timeoutMs?: number;
+    spend?: (u: { promptTokens: number; completionTokens: number }) => void; // books every scout LLM call into the budget
+  }) {
     this.which = opts.whichFn ?? defaultWhich;
     this.spawn = opts.spawnFn ?? defaultSpawn;
     this.timeoutMs = opts.timeoutMs ?? VERIFY_TIMEOUT_MS;
@@ -188,11 +197,15 @@ export class ToolScout {
   }
 
   // Run the tool's version probe; the first non-empty stdout line (<=80 chars)
-  // is the "version". Any spawn error or silence means unverifiable: null.
+  // is the "version"; some probes (nc -h) only answer on stderr, so an empty
+  // stdout falls back to stderr's first non-empty line. Any spawn error or
+  // silence on both streams means unverifiable: null.
   async verify(tool: SeedTool): Promise<string | null> {
     try {
       const r = await this.spawn(tool.name, tool.verifyArgs, { timeoutMs: this.timeoutMs });
-      const line = r.stdout.split("\n").map((s) => s.trim()).find((s) => s.length > 0);
+      // stdout first; nc-style probes answer on stderr only when stdout is empty
+      const line = r.stdout.split("\n").map((s) => s.trim()).find((s) => s.length > 0)
+        ?? r.stderr.split("\n").map((s) => s.trim()).find((s) => s.length > 0);
       return line ? line.slice(0, 80) : null;
     } catch {
       return null;
@@ -244,39 +257,101 @@ export class ToolScout {
         { role: "system", content: "You write terse English CLI tool manuals. Plain text only, at most 800 characters total: one sentence on what the tool is for, a '## Common commands' list with exactly 3 one-line examples, and one 'Caution:' line naming the sharpest edge." },
         { role: "user", content: `Write the usage manual for the command-line tool '${v.name}' (${v.category}).` },
       ], { maxTokens: 500 });
+      this.opts.spend?.(r.usage); // manual generation burns tokens: book them
       writeFileSync(p, r.content.slice(0, MANUAL_MAX_CHARS));
       generated++;
     }
     return generated;
   }
 
-  // Full inventory pass: scan -> verify -> install missing -> TOOLS.md -> manuals.
-  async run(): Promise<ScoutReport> {
-    const installed = await this.scan();
-    const missing = SEED_TOOLS.filter((t) => !installed.includes(t));
-    const verified: VerifiedTool[] = [];
-    for (const t of installed) {
-      const version = await this.verify(t);
-      if (version !== null) verified.push({ name: t.name, category: t.category, version });
+  // Query-driven expansion: the patrol LLM pulls candidate CLI names out of the
+  // CEO's query. Malformed names and seed duplicates are dropped; any LLM or
+  // JSON failure simply ignores the query (plain seed pass).
+  private async discoverCandidates(query: string): Promise<SeedTool[]> {
+    if (!this.opts.llm) return [];
+    try {
+      const r = await this.opts.llm.chat("patrol", [
+        { role: "system", content: 'You extract candidate command-line tool names from a task description. Reply ONLY JSON: {"names":["tool1","tool2"]} — lowercase executable names only, at most 10, no prose.' },
+        { role: "user", content: `Task: ${query}` },
+      ], { json: true, maxTokens: 300 });
+      this.opts.spend?.(r.usage);
+      const parsed = JSON.parse(r.content) as { names?: unknown };
+      if (!Array.isArray(parsed.names)) return [];
+      const out: SeedTool[] = [];
+      for (const n of parsed.names) {
+        if (typeof n !== "string" || !NAME_RE.test(n) || SEED_TOOLS.some((s) => s.name === n)) continue;
+        if (!out.some((t) => t.name === n)) out.push({ name: n, category: "system", blurb: "", verifyArgs: ["--version"] });
+        if (out.length >= QUERY_NAMES_CAP) break;
+      }
+      return out;
+    } catch {
+      return []; // llm down or garbage JSON: degrade to the seed-only pass
     }
-    const pendingInstalls = await this.installMissing(missing);
-
-    const today = new Date().toISOString().slice(0, 10);
-    const listed = verified.slice(0, TOOLS_CAP);
-    const lines = listed.map((v) => {
-      const t = SEED_TOOLS.find((s) => s.name === v.name)!;
-      return `- ${v.name} (${v.category}) — ${t.blurb} [v${v.version}] verified ${today}`;
-    });
-    writeFileSync(join(this.opts.runtimeDir, "TOOLS.md"), `${lines.join("\n")}\n`);
-
-    const manualsGenerated = await this.writeManuals(listed);
-    return { verified, manualsGenerated, pendingInstalls };
   }
 
-  // The decide-prompt view of the inventory: TOOLS.md capped at 4KB.
+  // One-sentence TOOLS.md blurb for a query-discovered tool the seed table has
+  // no line for. Failure degrades to a fixed placeholder, never a broken line.
+  private async blurbFor(name: string): Promise<string> {
+    if (!this.opts.llm) return DISCOVERED_BLURB;
+    try {
+      const r = await this.opts.llm.chat("patrol", [
+        { role: "system", content: "You write one terse English sentence describing what a command-line tool does. Reply with the sentence only." },
+        { role: "user", content: `Describe the command-line tool '${name}' in one sentence.` },
+      ], { maxTokens: 100 });
+      this.opts.spend?.(r.usage);
+      const s = r.content.trim().split("\n")[0]?.trim() ?? "";
+      return s ? s.slice(0, 200) : DISCOVERED_BLURB;
+    } catch {
+      return DISCOVERED_BLURB;
+    }
+  }
+
+  // Full inventory pass: scan -> verify -> install missing -> TOOLS.md -> manuals.
+  // Re-entrant calls (index.ts first boot + a CEO toolscout action racing) get
+  // the previous report back instead of a second concurrent pass.
+  async run(query?: string): Promise<ScoutReport> {
+    if (this.busy) {
+      console.warn("[toolscout] inventory pass already in flight: returning the previous report");
+      return this.lastReport ?? { verified: [], manualsGenerated: 0, pendingInstalls: [] };
+    }
+    this.busy = true;
+    try {
+      const discovered = query ? await this.discoverCandidates(query) : [];
+      const installed = await this.scan();
+      const missing = SEED_TOOLS.filter((t) => !installed.includes(t));
+      const verified: VerifiedTool[] = [];
+      for (const t of [...installed, ...discovered]) {
+        const version = await this.verify(t);
+        if (version !== null) verified.push({ name: t.name, category: t.category, version });
+      }
+      const pendingInstalls = await this.installMissing(missing);
+
+      const today = new Date().toISOString().slice(0, 10);
+      const listed = verified.slice(0, TOOLS_CAP);
+      const lines: string[] = [];
+      for (const v of listed) {
+        const t = SEED_TOOLS.find((s) => s.name === v.name) ?? discovered.find((s) => s.name === v.name)!;
+        const blurb = t.blurb || await this.blurbFor(v.name); // discovered tools have no seed line
+        lines.push(`- ${v.name} (${v.category}) — ${blurb} [v${v.version}] verified ${today}`);
+      }
+      writeFileSync(join(this.opts.runtimeDir, "TOOLS.md"), `${lines.join("\n")}\n`);
+
+      const manualsGenerated = await this.writeManuals(listed);
+      const report: ScoutReport = { verified, manualsGenerated, pendingInstalls };
+      this.lastReport = report;
+      return report;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  // The decide-prompt view of the inventory: TOOLS.md capped at 4KB; a blank
+  // file reads as absent so no empty "# AVAILABLE TOOLS" tail is ever served.
   readToolsBlock(): string {
-    try { return readFileSync(join(this.opts.runtimeDir, "TOOLS.md"), "utf8").slice(0, TOOLS_BLOCK_MAX); }
-    catch { return ""; }
+    try {
+      const body = readFileSync(join(this.opts.runtimeDir, "TOOLS.md"), "utf8").trim();
+      return body ? body.slice(0, TOOLS_BLOCK_MAX) : "";
+    } catch { return ""; }
   }
 
   // Verified tool names straight from TOOLS.md (full file, not the 4KB block).
