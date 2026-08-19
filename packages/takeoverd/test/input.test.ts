@@ -82,19 +82,99 @@ test("keystrokes assembling sudo across keys are hard-blocked", async () => {
   expect(await injector.exec({ kind: "key", key: "o" })).toBe("blocked-hard");
 });
 
-test("type/click/move clear the keystroke buffer", async () => {
+test("type appends to the buffer; click/move leave it untouched", async () => {
   const modes = new ModeStateMachine();
   modes.next();
   const injector = new InputInjector(modes, idleHuman);
-  expect(await injector.exec({ kind: "key", key: "r" })).toBe("done");
-  expect(await injector.exec({ kind: "key", key: "m" })).toBe("done");
-  // non-key actions break the sequence: the tail alone must not read as rm -rf
-  expect(await injector.exec({ kind: "type", text: "hi" })).toBe("done");
+  // "rm " arrives as one type action, the dangerous tail as single keys
+  expect(await injector.exec({ kind: "type", text: "rm " })).toBe("done");
   expect(await injector.exec({ kind: "click", button: "left" })).toBe("done");
   expect(await injector.exec({ kind: "move", x: 1, y: 1 })).toBe("done");
-  for (const key of ["space", "-", "r", "f", "space"]) {
+  for (const key of ["-", "r"]) {
     expect(await injector.exec({ kind: "key", key })).toBe("done");
   }
+  expect(await injector.exec({ kind: "key", key: "f" })).toBe("blocked-hard");
+});
+
+test("bare modifier combos do not flush the buffer: rm <mods> -rf still blocked", async () => {
+  const modes = new ModeStateMachine();
+  modes.next();
+  const injector = new InputInjector(modes, idleHuman);
+  for (const key of ["r", "m", "space"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  // an attacker hopes modifier presses break the assembled sequence the way
+  // any non-key action used to; they contribute nothing and clear nothing
+  for (const combo of ["ctrl", "shift+alt", "super"]) {
+    expect(await injector.exec({ kind: "key", key: combo })).toBe("done");
+  }
+  for (const key of ["-", "r"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  expect(await injector.exec({ kind: "key", key: "f" })).toBe("blocked-hard");
+});
+
+test("minus and KP_Subtract aliases both spell the dash in rm -rf", async () => {
+  for (const dash of ["minus", "KP_Subtract"]) {
+    const modes = new ModeStateMachine();
+    modes.next();
+    const injector = new InputInjector(modes, idleHuman);
+    for (const key of ["r", "m", "space", dash, "r"]) {
+      expect(await injector.exec({ kind: "key", key })).toBe("done");
+    }
+    expect(await injector.exec({ kind: "key", key: "f" })).toBe("blocked-hard");
+  }
+});
+
+test("BackSpace edits the buffer: a typo fix still assembles rm -rf", async () => {
+  const modes = new ModeStateMachine();
+  modes.next(); modes.next(); // assist -> full: BackSpace is a high-risk key, skip approval
+  const injector = new InputInjector(modes, idleHuman);
+  for (const key of ["r", "m", "space", "-", "r", "x"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  expect(await injector.exec({ kind: "key", key: "BackSpace" })).toBe("done"); // drops the x
+  expect(await injector.exec({ kind: "key", key: "f" })).toBe("blocked-hard");
+});
+
+test("BackSpace on an empty buffer is ignored", async () => {
+  const modes = new ModeStateMachine();
+  modes.next(); modes.next(); // full: BackSpace needs no approval here
+  const injector = new InputInjector(modes, idleHuman);
+  expect(await injector.exec({ kind: "key", key: "BackSpace" })).toBe("done");
+  for (const key of ["r", "m", "space", "-", "r"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  expect(await injector.exec({ kind: "key", key: "f" })).toBe("blocked-hard");
+});
+
+test("a submitted Return resets the buffer", async () => {
+  const modes = new ModeStateMachine();
+  modes.next(); modes.next(); // assist -> full: Return executes without approval
+  // the window restarts empty: a fresh sudo after the submit is caught whole
+  let injector = new InputInjector(modes, idleHuman);
+  for (const key of ["r", "m", "Return", "s", "u", "d"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  expect(await injector.exec({ kind: "key", key: "o" })).toBe("blocked-hard");
+  // and the pre-submit "rm" cannot join a post-submit tail: no double jeopardy
+  injector = new InputInjector(modes, idleHuman);
+  for (const key of ["r", "m", "Return", "space", "-", "r", "f"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+});
+
+test("a rejected key does not pollute the buffer for later actions", async () => {
+  const modes = new ModeStateMachine();
+  modes.next();
+  const injector = new InputInjector(modes, idleHuman);
+  for (const key of ["r", "m", "space", "-", "r"]) {
+    expect(await injector.exec({ kind: "key", key })).toBe("done");
+  }
+  expect(await injector.exec({ kind: "key", key: "f" })).toBe("blocked-hard");
+  // the refused f left no trace: an ordinary next key still goes through
+  expect(await injector.exec({ kind: "key", key: "x" })).toBe("done");
+  expect(await injector.exec({ kind: "type", text: "hello" })).toBe("done");
 });
 
 // --- human preemption in assist mode (xprintidle) ---
@@ -116,6 +196,23 @@ test("missing xprintidle (ENOENT) skips the preemption check and warns once", as
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   try {
     const injector = new InputInjector(modes, { idleFn: enoent, execFn: async () => ({ stdout: "" }) });
+    expect(await injector.exec({ kind: "type", text: "hello" })).toBe("done");
+    expect(await injector.exec({ kind: "type", text: "again" })).toBe("done");
+    expect(warn).toHaveBeenCalledTimes(1);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test("a failing xprintidle (non-ENOENT) also degrades to skip, warned once", async () => {
+  const modes = new ModeStateMachine();
+  modes.next();
+  const boom = async () => {
+    throw new Error("xprintidle timed out after 1000ms");
+  };
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const injector = new InputInjector(modes, { idleFn: boom, execFn: async () => ({ stdout: "" }) });
     expect(await injector.exec({ kind: "type", text: "hello" })).toBe("done");
     expect(await injector.exec({ kind: "type", text: "again" })).toBe("done");
     expect(warn).toHaveBeenCalledTimes(1);

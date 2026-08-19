@@ -37,8 +37,42 @@ export interface InjectorDeps {
 const KEY_BUF_MAX = 32; // rolling window of what recent keystrokes would type
 const HUMAN_ACTIVE_MS = 2000; // human touched input within the last 2s -> back off
 
+// Keys that steer focus or end a line: they never put text on it.
+const NO_TEXT_KEYS: Record<string, true> = { tab: true, return: true, kp_enter: true };
+// Modifier names xdotool accepts, lowercased, incl. bare L/R keysyms (control_l...).
+const MODIFIERS = new Set<string>();
+for (const base of ["ctrl", "control", "shift", "alt", "meta", "super", "hyper"]) {
+  MODIFIERS.add(base);
+  MODIFIERS.add(`${base}_l`);
+  MODIFIERS.add(`${base}_r`);
+}
+// Key names that must join the window as the character they actually type.
+const KEY_NAMES: Record<string, string> = {
+  space: " ", minus: "-", kp_subtract: "-", slash: "/", period: ".",
+  comma: ",", semicolon: ";", equal: "=",
+};
+for (let d = 0; d <= 9; d++) KEY_NAMES[`kp_${d}`] = String(d);
+
+// Append what an action types, keeping only the last KEY_BUF_MAX chars
+// (older keystrokes scroll off the window).
+function pushText(buf: string, text: string): string {
+  const joined = buf + text;
+  return joined.length > KEY_BUF_MAX ? joined.slice(joined.length - KEY_BUF_MAX) : joined;
+}
+
+// The window after key `raw` lands on `buf`: BackSpace eats the last char
+// (nothing to eat on an empty buffer), Tab/Return-family keys and any combo —
+// modifiers alone never type — add nothing, every other single key joins as
+// its mapped character or lowercased name.
+function applyKey(buf: string, raw: string): string {
+  const k = raw.toLowerCase();
+  if (k === "backspace") return buf.slice(0, -1);
+  if (NO_TEXT_KEYS[k] || k.includes("+") || MODIFIERS.has(k)) return buf;
+  return pushText(buf, KEY_NAMES[k] ?? k);
+}
+
 async function xprintidleMs(): Promise<number> {
-  const { stdout } = await pexec("xprintidle", []);
+  const { stdout } = await pexec("xprintidle", [], { timeout: 1000 });
   return Number(stdout.trim());
 }
 
@@ -51,38 +85,34 @@ export class InputInjector {
     return (this.deps.execFn ?? pexec)(cmd, args);
   }
 
-  // Append what this key would type: the space key contributes a real space
-  // character, anything else its lowercased name; the window keeps the last
-  // KEY_BUF_MAX chars (older keystrokes scroll off).
-  private bufferKey(k: string): void {
-    this.keyBuf += k.toLowerCase() === "space" ? " " : k.toLowerCase();
-    if (this.keyBuf.length > KEY_BUF_MAX) this.keyBuf = this.keyBuf.slice(this.keyBuf.length - KEY_BUF_MAX);
-  }
-
-  // null means "unknown, skip the check" — a missing xprintidle (ENOENT)
-  // degrades to no preemption, logged once; any other failure still throws.
+  // null means "unknown, skip the check" — a missing (ENOENT), hanging or
+  // otherwise failing xprintidle degrades to no preemption instead of failing
+  // every injection; either way it is logged once.
   private async idleMs(): Promise<number | null> {
     try {
       const ms = await (this.deps.idleFn ?? xprintidleMs)();
       return Number.isFinite(ms) ? ms : null;
     } catch (e) {
-      if ((e as NodeJS.ErrnoException)?.code === "ENOENT") {
-        if (!this.idleWarned) {
-          this.idleWarned = true;
-          console.warn("[takeoverd] xprintidle not found: human-preemption check disabled");
-        }
-        return null;
+      if (!this.idleWarned) {
+        this.idleWarned = true;
+        const why = (e as NodeJS.ErrnoException)?.code ?? (e as Error)?.message;
+        console.warn(`[takeoverd] xprintidle unavailable (${why}): human-preemption check disabled`);
       }
-      throw e;
+      return null;
     }
   }
 
   async exec(a: InputAction, approved = false): Promise<"done" | "blocked-observe" | "blocked-hard" | "needs-approval" | "human-active"> {
     if (!this.modes.canInject()) return "blocked-observe"; // observe: refuse at the gate
-    if (a.kind === "key" && a.key) this.bufferKey(a.key);
-    else this.keyBuf = ""; // type/click/move break any assembled sequence
+    // Candidate window: what it would read if this action really landed —
+    // keys go through applyKey, type appends its text, click/move change
+    // nothing. It is committed only after injection succeeds, so blocked or
+    // refused actions leave the window exactly as it was.
+    let candidate = this.keyBuf;
+    if (a.kind === "key" && a.key) candidate = applyKey(candidate, a.key);
+    else if (a.kind === "type" && a.text) candidate = pushText(candidate, a.text);
     const risk = classifyRisk(a); // single action first...
-    if (risk === "hard" || HARD_PATTERNS.some((re) => re.test(this.keyBuf))) return "blocked-hard"; // ...then the buffered join
+    if (risk === "hard" || HARD_PATTERNS.some((re) => re.test(candidate))) return "blocked-hard"; // ...then the buffered join
     // approval already granted by the caller (server approval flow): skip only this branch
     if (!approved && risk === "high" && this.modes.needsApproval()) return "needs-approval";
     // assist shares the machine with a human: while they are actively typing
@@ -97,6 +127,8 @@ export class InputInjector {
       case "click": await this.run("xdotool", ["click", a.button === "right" ? "3" : "1"]); break;
       case "type": await this.run("xdotool", ["type", "--", a.text!]); break;
     }
+    // a submitted line is gone: Return/KP_Enter restart the window from empty
+    this.keyBuf = a.kind === "key" && (a.key === "Return" || a.key === "KP_Enter") ? "" : candidate;
     return "done";
   }
 }
