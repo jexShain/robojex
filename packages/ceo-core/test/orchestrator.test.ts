@@ -81,7 +81,7 @@ test("pid ledger: crash leftovers are reaped by a fresh orchestrator", async () 
   const dir = mkdtempSync(join(tmpdir(), "robojex-orch-"));
   const ledger = join(dir, "pids.json");
   const crashed = new AgentOrchestrator({ llm: null, runtimeDir: dir, cmds: { hermes: "sleep" } });
-  const p = crashed.spawn("hermes", "30"); // simulate CEO crash: no killAll, no cleanup
+  const p = crashed.spawn("hermes", "30"); // simulate jex crash: no killAll, no cleanup
   let pid = -1;
   for (let i = 0; i < 200 && pid < 0; i++) {
     if (existsSync(ledger)) {

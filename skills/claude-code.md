@@ -1,4 +1,4 @@
-# Claude Code — usage manual for the CEO
+# Claude Code — usage manual for jex
 
 ## Invoke (headless, full permission)
 claude -p "<task prompt>" --dangerously-skip-permissions

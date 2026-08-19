@@ -254,7 +254,7 @@ test("spawn is backgrounded: the cycle returns immediately, the card settles lat
   await second;
   expect(board.list().length).toBe(1);  // the second cycle spawned nothing new
 
-  release();                     // sub-agent finishes -> card settles, completion re-wakes the CEO
+  release();                     // sub-agent finishes -> card settles, completion re-wakes jex
   await until(() => board.list()[0]?.status === "done");
   expect(board.list()[0]?.resultSummary).toBe("all good");
   await until(() => loop.wakeCount() === 3); // agent_done event drove one more cycle

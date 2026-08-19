@@ -10,7 +10,7 @@ export interface DecisionTrace { contextDigest: string; actions: unknown[]; cost
 
 export class Auditor {
   private traces: DecisionTrace[] = []; // in-memory batch, consumed by review()
-  private db: DatabaseSync;             // durable log, survives CEO restarts
+  private db: DatabaseSync;             // durable log, survives jex restarts
   constructor(private opts: { runtimeDir: string; reviewEvery?: number }) {
     this.db = new DatabaseSync(join(opts.runtimeDir, "traces.sqlite"));
     this.db.exec("PRAGMA journal_mode = WAL");
@@ -44,7 +44,7 @@ export class Auditor {
     if (p.memoryPatch) appendFileSync(join(this.opts.runtimeDir, "MEMORY.md"), `\n${p.memoryPatch}\n`);
   }
 
-  // Public snapshot: CEO self-edits (mission_update) commit runtime docs
+  // Public snapshot: jex self-edits (mission_update) commit runtime docs
   // BEFORE mutating them, so evolution history stays recoverable.
   snapshotRuntime(): void {
     const d = this.opts.runtimeDir;

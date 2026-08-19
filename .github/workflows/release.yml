@@ -52,10 +52,10 @@ jobs:
           cp -r viewer dist/robojex/ 2>/dev/null || cp -r packages/viewer dist/robojex/viewer
           cp -r skills dist/robojex/skills
           cat > dist/robojex/README.txt <<'EOF'
-          robojex — autonomous CEO agent
+          robojex — autonomous jex agent
           Usage:
             ./robojex-takeoverd [--port 7600]     # desktop takeover daemon (observe mode by default)
-            ./robojex-ceo                         # CEO loop; configure runtime/config.json first
+            ./robojex-ceo                         # jex loop; configure runtime/config.json first
           Layout: binaries + skills/ (framework manuals) + viewer/ (open viewer/index.html)
           Config: create runtime/config.json (see repo README); secrets live only there.
           EOF

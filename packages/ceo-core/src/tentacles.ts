@@ -1,5 +1,5 @@
 // packages/ceo-core/src/tentacles.ts
-// Tentacles: the CEO's external connector system. A tentacle is one external
+// Tentacles: jex's external connector system. A tentacle is one external
 // thing the fleet can talk to — a REST API (optionally imported from an
 // OpenAPI doc), an inbound webhook, a poller, a hardware device, or a custom
 // *.mjs plugin. Declarative specs live as JSON under runtime/tentacles/,
@@ -536,7 +536,7 @@ export class TentacleManager {
     writeFileSync(join(this.dir, `${def.name}.json`), JSON.stringify(def, null, 2) + "\n");
     this.defs.set(def.name, def);
     const probe = await this.settle(def);
-    // a webhook registered while the CEO runs must be routable immediately:
+    // a webhook registered while jex runs must be routable immediately:
     // the running server reads the live defs map, otherwise one is started
     if (def.kind === "webhook") await this.ensureWebhookServer();
     return { def, probe };
@@ -635,7 +635,7 @@ export class TentacleManager {
   }
 
   // Minimal inbound webhook server: POST /t/<name> for a registered webhook
-  // tentacle turns the (truncated) body into a CEO event. Names are looked up
+  // tentacle turns the (truncated) body into a jex event. Names are looked up
   // in the live defs map, so a webhook registered after boot routes on the
   // same server. Bodies past 64KB are answered 413 and never buffered.
   async serveWebhook(port = 7610, onEvent: (s: string) => void): Promise<WebhookHandle> {

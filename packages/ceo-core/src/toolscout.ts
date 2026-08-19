@@ -1,7 +1,7 @@
 // packages/ceo-core/src/toolscout.ts
 // Autonomous tool inventory: scan the PATH for known CLI tools, verify them,
 // user-level-install the cheap ones (npm/pip), queue system ones for the
-// operator, and generate short usage manuals the CEO can inject into prompts.
+// operator, and generate short usage manuals jex can inject into prompts.
 import { execFile, spawn as pspawn } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -264,8 +264,8 @@ export class ToolScout {
     return generated;
   }
 
-  // Query-driven expansion: the patrol LLM pulls candidate CLI names out of the
-  // CEO's query. Malformed names and seed duplicates are dropped; any LLM or
+  // Query-driven expansion: the patrol LLM pulls candidate CLI names out of
+  // jex's query. Malformed names and seed duplicates are dropped; any LLM or
   // JSON failure simply ignores the query (plain seed pass).
   private async discoverCandidates(query: string): Promise<SeedTool[]> {
     if (!this.opts.llm) return [];
@@ -307,7 +307,7 @@ export class ToolScout {
   }
 
   // Full inventory pass: scan -> verify -> install missing -> TOOLS.md -> manuals.
-  // Re-entrant calls (index.ts first boot + a CEO toolscout action racing) get
+  // Re-entrant calls (index.ts first boot + a jex toolscout action racing) get
   // the previous report back instead of a second concurrent pass.
   async run(query?: string): Promise<ScoutReport> {
     if (this.busy) {

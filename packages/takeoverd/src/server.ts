@@ -79,7 +79,7 @@ export class TakeoverServer {
     await new Promise<void>((res) => this.wss!.once("listening", res));
   }
 
-  // observe continuously diffs the screen at 1 fps; assist/full poll on CEO
+  // observe continuously diffs the screen at 1 fps; assist/full poll on jex
   // request only (screenshot op) — polling follows every mode transition.
   private applyPolling(): void {
     this.deps.screen?.setPolling(this.deps.modes.current === "observe");

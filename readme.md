@@ -1,6 +1,6 @@
 # RoboJex
 
-常驻、自我发起、元学习的开源 CEO-agent 框架:主 agent 像 CEO 一样**只编排不干活**——观察桌面与任务板,把工作派给 sub-agent(hermes / claude-code 等),自己保持上下文干净并持续进化(使命/评分/记忆三文件自演化)。
+常驻、自我发起、元学习的开源 jex agent 框架:主 agent **只编排不干活**——观察桌面与任务板,把工作派给 sub-agent(hermes / claude-code 等),自己保持上下文干净并持续进化(使命/评分/记忆三文件自演化)。
 
 ```
 ┌─────────────┐  ws://127.0.0.1:7600   ┌──────────────┐  spawn   ┌───────────────┐
@@ -46,7 +46,7 @@ unzip robojex-linux-x64.zip && cd robojex
 
 ```bash
 ./robojex-takeoverd &          # 桌面守护进程,默认 :7600,启动即 observe(安全)
-./robojex-ceo                  # CEO 循环,默认 60s 一个决策节拍
+./robojex-ceo                  # jex 循环,默认 60s 一个决策节拍
 ```
 
 看到 `ceo-core running (Ctrl+C to stop)` 即在跑。浏览器打开 `viewer/index.html` 可实时观看。停止:Ctrl+C(会先杀干净所有 sub-agent)。
@@ -61,7 +61,7 @@ unzip robojex-linux-x64.zip && cd robojex
 | `assist` | 半接管:AI 可注入键鼠,人类活动立即抢占 |
 | `full` | 完全接管 |
 
-硬底线(任何模式):`rm -rf`、`sudo` 硬阻断;人类输入永远优先。本地 Chrome 开调试端口(如 `--remote-debugging-port=9222`)时 takeoverd 自动接入 CDP,CEO 可直接驱动浏览器。
+硬底线(任何模式):`rm -rf`、`sudo` 硬阻断;人类输入永远优先。本地 Chrome 开调试端口(如 `--remote-debugging-port=9222`)时 takeoverd 自动接入 CDP,jex 可直接驱动浏览器。
 
 ## 配置参考(`runtime/config.json`)
 
@@ -81,7 +81,7 @@ unzip robojex-linux-x64.zip && cd robojex
 ## 内置能力
 
 - **ToolScout**:首次启动自动扫描/验证系统工具,用户级自安装(npm/pip,绝不 sudo),`TOOLS.md` 一行式清单进上下文,完整手册按需注入;缺 apt 包只排队到 `PENDING_INSTALLS.md`。
-- **Tentacles(触手)**:`runtime/tentacles/` 放 JSON spec 或 `.mjs` 插件即可接入任意 API/硬件;支持 OpenAPI 导入、硬件自动扫描(串口/摄像头/HID);密钥只写环境变量名。外部系统 `POST http://主机:7610/t/<触手名>` 可唤醒 CEO。
+- **Tentacles(触手)**:`runtime/tentacles/` 放 JSON spec 或 `.mjs` 插件即可接入任意 API/硬件;支持 OpenAPI 导入、硬件自动扫描(串口/摄像头/HID);密钥只写环境变量名。外部系统 `POST http://主机:7610/t/<触手名>` 可唤醒 jex。
 - **元学习**:`MISSION.md`/`RUBRIC.md`/`MEMORY.md` 由审计器改写并做 git 快照(git 缺失时自动降级)。
 
 ## 从源码运行(开发)

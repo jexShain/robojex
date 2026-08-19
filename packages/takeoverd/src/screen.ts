@@ -125,7 +125,7 @@ export class ScreenPipeline {
     this.setPolling(true);
   }
   // Polling is observe-only: in assist/full the daemon captures a frame solely
-  // when the CEO asks (screenshot op), instead of burning CPU at 1 fps.
+  // when jex asks (screenshot op), instead of burning CPU at 1 fps.
   setPolling(enabled: boolean): void {
     this.stop();
     if (enabled && this.intervalMs !== null) {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 const MANUAL_FRAMEWORKS = ["hermes", "claude-code"] as const;
 
 // Load one framework manual on demand; null when the repo carries no manual
-// for that framework. The CEO never holds all manuals in context.
+// for that framework. Jex never holds all manuals in context.
 export function loadSkill(skillsDir: string, fw: string): string | null {
   const p = join(skillsDir, `${fw}.md`);
   return existsSync(p) ? readFileSync(p, "utf8") : null;

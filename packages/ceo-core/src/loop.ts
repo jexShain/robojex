@@ -110,7 +110,7 @@ export class SchedulerLoop {
     });
     // layer 1: cheap patrol triage
     const p = await this.d.llm.chat("patrol", [
-      { role: "system", content: "You triage events for an autonomous CEO agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise." },
+      { role: "system", content: "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise." },
       { role: "user", content: context },
     ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
     let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
@@ -122,7 +122,7 @@ export class SchedulerLoop {
     const tools = this.d.scout?.readToolsBlock() ?? ""; // inventory tail: only the decide pass pays for it
     const tentacles = this.d.tentacles?.listBlock() ?? ""; // connector inventory rides the same tail
     const dec = await this.d.llm.chat("decide", [
-      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
+      { role: "system", content: `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
       { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") },
     ], { json: true, maxTokens: 4096 });
     let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
@@ -147,7 +147,7 @@ export class SchedulerLoop {
           }
           this.d.board.update(t.id, { status: "running" });
           // background: the cycle moves on to the next action; the card settles
-          // when the sub-agent exits, and the completion re-wakes the CEO
+          // when the sub-agent exits, and the completion re-wakes jex
           const title = t.title;
           const prompt = this.withToolManuals(a.prompt);
           void this.d.orchestrator.spawn(a.framework, prompt).then((r) => {
@@ -169,7 +169,7 @@ export class SchedulerLoop {
         } else if (a.type === "mission_update") {
           if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid mission_update action: text must be a non-empty string");
           // snapshot the pre-edit docs first: git history keeps the old
-          // mission recoverable, then the CEO write-through lands on top
+          // mission recoverable, then jex's write-through lands on top
           this.d.auditor.snapshotRuntime();
           writeFileSync(join(this.d.runtimeDir, "MISSION.md"), a.text);
         } else if (a.type === "message") {
@@ -213,7 +213,7 @@ export class SchedulerLoop {
           const name = a.tentacle, op = a.op;
           // fire-and-forget: every call is independent (no reentry guard), the
           // cycle moves on, and the result rides the log + the next wake's
-          // event queue — the CEO sees it, the human sees it, nothing blocks
+          // event queue — jex sees it, the human sees it, nothing blocks
           void this.d.tentacles.call(name, op, args).then((r) => {
             console.log(`[ceo] tentacle ${name}.${op} -> ${r}`);
             this.push(`tentacle ${name}.${op} -> ${r.slice(0, 200)}`);
@@ -337,7 +337,7 @@ export class SchedulerLoop {
     });
     ws.on("open", () => { this.backoffMs = this.d.reconnectBaseMs ?? 1000; }); // healthy link: next failure starts from the base delay
     ws.on("close", () => { this.onWsDown(ws); }); // degrade to pure CLI until reconnect
-    ws.on("error", () => { this.onWsDown(ws); }); // takeoverd down is operational, not fatal: never crash the CEO
+    ws.on("error", () => { this.onWsDown(ws); }); // takeoverd down is operational, not fatal: never crash jex
   }
 
   private onWsDown(ws: WsLike): void {

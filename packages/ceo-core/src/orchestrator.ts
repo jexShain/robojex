@@ -25,7 +25,7 @@ export class AgentOrchestrator {
     mkdirSync(join(this.opts.runtimeDir, "runs"), { recursive: true });
   }
 
-  // ---- pid ledger: survives a CEO crash on disk so a fresh CEO can reap orphans ----
+  // ---- pid ledger: survives a jex crash on disk so a fresh jex can reap orphans ----
   private ledgerPath(): string { return join(this.opts.runtimeDir, "pids.json"); }
   private updateLedger(fn: (pids: number[]) => number[]): void {
     const path = this.ledgerPath();
@@ -58,7 +58,7 @@ export class AgentOrchestrator {
       let out = ""; // tail only; the full log lives on disk
       const capture = (d: Buffer | string): void => {
         const s = d.toString();
-        appendFileSync(logPath, s); // full log streamed to disk, never into CEO context
+        appendFileSync(logPath, s); // full log streamed to disk, never into jex context
         out = (out + s).slice(-TAIL_CHARS);
       };
       child.stdout!.on("data", capture);

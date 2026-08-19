@@ -1,4 +1,4 @@
-# Hermes Agent — usage manual for the CEO
+# Hermes Agent — usage manual for jex
 
 ## Invoke (headless, full permission)
 hermes -p "<task prompt>" --yolo

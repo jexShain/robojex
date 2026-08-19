@@ -21,7 +21,7 @@ const SEED_DOCS = ["MISSION.md", "RUBRIC.md", "MEMORY.md"] as const;
 export function seedRuntimeFiles(runtimeDir: string): void {
   mkdirSync(join(runtimeDir, "runs"), { recursive: true });
   const seed = (f: string, content: string) => { const p = join(runtimeDir, f); if (!existsSync(p)) writeFileSync(p, content); };
-  seed("MISSION.md", "# MISSION\n(Describe long-term goals here. The CEO evolves this file.)\n");
+  seed("MISSION.md", "# MISSION\n(Describe long-term goals here. Jex evolves this file.)\n");
   seed("RUBRIC.md", "# RUBRIC\n- prefer cheap patrol decisions\n- spawn sub-agents instead of doing work inline\n- verify results before marking tasks done\n");
   seed("MEMORY.md", "# MEMORY\n");
   // written before the init commit so no later sweep can pick secrets up
@@ -62,7 +62,7 @@ export function makeShutdownHandler(
 ): () => void {
   return () => {
     loop.stop();
-    orchestrator.killAll(); // no detached sub-agent process group outlives the CEO
+    orchestrator.killAll(); // no detached sub-agent process group outlives jex
     exit();
   };
 }
@@ -106,17 +106,17 @@ export interface Assembled { loop: StartableLoop; stop: () => void; }
 
 // Build every runtime component and START the scheduler loop. Extracted from
 // main() so the regression test can assert loop.start() runs: a past refactor
-// dropped that call and the CEO constructed everything yet never ticked.
+// dropped that call and jex constructed everything yet never ticked.
 export function assembleAndStart(cfg: Config, runtimeDir: string, deps: AssembleDeps = {}): Assembled {
   const llm = new LLMClient({ baseUrl: cfg.baseUrl ?? "", apiKey: cfg.apiKey ?? "", patrolModel: cfg.patrolModel ?? "", decideModel: cfg.decideModel ?? "" });
   const orchestrator = new AgentOrchestrator({ llm, runtimeDir });
-  orchestrator.reapOrphans(); // a crashed CEO's detached sub-agents must die before new work starts
+  orchestrator.reapOrphans(); // detached sub-agents of a crashed jex must die before new work starts
   const budgetCfg = resolveBudgetConfig(cfg);
   const budget = new BudgetGovernor(budgetCfg.budgetMode, budgetCfg.dailyTokens);
   const scout = new ToolScout({ llm, runtimeDir, spend: (u) => budget.spend(u) }); // scout LLM calls are budget burn too
   const tentacles = new TentacleManager({ llm, runtimeDir, spend: (u) => budget.spend(u) }); // manual LLM calls likewise
   // first boot: build the verified tool inventory once, in the background —
-  // later refreshes come from the CEO's own toolscout actions
+  // later refreshes come from jex's own toolscout actions
   if (!existsSync(join(runtimeDir, "TOOLS.md"))) {
     void scout.run().then((r) => console.log(`[ceo] toolscout: ${r.verified.length} verified`))
       .catch((e: unknown) => console.error(`[ceo] toolscout failed: ${e instanceof Error ? e.message : String(e)}`));
@@ -147,7 +147,7 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
       if (srv) console.log(`[ceo] tentacle webhook server on port ${srv.port}`);
     }
   })().catch((e: unknown) => console.error(`[ceo] tentacles failed: ${e instanceof Error ? e.message : String(e)}`));
-  loop.start(cfg.tickMs ?? 60_000); // the CEO must schedule: without this it never ticks
+  loop.start(cfg.tickMs ?? 60_000); // jex must schedule: without this it never ticks
   return { loop, stop: makeShutdownHandler(loop, orchestrator, deps.exit) };
 }
 
