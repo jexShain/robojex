@@ -11,6 +11,7 @@ import type { Auditor } from "./auditor.js";
 import type { BudgetGovernor } from "./budget.js";
 import { manualsBlock } from "./skills.js";
 import type { ToolScout } from "./toolscout.js";
+import type { TentacleManager } from "./tentacles.js";
 import WebSocket from "ws";
 
 // Minimal socket surface the loop needs; ws's WebSocket satisfies it structurally.
@@ -33,6 +34,7 @@ export interface LoopDeps {
   runtimeDir: string; takeoverUrl?: string;
   skillsDir?: string;                   // repo-root skills/ by default
   scout?: ToolScout | null;             // autonomous tool inventory; absent = wiring off
+  tentacles?: TentacleManager | null;   // external connector system; absent = wiring off
   wsFactory?: (url: string) => WsLike;   // test seam: substitute sockets
   reconnectBaseMs?: number;              // test seam: first reconnect delay
 }
@@ -117,9 +119,10 @@ export class SchedulerLoop {
     // layer 2: strong decide pass — the only prompt that carries the framework manuals
     const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
     const tools = this.d.scout?.readToolsBlock() ?? ""; // inventory tail: only the decide pass pays for it
+    const tentacles = this.d.tentacles?.listBlock() ?? ""; // connector inventory rides the same tail
     const dec = await this.d.llm.chat("decide", [
-      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list.` },
-      { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") },
+      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"..."}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
+      { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") },
     ], { json: true, maxTokens: 4096 });
     let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
 
@@ -202,6 +205,27 @@ export class SchedulerLoop {
               console.error(`[ceo] toolscout failed: ${err instanceof Error ? err.message : String(err)}`);
             });
           }
+        } else if (a.type === "tentacle_call") {
+          if (typeof a.tentacle !== "string" || typeof a.op !== "string" || a.op.length === 0) throw new Error("invalid tentacle_call action: tentacle and op must be non-empty strings");
+          if (!this.d.tentacles) throw new Error("tentacle_call action: no tentacle manager wired");
+          const args = (a.args && typeof a.args === "object" && !Array.isArray(a.args)) ? a.args as Record<string, unknown> : {};
+          const name = a.tentacle, op = a.op;
+          // fire-and-forget: every call is independent (no reentry guard), the
+          // cycle moves on, and the result rides the log + the next wake's
+          // event queue — the CEO sees it, the human sees it, nothing blocks
+          void this.d.tentacles.call(name, op, args).then((r) => {
+            console.log(`[ceo] tentacle ${name}.${op} -> ${r}`);
+            this.push(`tentacle ${name}.${op} -> ${r.slice(0, 200)}`);
+          }).catch((err: unknown) => {
+            console.error(`[ceo] tentacle ${name}.${op} failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        } else if (a.type === "tentacle_register") {
+          if (typeof a.spec !== "object" || a.spec === null || Array.isArray(a.spec)) throw new Error("invalid tentacle_register action: spec must be an object");
+          if (!this.d.tentacles) throw new Error("tentacle_register action: no tentacle manager wired");
+          // awaited inline: validation is instant and the probe is bounded by
+          // its own timeout, so the cycle at most pauses a few seconds
+          const r = await this.d.tentacles.register(a.spec);
+          console.log(`[ceo] tentacle registered: ${r.def.name} [${r.probe.status}]`);
         }
       } catch (e) {
         // one bad action must not kill the rest of the wake: block its task (if any) and move on
@@ -213,29 +237,45 @@ export class SchedulerLoop {
     await this.maybeAudit({ promptTokens: p.usage.promptTokens + dec.usage.promptTokens, completionTokens: p.usage.completionTokens + dec.usage.completionTokens }, parsed.actions ?? []);
   }
 
-  // Attach the manuals of verified tools the spawn prompt actually names:
-  // just-in-time tool knowledge with no permanent context tax. Word-boundary
-  // matching keeps "jqx" from pulling in the jq manual — except for names that
-  // are everyday English words ("go check the file"), which count only when
-  // backticked or heading their own line like a command-list entry.
+  // Attach the manuals of verified tools and named tentacles the spawn prompt
+  // actually mentions: just-in-time knowledge with no permanent context tax.
+  // Word-boundary matching keeps "jqx" from pulling in the jq manual — except
+  // for names that are everyday English words ("go check the file"), which
+  // count only when backticked or heading their own line. Tentacle manuals
+  // share the same 2400-char budget as tool manuals.
   private withToolManuals(prompt: string): string {
-    const scout = this.d.scout;
-    if (!scout) return prompt;
     const parts: string[] = [];
     let total = 0;
-    for (const name of scout.verifiedNames()) {
-      if (total >= 2400) break; // manual budget: the prompt must stay small
-      const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const named = GENERIC_NAMES.includes(name)
-        ? new RegExp(`\`${esc}\``).test(prompt) || new RegExp(`\n${esc} `).test(prompt)
-        : new RegExp(`\\b${esc}\\b`).test(prompt);
-      if (!named) continue;
-      const manual = scout.readManual(name);
-      if (manual === null) continue;
-      const piece = `## ${name}\n${manual.slice(0, 800)}`;
-      if (total + piece.length > 2400) break;
-      parts.push(piece);
-      total += piece.length;
+    const scout = this.d.scout;
+    if (scout) {
+      for (const name of scout.verifiedNames()) {
+        if (total >= 2400) break; // manual budget: the prompt must stay small
+        const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const named = GENERIC_NAMES.includes(name)
+          ? new RegExp(`\`${esc}\``).test(prompt) || new RegExp(`\n${esc} `).test(prompt)
+          : new RegExp(`\\b${esc}\\b`).test(prompt);
+        if (!named) continue;
+        const manual = scout.readManual(name);
+        if (manual === null) continue;
+        const piece = `## ${name}\n${manual.slice(0, 800)}`;
+        if (total + piece.length > 2400) break;
+        parts.push(piece);
+        total += piece.length;
+      }
+    }
+    const tentacles = this.d.tentacles;
+    if (tentacles) {
+      for (const t of tentacles.list()) {
+        if (total >= 2400) break; // one shared budget across tool + tentacle manuals
+        const esc = t.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        if (!new RegExp(`\\b${esc}\\b`).test(prompt)) continue;
+        const manual = tentacles.manual(t.name);
+        if (manual === null) continue;
+        const piece = `## ${t.name}\n${manual.slice(0, 800)}`;
+        if (total + piece.length > 2400) break;
+        parts.push(piece);
+        total += piece.length;
+      }
     }
     return parts.length ? `${prompt}\n\n# TOOL MANUALS\n${parts.join("\n\n")}` : prompt;
   }

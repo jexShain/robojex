@@ -153,7 +153,7 @@ const defaultWhich: WhichFn = (name) => new Promise((resolve) => {
 });
 
 // ES2022 target has no Promise.withResolvers typings; executor form matches loop.ts
-const defaultSpawn: SpawnFn = (cmd, args, o = {}) => new Promise((resolve, reject) => {
+export const defaultSpawn: SpawnFn = (cmd, args, o = {}) => new Promise((resolve, reject) => {
   const child = pspawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env: o.env });
   let stdout = "", stderr = "", timedOut = false;
   const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, o.timeoutMs ?? VERIFY_TIMEOUT_MS);

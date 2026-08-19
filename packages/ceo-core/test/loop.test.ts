@@ -6,6 +6,7 @@ import { TaskBoard } from "../src/board.js";
 import { ContextAssembler } from "../src/context.js";
 import { AgentOrchestrator } from "../src/orchestrator.js";
 import { ToolScout } from "../src/toolscout.js";
+import { TentacleManager } from "../src/tentacles.js";
 import { Auditor } from "../src/auditor.js";
 import { BudgetGovernor } from "../src/budget.js";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
@@ -648,4 +649,154 @@ test("spawn prompt: generic words (go/file/http) attach manuals only backticked 
   expect(sent[2]).not.toContain("jq manual.");
   expect(sent[3]).toContain("go manual.");               // a generic name heading its own line is a command
   expect(sent[3]).toContain("make manual.");
+});
+
+
+// ---- Tentacles wiring: context block, tentacle actions, manual attachment ----
+
+test("decide prompt carries the # TENTACLES block when listBlock is non-empty; patrol stays lean", async () => {
+  const runtimeDir = makeRuntime();
+  const users: { slot: string; content: string }[] = [];
+  const chat = vi.fn(async (slot: string, msgs: { role: string; content: string }[]) => {
+    if (msgs[1]) users.push({ slot, content: String(msgs[1].content) });
+    return slot === "patrol"
+      ? { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } }
+      : { content: '{"actions":[]}', usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const tentacles = {
+    listBlock: () => "- petstore (rest) — pets api [http:200]",
+    list: () => [], manual: () => null, call: vi.fn(), register: vi.fn(),
+  } as unknown as TentacleManager;
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir, tentacles,
+  });
+  await loop.runOnce("tick");
+
+  const decideUser = users.find((u) => u.slot === "decide")!.content;
+  expect(decideUser).toContain("# TENTACLES");
+  expect(decideUser).toContain("- petstore (rest) — pets api [http:200]");
+  expect(users.find((u) => u.slot === "patrol")!.content).not.toContain("TENTACLES");
+});
+
+test("tentacle_call action: call fires in the background, result logged and pushed for the next wake; invalid args never reach the manager", async () => {
+  const runtimeDir = makeRuntime();
+  let release: () => void = () => {};
+  const pending = new Promise<void>((r) => { release = r; });
+  const call = vi.fn(async () => { await pending; return "big call result"; });
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return {
+      content: JSON.stringify({ actions: [
+        { type: "tentacle_call", tentacle: "users-api", op: "get-user", args: { id: 7 } },
+        { type: "tentacle_call", tentacle: "x" }, // op missing -> invalid, must not reach the manager
+      ] }),
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const tentacles = { call, listBlock: () => "", list: () => [], manual: () => null, register: vi.fn() } as unknown as TentacleManager;
+    const loop = new SchedulerLoop({
+      llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, tentacles,
+    });
+    const pushes: string[] = [];
+    const origPush = loop.push.bind(loop);
+    loop.push = (s: string) => { pushes.push(s); origPush(s); }; // observe what the handler queues for the next wake
+    const done = loop.runOnce("tick"); // a promise we can await to prove the cycle already returned
+    await done; // cycle finished although the tentacle call is still hanging
+    expect(call).toHaveBeenCalledTimes(1);                          // only the well-formed action fired
+    expect(call).toHaveBeenCalledWith("users-api", "get-user", { id: 7 });
+    expect(err.mock.calls.some((c) => String(c[0]).includes("tentacle_call"))).toBe(true); // the invalid one was logged
+
+    release();
+    await until(() => log.mock.calls.some((c) => String(c[0]).includes("[ceo] tentacle users-api.get-user -> big call result")));
+    expect(pushes.some((s) => s.startsWith("tentacle users-api.get-user -> big call result".slice(0, 20)) && s.length <= "tentacle users-api.get-user -> ".length + 200)).toBe(true);
+    loop.stop();
+  } finally {
+    log.mockRestore();
+    err.mockRestore();
+  }
+}, 10_000);
+
+test("tentacle_register action: a valid spec is saved through the manager and logged; the cycle survives a bad spec", async () => {
+  const runtimeDir = makeRuntime();
+  const register = vi.fn(async (spec: unknown) => {
+    const def = spec as { name: string };
+    return { def: { ...def, kind: "rest", ops: [], enabled: true, blurb: "" }, probe: { ok: true, status: "http:200" } };
+  });
+  let decideN = 0;
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    decideN++;
+    return decideN === 1
+      ? { content: JSON.stringify({ actions: [
+          { type: "tentacle_register", spec: { name: "feature-api", kind: "rest", endpoint: "https://ok.example.com", ops: [], enabled: true, blurb: "features" } },
+          { type: "tentacle_register", spec: "not-an-object" },
+        ] }), usage: { promptTokens: 50, completionTokens: 20 } }
+      : { content: '{"actions":[]}', usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const tentacles = { register, listBlock: () => "", list: () => [], manual: () => null, call: vi.fn() } as unknown as TentacleManager;
+    const loop = new SchedulerLoop({
+      llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, tentacles,
+    });
+    await loop.runOnce("tick"); // both actions handled inline: good one saved, bad one logged
+
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(register).toHaveBeenCalledWith({ name: "feature-api", kind: "rest", endpoint: "https://ok.example.com", ops: [], enabled: true, blurb: "features" });
+    expect(log).toHaveBeenCalledWith("[ceo] tentacle registered: feature-api [http:200]");
+    expect(err.mock.calls.some((c) => String(c[0]).includes("tentacle_register"))).toBe(true);
+  } finally {
+    log.mockRestore();
+    err.mockRestore();
+  }
+});
+
+test("spawn prompt: a tentacle named in the prompt attaches its manual; manuals share the 2400 budget with tool manuals", async () => {
+  const runtimeDir = makeRuntime();
+  // tool side of the shared budget: jq verified with a near-800-char manual
+  const scout = new ToolScout({ llm: null, runtimeDir, whichFn: async () => null, spawnFn: async () => ({ code: 0, stdout: "", stderr: "" }) });
+  writeFileSync(join(runtimeDir, "TOOLS.md"), "- jq (data) — JSON processor [vjq-1.7] verified 2026-01-01\n");
+  mkdirSync(join(runtimeDir, "tool-manuals"), { recursive: true });
+  writeFileSync(join(runtimeDir, "tool-manuals", "jq.md"), `jq manual. ${"p".repeat(780)}`);
+  // tentacle side: three tentacles, each with a near-800-char manual
+  const tentacles = new TentacleManager({ llm: null, runtimeDir });
+  mkdirSync(join(runtimeDir, "tentacles"), { recursive: true });
+  const tentNames = ["feature-api", "billing-api", "search-api"];
+  for (const n of tentNames) writeFileSync(join(runtimeDir, "tentacles", `${n}.json`), JSON.stringify({ name: n, kind: "rest", endpoint: "https://x.example.com", ops: [], enabled: true, blurb: "" }));
+  mkdirSync(join(runtimeDir, "tentacle-manuals"), { recursive: true });
+  for (const n of tentNames) writeFileSync(join(runtimeDir, "tentacle-manuals", `${n}.md`), `${n} manual. ${"q".repeat(780)}`);
+  await tentacles.loadAll();
+
+  const spawnFn = vi.fn(async () => ({ exitCode: 0, summary: "ok", logPath: "/dev/null", summaryUsage: null }));
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return {
+      content: JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "check feature-api", prompt: "query feature-api, billing-api and search-api with jq" }] }),
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, scout, tentacles,
+  });
+  await loop.runOnce("tick");
+  const sent = spawnFn.mock.calls[0]?.[1] as string;
+  expect(sent).toContain("# TOOL MANUALS");
+  expect(sent).toContain("jq manual.");
+  expect(sent).toContain("billing-api manual."); // first tentacle in load order fits the shared budget
+  // jq (806) + billing-api (813) leave ~780 chars: neither remaining manual fits,
+  // so exactly one tentacle manual rides along
+  expect((sent.match(/^## /gm) ?? []).length).toBe(2);
+  expect(sent).not.toContain("search-api manual.");
 });

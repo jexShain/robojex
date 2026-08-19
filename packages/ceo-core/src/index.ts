@@ -12,9 +12,10 @@ import { Auditor } from "./auditor.js";
 import { BudgetGovernor, type BudgetMode } from "./budget.js";
 import { SchedulerLoop } from "./loop.js";
 import { ToolScout } from "./toolscout.js";
+import { TentacleManager } from "./tentacles.js";
 
 // runtime state that must never enter git history (config.json holds the API key)
-export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\n";
+export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\nTENTACLES.md\ntentacles/\ntentacle-manuals/\n";
 const SEED_DOCS = ["MISSION.md", "RUBRIC.md", "MEMORY.md"] as const;
 
 export function seedRuntimeFiles(runtimeDir: string): void {
@@ -81,6 +82,7 @@ function main(): void {
   interface Config {
     baseUrl?: string; apiKey?: string; patrolModel?: string; decideModel?: string;
     budgetMode?: "burn" | "budgeted"; dailyTokens?: number; tickMs?: number; takeoverUrl?: string;
+    webhookPort?: number;
   }
   let cfg: Config = {};
   const cfgPath = join(runtimeDir, "config.json");
@@ -100,20 +102,36 @@ function main(): void {
   const budgetCfg = resolveBudgetConfig(cfg);
   const budget = new BudgetGovernor(budgetCfg.budgetMode, budgetCfg.dailyTokens);
   const scout = new ToolScout({ llm, runtimeDir, spend: (u) => budget.spend(u) }); // scout LLM calls are budget burn too
+  const tentacles = new TentacleManager({ llm, runtimeDir, spend: (u) => budget.spend(u) }); // manual LLM calls likewise
   // first boot: build the verified tool inventory once, in the background —
   // later refreshes come from the CEO's own toolscout actions
   if (!existsSync(join(runtimeDir, "TOOLS.md"))) {
     void scout.run().then((r) => console.log(`[ceo] toolscout: ${r.verified.length} verified`))
       .catch((e: unknown) => console.error(`[ceo] toolscout failed: ${e instanceof Error ? e.message : String(e)}`));
   }
+  // tentacles boot: load specs/plugins, hardware-scan on first boot, then one
+  // probe + manual pass; webhook tentacles get their inbound HTTP server
+  void (async () => {
+    await tentacles.loadAll();
+    if (!existsSync(join(runtimeDir, "TENTACLES.md"))) {
+      const hw = await tentacles.scanHardware();
+      if (hw > 0) console.log(`[ceo] hardware scout: ${hw} devices registered`);
+    }
+    await tentacles.probeAll();
+    await tentacles.writeManuals();
+    if (tentacles.list().some((t) => t.kind === "webhook")) {
+      const srv = await tentacles.serveWebhook(cfg.webhookPort ?? 7610, (s) => loop.push(s));
+      console.log(`[ceo] tentacle webhook server on port ${srv.port}`);
+    }
+  })().catch((e: unknown) => console.error(`[ceo] tentacles failed: ${e instanceof Error ? e.message : String(e)}`));
   const loop = new SchedulerLoop({
     llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
     orchestrator, auditor: new Auditor({ runtimeDir }),
     budget, runtimeDir,
     takeoverUrl: cfg.takeoverUrl ?? "ws://127.0.0.1:7600",
     scout,
+    tentacles,
   });
-  loop.start(cfg.tickMs ?? 60_000);
   console.log("ceo-core running (Ctrl+C to stop)");
   const shutdown = makeShutdownHandler(loop, orchestrator);
   process.on("SIGINT", shutdown);
