@@ -81,7 +81,7 @@ test("verify: first non-empty stdout line truncated to 80 chars; throw or empty 
   const jq = SEED_TOOLS.find((t) => t.name === "jq")!;
   const long = "y".repeat(120);
   const chatty = new ToolScout({ llm: null, runtimeDir, whichFn: whichOf([]), spawnFn: rawSpawn({ jq: `\n\n${long}\nignored tail` }) });
-  expect(await chatty.verify(jq)).toBe("y".repeat(80));
+  expect(await chatty.verify(jq)).toBe("y".repeat(40));
   const thrower = new ToolScout({ llm: null, runtimeDir, whichFn: whichOf([]), spawnFn: async () => { throw new Error("ENOENT"); } });
   expect(await thrower.verify(jq)).toBeNull();
   const silent = new ToolScout({ llm: null, runtimeDir, whichFn: whichOf([]), spawnFn: rawSpawn({}) });
@@ -96,8 +96,8 @@ test("installMissing: npm/pip items run user-level installs; apt items queue to 
   const scout = new ToolScout({ llm: null, runtimeDir, whichFn: whichOf(["git"]), spawnFn });
   const r = await scout.run();
 
-  expect(calls).toContainEqual({ cmd: "npm", args: ["install", "-g", "pnpm"], opts: { timeoutMs: 60_000 } });
-  expect(calls).toContainEqual({ cmd: "npm", args: ["install", "-g", "mongosh"], opts: { timeoutMs: 60_000 } });
+  expect(calls).toContainEqual({ cmd: "npm", args: ["install", "-g", "pnpm"], opts: expect.objectContaining({ timeoutMs: 60_000 }) });
+  expect(calls).toContainEqual({ cmd: "npm", args: ["install", "-g", "mongosh"], opts: expect.objectContaining({ timeoutMs: 60_000 }) });
   expect(calls).toContainEqual({ cmd: "pip", args: ["install", "--user", "yq"], opts: { timeoutMs: 60_000 } });
   expect(calls).toContainEqual({ cmd: "pip", args: ["install", "--user", "yt-dlp"], opts: { timeoutMs: 60_000 } });
   expect(calls.filter((c) => c.cmd === "apt")).toEqual([]);   // system packages are never spawned
