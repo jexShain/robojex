@@ -4,3 +4,4 @@ dist/
 runtime/
 *.tsbuildinfo
 docs/superpowers/
+build/
