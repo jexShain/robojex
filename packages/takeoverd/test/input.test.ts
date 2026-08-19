@@ -1,5 +1,5 @@
 // packages/takeoverd/test/input.test.ts
-import { classifyRisk, InputInjector } from "../src/input.js";
+import { classifyRisk, InputInjector, type InputAction } from "../src/input.js";
 import { ModeStateMachine } from "../src/modes.js";
 import { expect, test, vi } from "vitest";
 
@@ -270,4 +270,14 @@ test("full mode bypasses the human-active check", async () => {
   modes.next(); modes.next(); // assist -> full
   const injector = new InputInjector(modes, { idleFn: async () => 100, execFn: async () => ({ stdout: "" }) });
   expect(await injector.exec({ kind: "type", text: "hello" })).toBe("done");
+});
+
+test("unknown action kind is fail-closed blocked-hard, nothing executed", async () => {
+  const modes = new ModeStateMachine();
+  modes.next(); // observe -> assist
+  const execFn = vi.fn(async () => ({ stdout: "" }));
+  const injector = new InputInjector(modes, { idleFn: async () => 60_000, execFn });
+  // a kind outside the key/move/click/type union must never reach xdotool
+  expect(await injector.exec({ kind: "scroll", x: 1, y: 2 } as unknown as InputAction)).toBe("blocked-hard");
+  expect(execFn).not.toHaveBeenCalled();
 });

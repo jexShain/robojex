@@ -147,6 +147,10 @@ export class InputInjector {
       case "move": await this.run("xdotool", ["mousemove", String(a.x), String(a.y)]); break;
       case "click": await this.run("xdotool", ["click", a.button === "right" ? "3" : "1"]); break;
       case "type": await this.run("xdotool", ["type", "--", a.text!]); break;
+      default:
+        // Unknown action kinds (schema drift, hostile input) fail closed:
+        // never execute a kind we cannot reason about, whatever the approval
+        return "blocked-hard";
     }
     // a submitted line is gone: Return/KP_Enter restart the window from empty
     this.keyBuf = a.kind === "key" && (a.key === "Return" || a.key === "KP_Enter") ? "" : candidate;

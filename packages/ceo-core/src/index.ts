@@ -9,7 +9,7 @@ import { TaskBoard } from "./board.js";
 import { ContextAssembler } from "./context.js";
 import { AgentOrchestrator } from "./orchestrator.js";
 import { Auditor } from "./auditor.js";
-import { BudgetGovernor } from "./budget.js";
+import { BudgetGovernor, type BudgetMode } from "./budget.js";
 import { SchedulerLoop } from "./loop.js";
 
 // runtime state that must never enter git history (config.json holds the API key)
@@ -57,6 +57,21 @@ export function makeShutdownHandler(
   };
 }
 
+// Startup-time config validation: a typo'd budgetMode — or budgeted without
+// a dailyTokens cap, which BudgetGovernor would silently treat as unlimited —
+export function resolveBudgetConfig(cfg: { budgetMode?: string; dailyTokens?: number }): { budgetMode: BudgetMode; dailyTokens: number } {
+  let mode: BudgetMode = "burn";
+  if (cfg.budgetMode === "budgeted") mode = "budgeted";
+  else if (cfg.budgetMode !== undefined && cfg.budgetMode !== "burn") {
+    console.warn(`[ceo] invalid budgetMode ${JSON.stringify(cfg.budgetMode)}: falling back to burn`);
+  }
+  if (mode === "budgeted" && !(typeof cfg.dailyTokens === "number" && Number.isFinite(cfg.dailyTokens) && cfg.dailyTokens > 0)) {
+    console.warn(`[ceo] budgeted mode requires dailyTokens > 0: falling back to burn`);
+    mode = "burn";
+  }
+  return { budgetMode: mode, dailyTokens: cfg.dailyTokens ?? 0 };
+}
+
 function main(): void {
   const runtimeDir = process.env.ROBOJEX_RUNTIME ?? join(process.cwd(), "runtime");
   seedRuntimeFiles(runtimeDir);
@@ -81,10 +96,11 @@ function main(): void {
   const llm = new LLMClient({ baseUrl: cfg.baseUrl ?? "", apiKey: cfg.apiKey ?? "", patrolModel: cfg.patrolModel ?? "", decideModel: cfg.decideModel ?? "" });
   const orchestrator = new AgentOrchestrator({ llm, runtimeDir });
   orchestrator.reapOrphans(); // a crashed CEO's detached sub-agents must die before new work starts
+  const budgetCfg = resolveBudgetConfig(cfg);
   const loop = new SchedulerLoop({
     llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
     orchestrator, auditor: new Auditor({ runtimeDir }),
-    budget: new BudgetGovernor(cfg.budgetMode ?? "burn", cfg.dailyTokens), runtimeDir,
+    budget: new BudgetGovernor(budgetCfg.budgetMode, budgetCfg.dailyTokens), runtimeDir,
     takeoverUrl: cfg.takeoverUrl ?? "ws://127.0.0.1:7600",
   });
   loop.start(cfg.tickMs ?? 60_000);

@@ -7,7 +7,12 @@ import { HotkeyWatcher } from "./hotkey.js";
 import { TakeoverServer } from "./server.js";
 import { NullCdp, PuppeteerCdp, type CdpChannel } from "./cdp.js";
 
-const port = Number(process.argv.find((a, i, arr) => arr[i - 1] === "--port") ?? 7600);
+const rawPort = process.argv.find((a, i, arr) => arr[i - 1] === "--port") ?? "7600";
+const port = Number(rawPort);
+if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  console.error(`takeoverd: invalid --port ${JSON.stringify(rawPort)}: must be an integer in 1-65535`);
+  process.exit(1);
+}
 
 const modes = new ModeStateMachine();            // boots in observe — safe default
 const screen = new ScreenPipeline();

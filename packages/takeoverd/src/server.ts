@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ModeStateMachine, Mode } from "./modes.js";
 import { classifyRisk } from "./input.js";
 import type { InputInjector, InputAction } from "./input.js";
-import { grabGray } from "./screen.js";
+import { grabGray, type DiffEvent } from "./screen.js";
 import type { ScreenPipeline } from "./screen.js";
 import type { HotkeyWatcher } from "./hotkey.js";
 import type { CdpChannel } from "./cdp.js";
@@ -25,6 +25,10 @@ export class TakeoverServer {
   private wss: WebSocketServer | null = null;
   private clients = new Set<WebSocket>();
   private pending = new Map<string, { action: InputAction; timer: NodeJS.Timeout }>();
+  // Listener-dedupe handles: hotkey/screen expose no off(), so a second
+  // start() would stack a second callback and double-fire every event.
+  private toggleCb: (() => void) | null = null;
+  private screenCb: ((e: DiffEvent) => void) | null = null;
   constructor(private deps: ServerDeps) {}
 
   private broadcast(msg: Msg): void {
@@ -42,8 +46,10 @@ export class TakeoverServer {
     if (!this.deps.injector) return "done";
     return this.deps.injector.exec(action, approved);
   }
-
   async start(port: number): Promise<void> {
+    // Re-entry guard: a second start() tears the previous listener down
+    // first instead of throwing (EADDRINUSE) — double-boot recovers cleanly.
+    if (this.wss) await this.stop();
     this.wss = new WebSocketServer({ port });
     this.wss.on("connection", (ws) => {
       this.clients.add(ws);
@@ -55,12 +61,18 @@ export class TakeoverServer {
         this.handle(ws, m).catch(() => {});
       });
     });
-    this.deps.hotkey?.onToggle(() => {
-      this.deps.modes.next();
-      this.applyPolling();
-      this.broadcast({ t: "evt", type: "mode_changed", mode: this.deps.modes.current });
-    });
-    this.deps.screen?.onEvent((e) => this.broadcast({ t: "evt", ...e }));
+    if (!this.toggleCb) {
+      this.toggleCb = () => {
+        this.deps.modes.next();
+        this.applyPolling();
+        this.broadcast({ t: "evt", type: "mode_changed", mode: this.deps.modes.current });
+      };
+      this.deps.hotkey?.onToggle(this.toggleCb);
+    }
+    if (!this.screenCb) {
+      this.screenCb = (e) => this.broadcast({ t: "evt", ...e });
+      this.deps.screen?.onEvent(this.screenCb);
+    }
     this.applyPolling();
     await new Promise<void>((res) => this.wss!.once("listening", res));
   }

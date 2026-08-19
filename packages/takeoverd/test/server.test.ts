@@ -271,3 +271,35 @@ test("mode changes drive screen polling: observe on, assist/full off", async () 
   expect(screen.calls).toEqual([true, false, false, true]); // back to observe: resumed
   ceo.close();
 });
+
+test("double start(): no throw, no duplicate hotkey/screen listeners, one toggle = one broadcast", async () => {
+  const modes = new ModeStateMachine();
+  class FakeScreen extends ScreenPipeline {
+    cbs: ((e: unknown) => void)[] = [];
+    setPolling(): void {}
+    onEvent(cb: (e: unknown) => void): void { this.cbs.push(cb); }
+  }
+  class FakeHotkey extends HotkeyWatcher {
+    toggles: (() => void)[] = [];
+    onToggle(cb: () => void): void { this.toggles.push(cb); }
+    start(): void {}
+    stop(): void {}
+  }
+  const screen = new FakeScreen();
+  const hotkey = new FakeHotkey();
+  server = new TakeoverServer({ modes, port: 7601, injector: null, screen, hotkey });
+  await server.start(7601);
+  await server.start(7601); // re-entry must stop the old listener, not throw
+  expect(hotkey.toggles.length).toBe(1); // duplicate registration would double-fire
+  expect(screen.cbs.length).toBe(1);
+
+  const ceo = await connect();
+  hotkey.toggles.forEach((cb) => cb()); // every registered toggle fires once
+  const evt = await nextMsg(ceo);
+  expect(evt).toMatchObject({ t: "evt", type: "mode_changed", mode: "assist" }); // exactly one step
+  let second = false;
+  ceo.once("message", () => { second = true; });
+  await realSleep(150);
+  expect(second).toBe(false); // a stacked second listener would have broadcast again
+  ceo.close();
+});

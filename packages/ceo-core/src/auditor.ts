@@ -44,7 +44,9 @@ export class Auditor {
     if (p.memoryPatch) appendFileSync(join(this.opts.runtimeDir, "MEMORY.md"), `\n${p.memoryPatch}\n`);
   }
 
-  private snapshotRuntime(): void {
+  // Public snapshot: CEO self-edits (mission_update) commit runtime docs
+  // BEFORE mutating them, so evolution history stays recoverable.
+  snapshotRuntime(): void {
     const d = this.opts.runtimeDir;
     const git = (args: string) => execSync(`git ${args}`, { cwd: d });
     if (!existsSync(join(d, ".git"))) git("init -q");

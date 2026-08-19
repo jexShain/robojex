@@ -1,12 +1,12 @@
 // packages/ceo-core/test/index.test.ts
 // Tests the entry script's extracted, testable pieces. index.ts only boots the
 // app when executed as the main module, so importing it here is side-effect free.
-import { seedRuntimeFiles, initRuntimeGit, makeShutdownHandler } from "../src/index.js";
+import { seedRuntimeFiles, initRuntimeGit, makeShutdownHandler, resolveBudgetConfig } from "../src/index.js";
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 test("seedRuntimeFiles writes seed docs, runs dir, and the runtime .gitignore; never overwrites", () => {
   const dir = mkdtempSync(join(tmpdir(), "robojex-index-"));
@@ -58,4 +58,26 @@ test("shutdown handler: loop.stop() first, then orchestrator.killAll(), then exi
   );
   handler();
   expect(order).toEqual(["stop", "killAll", "exit"]);
+});
+
+test("resolveBudgetConfig: bad mode and budgeted-without-cap warn and fall back to burn", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    // unknown mode string: fall back to burn, warn
+    expect(resolveBudgetConfig({ budgetMode: "turbo" as unknown as "burn" })).toEqual({ budgetMode: "burn", dailyTokens: 0 });
+    // budgeted without a usable dailyTokens cap: burn again (BudgetGovernor
+    // would treat it as unlimited — exactly what the operator did not ask for)
+    expect(resolveBudgetConfig({ budgetMode: "budgeted" })).toEqual({ budgetMode: "burn", dailyTokens: 0 });
+    expect(resolveBudgetConfig({ budgetMode: "budgeted", dailyTokens: 0 })).toEqual({ budgetMode: "burn", dailyTokens: 0 });
+    expect(warn).toHaveBeenCalledTimes(3);
+
+    // valid configurations pass through untouched and never warn
+    expect(resolveBudgetConfig({ budgetMode: "budgeted", dailyTokens: 5000 })).toEqual({ budgetMode: "budgeted", dailyTokens: 5000 });
+    expect(resolveBudgetConfig({})).toEqual({ budgetMode: "burn", dailyTokens: 0 });
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("budgetMode"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("dailyTokens"));
+  } finally {
+    warn.mockRestore();
+  }
 });

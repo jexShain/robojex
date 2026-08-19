@@ -102,6 +102,60 @@ test("invalid spawn action: task created and blocked, later actions still run", 
   }
 });
 
+test("steer action: intent noted, no kill attempted, cycle completes without errors", async () => {
+  const runtimeDir = makeRuntime();
+  const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
+  const t = board.add({ title: "long-running job", assignee: "hermes" });
+  board.update(t.id, { status: "running" });
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return { content: JSON.stringify({ actions: [{ type: "steer", task_id: t.id, correction: "focus on tests first" }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const llm = { chat } as unknown as LLMClient;
+  const spawnFn = vi.fn(async () => { throw new Error("steer must not spawn"); });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const loop = new SchedulerLoop({
+      llm, board, ctx: new ContextAssembler(),
+      orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir,
+    });
+    await loop.runOnce("tick"); // must complete: steer neither throws nor kills
+
+    expect(err).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("steer noted (kill+respawn deferred)"));
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(board.list()[0]?.status).toBe("running"); // card untouched
+  } finally {
+    log.mockRestore();
+    err.mockRestore();
+  }
+});
+
+test("mission_update snapshots runtime git history before the write", async () => {
+  const runtimeDir = makeRuntime();
+  execSync("git init -q", { cwd: runtimeDir });
+  execSync("git -c user.email=t@t -c user.name=t add -A && git -c user.email=t@t -c user.name=t commit -qm init", { cwd: runtimeDir });
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return { content: JSON.stringify({ actions: [{ type: "mission_update", text: "# MISSION v2\nship it\n" }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const llm = { chat } as unknown as LLMClient;
+  const loop = new SchedulerLoop({
+    llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  await loop.runOnce("tick");
+
+  expect(readFileSync(join(runtimeDir, "MISSION.md"), "utf8")).toContain("ship it");
+  // exactly one new commit: the pre-edit snapshot
+  expect(execSync("git rev-list --count HEAD", { cwd: runtimeDir }).toString().trim()).toBe("2");
+  // ordering proven: HEAD still holds the pre-edit mission, the write landed after
+  expect(execSync("git show HEAD:MISSION.md", { cwd: runtimeDir }).toString()).toContain("Keep the demo repo healthy");
+});
+
 test("patrol-only gate: patrol runs, decide never called", async () => {
   const runtimeDir = makeRuntime();
   const chat = vi.fn(async () => ({ content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } }));

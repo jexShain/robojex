@@ -111,7 +111,7 @@ export class SchedulerLoop {
     // layer 2: strong decide pass — the only prompt that carries the framework manuals
     const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
     const dec = await this.d.llm.chat("decide", [
-      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself.` },
+      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself.` },
       { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") },
     ], { json: true, maxTokens: 4096 });
     let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
@@ -156,7 +156,9 @@ export class SchedulerLoop {
           });
         } else if (a.type === "mission_update") {
           if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid mission_update action: text must be a non-empty string");
-          // audited later via snapshot; write-through allowed for CEO self-edit
+          // snapshot the pre-edit docs first: git history keeps the old
+          // mission recoverable, then the CEO write-through lands on top
+          this.d.auditor.snapshotRuntime();
           writeFileSync(join(this.d.runtimeDir, "MISSION.md"), a.text);
         } else if (a.type === "message") {
           console.log(`[ceo->human] ${a.text}`);
@@ -173,6 +175,13 @@ export class SchedulerLoop {
           } else {
             console.error(`[ceo] cdp action dropped: takeover link down`);
           }
+        } else if (a.type === "steer") {
+          if (typeof a.task_id !== "string" || typeof a.correction !== "string" || a.correction.length === 0) throw new Error("invalid steer action: task_id and a non-empty correction are required");
+          const card = this.d.board.list().find((t) => t.id === a.task_id);
+          if (!card) throw new Error(`invalid steer action: no task ${a.task_id} on the board`);
+          // orchestrator has no per-task kill interface yet: record the
+          // steering intent for the operator; real kill+respawn is deferred
+          console.log(`[ceo] steer noted (kill+respawn deferred): ${card.title} <- ${a.correction}`);
         }
       } catch (e) {
         // one bad action must not kill the rest of the wake: block its task (if any) and move on

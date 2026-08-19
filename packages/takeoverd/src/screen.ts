@@ -1,6 +1,10 @@
 // packages/takeoverd/src/screen.ts
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 const pexec = promisify(execFile);
 
 // Parse ImageMagick "txt:-" gray output: "x,y: (NN%)" or "x,y: (NN)" 0-255.
@@ -19,6 +23,31 @@ export async function grabGray(w: number, h: number, display = process.env.DISPL
   // ImageMagick import: capture root window, downscale, grayscale, text dump.
   const { stdout } = await pexec("import", ["-window", "root", "-resize", `${w}x${h}!`, "-colorspace", "gray", "txt:-"], { env: { ...process.env, DISPLAY: display ?? ":0" }, maxBuffer: 1 << 22 });
   return grabGrayText(stdout, w, h);
+}
+
+// Capture the root window as a PNG temp file and run tesseract over it.
+// Returns the recognized text, or null when OCR is unavailable on this host.
+let ocrWarned = false;
+export async function grabOcrText(display = process.env.DISPLAY): Promise<string | null> {
+  const env = { ...process.env, DISPLAY: display ?? ":0" };
+  const png = join(tmpdir(), `robojex-ocr-${randomUUID()}.png`);
+  let stage = "import";
+  try {
+    await pexec(stage, ["-window", "root", `png:${png}`], { env, maxBuffer: 1 << 22 });
+    stage = "tesseract";
+    const { stdout } = await pexec(stage, [png, "stdout"], { env, maxBuffer: 1 << 22 });
+    return stdout.trim();
+  } catch (e) {
+    // OCR is optional machinery: a missing binary must degrade to "no text",
+    // never to a crashed poller. Warn once per process, then stay silent-null.
+    if ((e as NodeJS.ErrnoException)?.code === "ENOENT" && !ocrWarned) {
+      ocrWarned = true;
+      console.warn(`[takeoverd] ${stage} unavailable: OCR text capture disabled`);
+    }
+    return null;
+  } finally {
+    rmSync(png, { force: true });
+  }
 }
 
 // 32x32 gray -> 2D DCT-II -> top-left 8x8 coeffs (skip DC) -> median threshold -> 64-bit hash
@@ -45,13 +74,14 @@ export function hamming(a: bigint, b: bigint): number {
   return c;
 }
 
-type DiffEvent = { type: "screen_diff"; hamming: number; ts: number };
+export type DiffEvent = { type: "screen_diff"; hamming: number; ts: number; ocrText?: string };
 
 export class ScreenPipeline {
   private timer: NodeJS.Timeout | undefined;
   private intervalMs: number | null = null;
   private prev: bigint | null = null;
   private last: bigint | null = null;
+  private ocrUsable: boolean | null = null; // null = never tried, false = binary known missing
   private cbs: ((e: DiffEvent) => void)[] = [];
   constructor(private threshold = 10) {}
   onEvent(cb: (e: DiffEvent) => void): void { this.cbs.push(cb); }
@@ -64,6 +94,13 @@ export class ScreenPipeline {
       const d = hamming(this.prev, h);
       if (d >= this.threshold) {
         const e: DiffEvent = { type: "screen_diff", hamming: d, ts: Date.now() };
+        // OCR rides the diff event only while tesseract answers; once a
+        // binary is known missing it must not respawn per poll.
+        if (this.ocrUsable !== false) {
+          const text = await grabOcrText();
+          if (text === null) this.ocrUsable = false;
+          else if (text) e.ocrText = text.slice(0, 500);
+        }
         for (const cb of this.cbs) cb(e);
         this.prev = h;
         return e;
