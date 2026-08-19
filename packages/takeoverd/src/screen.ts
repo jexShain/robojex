@@ -19,10 +19,23 @@ export function grabGrayText(txt: string, w: number, h: number): Uint8Array {
   return out;
 }
 
+// Whether the ImageMagick `import` binary is known missing on this host.
+let grabWarned = false;
+export function grabGrayLastFailureWasEnoent(): boolean { return grabWarned; }
+
 export async function grabGray(w: number, h: number, display = process.env.DISPLAY): Promise<Uint8Array> {
-  // ImageMagick import: capture root window, downscale, grayscale, text dump.
-  const { stdout } = await pexec("import", ["-window", "root", "-resize", `${w}x${h}!`, "-colorspace", "gray", "txt:-"], { env: { ...process.env, DISPLAY: display ?? ":0" }, maxBuffer: 1 << 22 });
-  return grabGrayText(stdout, w, h);
+  try {
+    // ImageMagick import: capture root window, downscale, grayscale, text dump.
+    const { stdout } = await pexec("import", ["-window", "root", "-resize", `${w}x${h}!`, "-colorspace", "gray", "txt:-"], { env: { ...process.env, DISPLAY: display ?? ":0" }, maxBuffer: 1 << 22 });
+    return grabGrayText(stdout, w, h);
+  } catch (e) {
+    const isEnoent = (e as NodeJS.ErrnoException)?.code === "ENOENT";
+    if (isEnoent && !grabWarned) {
+      grabWarned = true;
+      console.warn("[takeoverd] ImageMagick import unavailable: screen capture disabled");
+    }
+    throw e; // re-raise so the caller (pollOnce) can .catch(() => {})
+  }
 }
 
 // Capture the root window as a PNG temp file and run tesseract over it.

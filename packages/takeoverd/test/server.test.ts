@@ -18,8 +18,14 @@ function connect(): Promise<WebSocket> {
     ws.on("error", rej);
   });
 }
-function nextMsg(ws: WebSocket): Promise<any> {
-  return new Promise((res) => ws.once("message", (d) => res(JSON.parse(String(d)))));
+function nextMsg(ws: WebSocket, filter?: (m: any) => boolean): Promise<any> {
+  return new Promise((res) => {
+    const handler = (d: any) => {
+      const m = JSON.parse(String(d));
+      if (!filter || filter(m)) { ws.off("message", handler); res(m); }
+    };
+    ws.on("message", handler);
+  });
 }
 // Captured before any vi.useFakeTimers() swap of the globals — deadline
 // races keep a real clock even while the server's timers are faked.
@@ -43,7 +49,7 @@ test("set_mode + input roundtrip; approval flow for high-risk in assist", async 
   expect(appr).toMatchObject({ t: "evt", type: "approval", id: "r1" });
 
   viewer.send(JSON.stringify({ t: "ctrl", op: "approve", id: "r1", ok: true }));
-  const result = await nextMsg(ceo);
+  const result = await nextMsg(ceo, (m) => m.type !== "approval");
   expect(result).toMatchObject({ t: "evt", type: "input_result", id: "r1" });
 
   ceo.close(); viewer.close();

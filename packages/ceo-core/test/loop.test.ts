@@ -353,7 +353,15 @@ test("ws: unreachable takeoverd never crashes start(); a reconnect is scheduled"
   const loop = makeWsLoop(dir, {
     takeoverUrl: "ws://127.0.0.1:1", // nothing listens on port 1: instant ECONNREFUSED
     reconnectBaseMs: 40,
-    wsFactory: (url: string) => { attempts++; return new WebSocket(url); },
+    wsFactory: (_url: string) => {
+      attempts++;
+      // Simulate ECONNREFUSED via FakeWs instead of real TCP:
+      // port 1 may not fail instantly on all environments (e.g. WSL2).
+      const s = new FakeWs();
+      s.readyState = 3; // CLOSED
+      setImmediate(() => { s.emit("error", new Error("connect ECONNREFUSED")); s.emit("close"); });
+      return s as unknown as WsLike;
+    },
   });
   loop.start(60_000); // must neither throw now nor die on the async 'error' event
   await until(() => attempts >= 2); // first attempt refused, then the reconnect timer fired
