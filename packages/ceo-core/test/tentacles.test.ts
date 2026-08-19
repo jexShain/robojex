@@ -194,7 +194,7 @@ test("importOpenapi: json content (or path) becomes a rest tentacle with ops fro
   expect(byUrl.endpoint).toBe("https://petstore.example.com");
 
   // a minimal YAML doc parses; content with no paths is an error
-  const yaml = await mgr.importOpenapi("openapi: 3.0.0\ninfo:\n  title: Yaml API\npaths:\n  /things:\n    get:\n      summary: List things\n", "yaml-api");
+  const yaml = await mgr.importOpenapi("openapi: 3.0.0\ninfo:\n  title: Yaml API\nservers:\n  - url: https://yaml.example.com\npaths:\n  /things:\n    get:\n      summary: List things\n", "yaml-api");
   expect(yaml.ops.map((o) => o.name)).toEqual(["get-things"]);
   expect(yaml.blurb).toBe("Yaml API");
   await expect(mgr.importOpenapi("just some text", "junk")).rejects.toThrow(/parse/i);
@@ -321,4 +321,158 @@ test("serveWebhook: POST /t/<name> forwards a 500-char-capped body via onEvent; 
 
   srv.stop();
   await expect(fetch(`http://127.0.0.1:${srv.port}/t/github-hook`, { method: "POST", body: "x" })).rejects.toThrow();
+});
+
+test("probeOne custom: a plugin probe answering false reports status 'down', not 'ok'", async () => {
+  const runtimeDir = makeRuntime();
+  mkdirSync(join(runtimeDir, "tentacles"), { recursive: true });
+  writeFileSync(join(runtimeDir, "tentacles", "flaky.mjs"), `export async function probe() { return false; }\n`);
+  const mgr = new TentacleManager({ llm: null, runtimeDir });
+  await mgr.loadAll();
+  const flaky = mgr.list().find((t) => t.name === "flaky")!;
+  expect(await mgr.probeOne(flaky)).toEqual({ ok: false, status: "down" });
+});
+
+test("call rest: {arg} values are URL-encoded into the path template", async () => {
+  const runtimeDir = makeRuntime();
+  const { fetchImpl, calls } = fetchOf({ "https://enc.example.com/files/a%2Fb%20c": { status: 200, body: "ok" } });
+  seedSpecs(runtimeDir, [restDef({
+    name: "enc-api", endpoint: "https://enc.example.com",
+    ops: [{ name: "get-file", method: "GET", path: "/files/{id}", description: "fetch one file" }],
+  })]);
+  const mgr = new TentacleManager({ llm: null, runtimeDir, fetchImpl });
+  await mgr.loadAll();
+  expect(await mgr.call("enc-api", "get-file", { id: "a/b c" })).toBe("ok");
+  expect(calls[0].url).toBe("https://enc.example.com/files/a%2Fb%20c");
+});
+
+test("call rest: responses stop being read at 64KB — the stream is cancelled, never buffered whole", async () => {
+  const runtimeDir = makeRuntime();
+  let pulled = 0; // bytes the producer was asked for: proves the reader stops
+  const body = new ReadableStream<Uint8Array>({
+    pull(c) { c.enqueue(new Uint8Array(8192).fill(120)); pulled += 8192; if (pulled >= 512 * 1024) c.close(); },
+  });
+  const fetchImpl = vi.fn(async () => new Response(body, { status: 200 }));
+  seedSpecs(runtimeDir, [restDef({
+    name: "big-api", endpoint: "https://big.example.com",
+    ops: [{ name: "blob", method: "GET", description: "huge body" }],
+  })]);
+  const mgr = new TentacleManager({ llm: null, runtimeDir, fetchImpl: fetchImpl as unknown as typeof fetch });
+  await mgr.loadAll();
+  const r = await mgr.call("big-api", "blob");
+  expect(r).toHaveLength(2048);   // result cap unchanged
+  expect(r).toBe("x".repeat(2048));
+  expect(pulled).toBeLessThanOrEqual(64 * 1024 + 8192); // cancelled at the cap, not drained to 512KB
+});
+
+test("importOpenapi: a doc without an http(s) server entry is rejected and nothing is written", async () => {
+  const runtimeDir = makeRuntime();
+  const mgr = new TentacleManager({ llm: null, runtimeDir });
+  const noServers = JSON.stringify({ openapi: "3.0.0", info: { title: "No Servers" }, paths: { "/x": { get: { summary: "x" } } } });
+  await expect(mgr.importOpenapi(noServers, "no-servers")).rejects.toThrow(/endpoint/);
+  const relServer = JSON.stringify({ servers: [{ url: "/api/v1" }], paths: { "/x": { get: { summary: "x" } } } });
+  await expect(mgr.importOpenapi(relServer, "rel-server")).rejects.toThrow(/endpoint/);
+  expect(existsSync(join(runtimeDir, "tentacles"))).toBe(false); // no file ever landed
+});
+
+test("register intake: openapiContent / openapiUrl specs are imported as probed rest tentacles", async () => {
+  const runtimeDir = makeRuntime();
+  const doc = JSON.stringify({
+    openapi: "3.0.0", info: { title: "Pets" }, servers: [{ url: "https://pets.example.com" }],
+    paths: { "/pets": { get: { summary: "List pets" } } },
+  });
+  const { fetchImpl } = fetchOf({ "https://pets.example.com": { status: 200 } });
+  const mgr = new TentacleManager({ llm: null, runtimeDir, fetchImpl });
+  const r = await mgr.register({ name: "pets", openapiContent: doc });
+  expect(r.def.kind).toBe("rest");
+  expect(r.def.ops.map((o) => o.name)).toEqual(["get-pets"]);
+  expect(r.probe).toEqual({ ok: true, status: "http:200" });
+  expect(JSON.parse(readFileSync(join(runtimeDir, "tentacles", "pets.json"), "utf8"))).toMatchObject({ name: "pets", endpoint: "https://pets.example.com" });
+  expect(readFileSync(join(runtimeDir, "TENTACLES.md"), "utf8")).toContain("pets (rest)");
+
+  // openapiUrl routes through the same import after fetching the doc
+  const { fetchImpl: f2 } = fetchOf({
+    "https://spec.example.com/doc.json": { status: 200, body: doc },
+    "https://pets.example.com": { status: 200 },
+  });
+  const mgr2 = new TentacleManager({ llm: null, runtimeDir, fetchImpl: f2 });
+  const r2 = await mgr2.register({ name: "pets-url", openapiUrl: "https://spec.example.com/doc.json" });
+  expect(r2.def.endpoint).toBe("https://pets.example.com");
+  expect(existsSync(join(runtimeDir, "tentacles", "pets-url.json"))).toBe(true);
+});
+
+test("reload: tentacle files written behind the manager's back (spawned agents) are picked up", async () => {
+  const runtimeDir = makeRuntime();
+  const mgr = new TentacleManager({ llm: null, runtimeDir });
+  await mgr.loadAll(); // empty dir
+  seedSpecs(runtimeDir, [restDef({ name: "late-api", endpoint: "https://late.example.com", blurb: "arrived later" })]);
+  expect(mgr.list()).toHaveLength(0); // nothing until a reload pass runs
+  expect(await mgr.reload()).toBe(1);
+  expect(mgr.list().map((t) => t.name)).toEqual(["late-api"]);
+  expect(await mgr.reload()).toBe(0); // idempotent: known files are skipped
+});
+
+test("webhook routing is live: a webhook registered after the server is up is immediately routable", async () => {
+  const runtimeDir = makeRuntime();
+  seedSpecs(runtimeDir, [restDef({ name: "first-hook", kind: "webhook", blurb: "boot hook" })]);
+  const mgr = new TentacleManager({ llm: null, runtimeDir });
+  await mgr.loadAll();
+  const events: string[] = [];
+  const srv = await mgr.serveWebhook(0, (s) => events.push(s));
+  await mgr.register({ name: "late-hook", kind: "webhook", ops: [], enabled: true, blurb: "runtime hook" });
+  const res = await fetch(`http://127.0.0.1:${srv.port}/t/late-hook`, { method: "POST", body: "live" });
+  expect(res.status).toBe(200);
+  expect(events).toContain("webhook[late-hook]: live");
+  srv.stop();
+});
+
+test("webhook lazy start: register() with a wired sink brings the server up when none is running", async () => {
+  const runtimeDir = makeRuntime();
+  const mgr = new TentacleManager({ llm: null, runtimeDir });
+  const events: string[] = [];
+  mgr.setWebhookSink(0, (s) => events.push(s)); // port 0: bind any free port
+  const r = await mgr.register({ name: "lazy-hook", kind: "webhook", ops: [], enabled: true, blurb: "lazy" });
+  expect(r.probe).toEqual({ ok: true, status: "ok" });
+  const srv = await mgr.ensureWebhookServer(); // already running: returns the same handle
+  expect(srv).not.toBeNull();
+  const res = await fetch(`http://127.0.0.1:${srv!.port}/t/lazy-hook`, { method: "POST", body: "hi" });
+  expect(res.status).toBe(200);
+  expect(events).toEqual(["webhook[lazy-hook]: hi"]);
+  srv!.stop();
+});
+
+test("webhook guard: a body over 64KB is answered 413 and never becomes an event", async () => {
+  const runtimeDir = makeRuntime();
+  seedSpecs(runtimeDir, [restDef({ name: "big-hook", kind: "webhook", blurb: "x" })]);
+  const mgr = new TentacleManager({ llm: null, runtimeDir });
+  await mgr.loadAll();
+  const events: string[] = [];
+  const srv = await mgr.serveWebhook(0, (s) => events.push(s));
+  const res = await fetch(`http://127.0.0.1:${srv.port}/t/big-hook`, { method: "POST", body: "z".repeat(70 * 1024) });
+  expect(res.status).toBe(413);
+  expect(events).toEqual([]);
+  // a normal delivery still works after the oversized one
+  const ok = await fetch(`http://127.0.0.1:${srv.port}/t/big-hook`, { method: "POST", body: "small" });
+  expect(ok.status).toBe(200);
+  expect(events).toEqual(["webhook[big-hook]: small"]);
+  srv.stop();
+});
+
+test("scanHardware refresh: a replugged device keeping its name but moving paths updates blurb and file, counting 0 new", async () => {
+  const runtimeDir = makeRuntime();
+  let dev = "005"; // replug moves the same receiver to a new bus address
+  const spawnFn: SpawnFn = vi.fn(async (cmd: string) =>
+    cmd === "lsusb" ? { code: 0, stdout: `Bus 001 Device ${dev}: ID 046d:c52b Logitech, Inc. Unifying Receiver\n`, stderr: "" } : { code: 0, stdout: '{"blockdevices":[]}', stderr: "" });
+  const mgr = new TentacleManager({ llm: null, runtimeDir, spawnFn, readdirFn: () => [] });
+  expect(await mgr.scanHardware()).toBe(1);
+  const name = mgr.list()[0]!.name;
+  const file = join(runtimeDir, "tentacles", `${name}.json`);
+  expect(mgr.list()[0]!.blurb).toContain("(device: /dev/bus/usb/001/005)");
+
+  dev = "007";
+  expect(await mgr.scanHardware()).toBe(0); // same device: an update, not a new tentacle
+  expect(mgr.list()).toHaveLength(1);
+  expect(mgr.list()[0]!.name).toBe(name);
+  expect(mgr.list()[0]!.blurb).toContain("(device: /dev/bus/usb/001/007)");
+  expect(JSON.parse(readFileSync(file, "utf8")).blurb).toContain("/dev/bus/usb/001/007");
 });

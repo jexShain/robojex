@@ -1,7 +1,7 @@
 // packages/ceo-core/test/index.test.ts
 // Tests the entry script's extracted, testable pieces. index.ts only boots the
 // app when executed as the main module, so importing it here is side-effect free.
-import { seedRuntimeFiles, initRuntimeGit, makeShutdownHandler, resolveBudgetConfig } from "../src/index.js";
+import { seedRuntimeFiles, initRuntimeGit, makeShutdownHandler, resolveBudgetConfig, assembleAndStart } from "../src/index.js";
 import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,4 +80,30 @@ test("resolveBudgetConfig: bad mode and budgeted-without-cap warn and fall back 
   } finally {
     warn.mockRestore();
   }
+});
+
+test("assembleAndStart: the loop is not just built but started — default 60s tick, cfg.tickMs honored, stop() runs shutdown", () => {
+  const mkLoop = () => {
+    const started: (number | undefined)[] = [];
+    return { loop: { start: (t?: number) => started.push(t), stop: vi.fn(), push: vi.fn() }, started };
+  };
+  // TOOLS.md/TENTACLES.md seeded: skips the background scout + hardware pass
+  const mkDir = () => {
+    const dir = mkdtempSync(join(tmpdir(), "robojex-asm-"));
+    seedRuntimeFiles(dir);
+    writeFileSync(join(dir, "TOOLS.md"), "- demo (demo) — demo tool [vd-1] verified 2026-01-01\n");
+    writeFileSync(join(dir, "TENTACLES.md"), "\n");
+    return dir;
+  };
+
+  const a = mkLoop();
+  const assembled = assembleAndStart({}, mkDir(), { loopFactory: () => a.loop, exit: () => {} });
+  expect(assembled.loop).toBe(a.loop);
+  expect(a.started).toEqual([60_000]); // a refactor that drops loop.start() must turn this red
+  assembled.stop();
+  expect(a.loop.stop).toHaveBeenCalledTimes(1);
+
+  const b = mkLoop();
+  assembleAndStart({ tickMs: 1234 }, mkDir(), { loopFactory: () => b.loop, exit: () => {} });
+  expect(b.started).toEqual([1234]);
 });

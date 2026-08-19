@@ -698,7 +698,7 @@ test("tentacle_call action: call fires in the background, result logged and push
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   const err = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
-    const tentacles = { call, listBlock: () => "", list: () => [], manual: () => null, register: vi.fn() } as unknown as TentacleManager;
+    const tentacles = { call, listBlock: () => "", list: () => [], manual: () => null, register: vi.fn(), reload: vi.fn(async () => 0) } as unknown as TentacleManager;
     const loop = new SchedulerLoop({
       llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
       ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
@@ -743,7 +743,7 @@ test("tentacle_register action: a valid spec is saved through the manager and lo
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   const err = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
-    const tentacles = { register, listBlock: () => "", list: () => [], manual: () => null, call: vi.fn() } as unknown as TentacleManager;
+    const tentacles = { register, reload: vi.fn(async () => 0), listBlock: () => "", list: () => [], manual: () => null, call: vi.fn() } as unknown as TentacleManager;
     const loop = new SchedulerLoop({
       llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
       ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
@@ -799,4 +799,71 @@ test("spawn prompt: a tentacle named in the prompt attaches its manual; manuals 
   // so exactly one tentacle manual rides along
   expect((sent.match(/^## /gm) ?? []).length).toBe(2);
   expect(sent).not.toContain("search-api manual.");
+});
+
+test("tentacle_register action: openapiContent imports a rest tentacle; specs written by spawned agents hot-load via reload", async () => {
+  const runtimeDir = makeRuntime();
+  // a sub-agent's spec file, present on disk but not loaded: the reload()
+  // after the register action must pick it up
+  mkdirSync(join(runtimeDir, "tentacles"), { recursive: true });
+  writeFileSync(join(runtimeDir, "tentacles", "agent-api.json"), JSON.stringify({ name: "agent-api", kind: "rest", endpoint: "https://agent.example.com", ops: [], enabled: true, blurb: "written by a sub-agent" }));
+  const doc = JSON.stringify({
+    openapi: "3.0.0", info: { title: "Pets" }, servers: [{ url: "https://pets.example.com" }],
+    paths: { "/pets": { get: { summary: "List pets" } } },
+  });
+  const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+  const tentacles = new TentacleManager({ llm: null, runtimeDir, fetchImpl: fetchImpl as unknown as typeof fetch });
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return {
+      content: JSON.stringify({ actions: [{ type: "tentacle_register", spec: { name: "pets", openapiContent: doc } }] }),
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const loop = new SchedulerLoop({
+      llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, tentacles,
+    });
+    await loop.runOnce("tick");
+    expect(tentacles.list().map((t) => t.name).sort()).toEqual(["agent-api", "pets"]); // imported + hot-loaded
+    expect(existsSync(join(runtimeDir, "tentacles", "pets.json"))).toBe(true);
+    expect(log).toHaveBeenCalledWith("[ceo] tentacle registered: pets [http:200]");
+  } finally {
+    log.mockRestore();
+  }
+});
+
+test("spawn prompt: a tentacle named like a generic word (go) attaches its manual only backticked or line-start", async () => {
+  const runtimeDir = makeRuntime();
+  const tentacles = new TentacleManager({ llm: null, runtimeDir });
+  mkdirSync(join(runtimeDir, "tentacles"), { recursive: true });
+  writeFileSync(join(runtimeDir, "tentacles", "go.json"), JSON.stringify({ name: "go", kind: "rest", endpoint: "https://x.example.com", ops: [], enabled: true, blurb: "" }));
+  mkdirSync(join(runtimeDir, "tentacle-manuals"), { recursive: true });
+  writeFileSync(join(runtimeDir, "tentacle-manuals", "go.md"), "go connector manual.");
+  await tentacles.loadAll();
+
+  const spawnFn = vi.fn(async () => ({ exitCode: 0, summary: "ok", logPath: "/dev/null", summaryUsage: null }));
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    const first = spawnFn.mock.calls.length === 0; // cycle 1: prose, cycle 2: backticked
+    return {
+      content: JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "t", prompt: first ? "go check the weather" : "call `go` now" }] }),
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, tentacles,
+  });
+  await loop.runOnce("tick");
+  await loop.runOnce("tick");
+  const prose = spawnFn.mock.calls[0]![1] as string;
+  const backticked = spawnFn.mock.calls[1]![1] as string;
+  expect(prose).not.toContain("# TOOL MANUALS"); // everyday English: not a tentacle reference
+  expect(backticked).toContain("# TOOL MANUALS");
+  expect(backticked).toContain("go connector manual.");
 });

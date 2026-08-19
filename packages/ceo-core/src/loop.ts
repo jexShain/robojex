@@ -121,7 +121,7 @@ export class SchedulerLoop {
     const tools = this.d.scout?.readToolsBlock() ?? ""; // inventory tail: only the decide pass pays for it
     const tentacles = this.d.tentacles?.listBlock() ?? ""; // connector inventory rides the same tail
     const dec = await this.d.llm.chat("decide", [
-      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"..."}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
+      { role: "system", content: `You are the CEO of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
       { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") },
     ], { json: true, maxTokens: 4096 });
     let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
@@ -226,6 +226,10 @@ export class SchedulerLoop {
           // its own timeout, so the cycle at most pauses a few seconds
           const r = await this.d.tentacles.register(a.spec);
           console.log(`[ceo] tentacle registered: ${r.def.name} [${r.probe.status}]`);
+          // hot-load: a spawned sub-agent may have dropped specs under
+          // runtime/tentacles/ while this cycle ran — pick them up now
+          // instead of waiting for the next boot's loadAll
+          await this.d.tentacles.reload();
         }
       } catch (e) {
         // one bad action must not kill the rest of the wake: block its task (if any) and move on
@@ -268,7 +272,12 @@ export class SchedulerLoop {
       for (const t of tentacles.list()) {
         if (total >= 2400) break; // one shared budget across tool + tentacle manuals
         const esc = t.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        if (!new RegExp(`\\b${esc}\\b`).test(prompt)) continue;
+        // tentacle names that are everyday English words follow the same
+        // backtick/line-start rule as generic tool names
+        const named = GENERIC_NAMES.includes(t.name)
+          ? new RegExp(`\`${esc}\``).test(prompt) || new RegExp(`\n${esc} `).test(prompt)
+          : new RegExp(`\\b${esc}\\b`).test(prompt);
+        if (!named) continue;
         const manual = tentacles.manual(t.name);
         if (manual === null) continue;
         const piece = `## ${t.name}\n${manual.slice(0, 800)}`;

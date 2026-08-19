@@ -10,7 +10,7 @@ import { ContextAssembler } from "./context.js";
 import { AgentOrchestrator } from "./orchestrator.js";
 import { Auditor } from "./auditor.js";
 import { BudgetGovernor, type BudgetMode } from "./budget.js";
-import { SchedulerLoop } from "./loop.js";
+import { SchedulerLoop, type LoopDeps } from "./loop.js";
 import { ToolScout } from "./toolscout.js";
 import { TentacleManager } from "./tentacles.js";
 
@@ -74,28 +74,32 @@ export function resolveBudgetConfig(cfg: { budgetMode?: string; dailyTokens?: nu
   return { budgetMode: mode, dailyTokens: cfg.dailyTokens ?? 0 };
 }
 
-function main(): void {
-  const runtimeDir = process.env.ROBOJEX_RUNTIME ?? join(process.cwd(), "runtime");
-  seedRuntimeFiles(runtimeDir);
-  initRuntimeGit(runtimeDir);
+interface Config {
+  baseUrl?: string; apiKey?: string; patrolModel?: string; decideModel?: string;
+  budgetMode?: "burn" | "budgeted"; dailyTokens?: number; tickMs?: number; takeoverUrl?: string;
+  webhookPort?: number;
+}
 
-  interface Config {
-    baseUrl?: string; apiKey?: string; patrolModel?: string; decideModel?: string;
-    budgetMode?: "burn" | "budgeted"; dailyTokens?: number; tickMs?: number; takeoverUrl?: string;
-    webhookPort?: number;
-  }
-  let cfg: Config = {};
-  const cfgPath = join(runtimeDir, "config.json");
-  if (existsSync(cfgPath)) cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as Config;
+// The loop surface main() needs; SchedulerLoop satisfies it structurally and
+// tests substitute a factory spy to assert the loop is not just built but
+// actually started.
+export interface StartableLoop {
+  start(tickMs?: number): void;
+  stop(): void;
+  push(event: string): void;
+}
 
-  if (process.argv.includes("--install-service")) {
-    const unit = (name: string, cmd: string) => `[Unit]\nDescription=robojex ${name}\nAfter=network.target\n\n[Service]\nExecStart=${cmd}\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n`;
-    writeFileSync(join(runtimeDir, "robojex-ceo.service"), unit("ceo", `node ${process.cwd()}/packages/ceo-core/dist/index.js`));
-    writeFileSync(join(runtimeDir, "robojex-takeoverd.service"), unit("takeoverd", `node ${process.cwd()}/packages/takeoverd/dist/index.js`));
-    console.log(`systemd units written to ${runtimeDir} — copy to ~/.config/systemd/user/ and enable`);
-    process.exit(0);
-  }
+export interface AssembleDeps {
+  loopFactory?: (deps: LoopDeps) => StartableLoop; // test seam: spy on start()
+  exit?: () => void;                               // test seam: no process.exit
+}
 
+export interface Assembled { loop: StartableLoop; stop: () => void; }
+
+// Build every runtime component and START the scheduler loop. Extracted from
+// main() so the regression test can assert loop.start() runs: a past refactor
+// dropped that call and the CEO constructed everything yet never ticked.
+export function assembleAndStart(cfg: Config, runtimeDir: string, deps: AssembleDeps = {}): Assembled {
   const llm = new LLMClient({ baseUrl: cfg.baseUrl ?? "", apiKey: cfg.apiKey ?? "", patrolModel: cfg.patrolModel ?? "", decideModel: cfg.decideModel ?? "" });
   const orchestrator = new AgentOrchestrator({ llm, runtimeDir });
   orchestrator.reapOrphans(); // a crashed CEO's detached sub-agents must die before new work starts
@@ -109,8 +113,18 @@ function main(): void {
     void scout.run().then((r) => console.log(`[ceo] toolscout: ${r.verified.length} verified`))
       .catch((e: unknown) => console.error(`[ceo] toolscout failed: ${e instanceof Error ? e.message : String(e)}`));
   }
+  const loopDeps: LoopDeps = {
+    llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator, auditor: new Auditor({ runtimeDir }),
+    budget, runtimeDir,
+    takeoverUrl: cfg.takeoverUrl ?? "ws://127.0.0.1:7600",
+    scout,
+    tentacles,
+  };
+  const loop = deps.loopFactory ? deps.loopFactory(loopDeps) : new SchedulerLoop(loopDeps);
   // tentacles boot: load specs/plugins, hardware-scan on first boot, then one
-  // probe + manual pass; webhook tentacles get their inbound HTTP server
+  // probe + manual pass; the webhook sink is wired even when no webhook
+  // tentacle exists yet, so one registered later lazily starts the server
   void (async () => {
     await tentacles.loadAll();
     if (!existsSync(join(runtimeDir, "TENTACLES.md"))) {
@@ -119,23 +133,37 @@ function main(): void {
     }
     await tentacles.probeAll();
     await tentacles.writeManuals();
+    tentacles.setWebhookSink(cfg.webhookPort ?? 7610, (s) => loop.push(s));
     if (tentacles.list().some((t) => t.kind === "webhook")) {
-      const srv = await tentacles.serveWebhook(cfg.webhookPort ?? 7610, (s) => loop.push(s));
-      console.log(`[ceo] tentacle webhook server on port ${srv.port}`);
+      const srv = await tentacles.ensureWebhookServer();
+      if (srv) console.log(`[ceo] tentacle webhook server on port ${srv.port}`);
     }
   })().catch((e: unknown) => console.error(`[ceo] tentacles failed: ${e instanceof Error ? e.message : String(e)}`));
-  const loop = new SchedulerLoop({
-    llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
-    orchestrator, auditor: new Auditor({ runtimeDir }),
-    budget, runtimeDir,
-    takeoverUrl: cfg.takeoverUrl ?? "ws://127.0.0.1:7600",
-    scout,
-    tentacles,
-  });
+  loop.start(cfg.tickMs ?? 60_000); // the CEO must schedule: without this it never ticks
+  return { loop, stop: makeShutdownHandler(loop, orchestrator, deps.exit) };
+}
+
+function main(): void {
+  const runtimeDir = process.env.ROBOJEX_RUNTIME ?? join(process.cwd(), "runtime");
+  seedRuntimeFiles(runtimeDir);
+  initRuntimeGit(runtimeDir);
+
+  let cfg: Config = {};
+  const cfgPath = join(runtimeDir, "config.json");
+  if (existsSync(cfgPath)) cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as Config;
+
+  if (process.argv.includes("--install-service")) {
+    const unit = (name: string, cmd: string) => `[Unit]\nDescription=robojex ${name}\nAfter=network.target\n\n[Service]\nExecStart=${cmd}\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n`;
+    writeFileSync(join(runtimeDir, "robojex-ceo.service"), unit("ceo", `node ${process.cwd()}/packages/ceo-core/dist/index.js`));
+    writeFileSync(join(runtimeDir, "robojex-takeoverd.service"), unit("takeoverd", `node ${process.cwd()}/packages/takeoverd/dist/index.js`));
+    console.log(`systemd units written to ${runtimeDir} — copy to ~/.config/systemd/user/ and enable`);
+    process.exit(0);
+  }
+
+  const { stop } = assembleAndStart(cfg, runtimeDir);
   console.log("ceo-core running (Ctrl+C to stop)");
-  const shutdown = makeShutdownHandler(loop, orchestrator);
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
 }
 
 // run only when executed as the entry module (node dist/index.js), never on import
