@@ -46,10 +46,31 @@ unzip robojex-linux-x64.zip && cd robojex
 
 ```bash
 ./robojex-takeoverd &          # 桌面守护进程，默认 :7600，启动即 observe（安全）
-./robojex-ceo                  # Jex 循环，默认 60s 一个决策节拍
+./robojex-ceo                  # jex 循环，默认 60s 一个决策节拍，控制台监听 :7620
 ```
 
-看到 `ceo-core running (Ctrl+C to stop)` 即表示已启动。浏览器打开 `viewer/index.html` 可实时观看。停止：Ctrl+C（会先杀干净所有 sub-agent）。
+## 和 jex 对话
+
+**桌面/Web 控制台**(界面与操作逻辑取自 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), MIT):
+
+```bash
+# 本机:robojex-ceo 启动后直接开
+xdg-open http://127.0.0.1:7620/
+# 远程机器:config.json 加 "apiHost": "0.0.0.0" 后,从你的电脑开
+xdg-open http://<远程IP>:7620/
+```
+
+三栏布局:左侧任务列表+预算+模式,中间聊天流(决策卡片显示每周期 token 消耗),右侧任务详情/使命文件/屏幕预览。亮/暗/系统三主题,`/` 唤起命令面板(`/mode` `/tasks` `/mission <text>` `/budget`)。
+
+**终端客户端**:
+
+```bash
+./jex                                    # 交互 REPL,提示符 jex›
+./jex --url http://<远程IP>:7620         # 连远程
+echo "帮我查一下磁盘占用" | ./jex --once  # 管道单发(脚本用)
+```
+
+Ctrl+C 一次中断等待中的回复、连按两次退出。Web 控制台与终端同时在线时,消息互通(同一条聊天流)。
 
 ## 桌面接管模式
 
