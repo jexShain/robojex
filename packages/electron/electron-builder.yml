@@ -1,5 +1,6 @@
 appId: com.robojex.app
 productName: robojex
+electronVersion: 43.4.1
 directories:
   output: ../../dist-electron
 files:
