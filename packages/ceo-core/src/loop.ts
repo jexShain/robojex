@@ -10,6 +10,7 @@ import type { AgentOrchestrator } from "./orchestrator.js";
 import type { Auditor } from "./auditor.js";
 import type { BudgetGovernor } from "./budget.js";
 import { manualsBlock } from "./skills.js";
+import { taskView, type ChatFrom } from "./api.js";
 import type { ToolScout } from "./toolscout.js";
 import type { TentacleManager } from "./tentacles.js";
 import WebSocket from "ws";
@@ -28,6 +29,13 @@ export interface WsLike {
 const WS_OPEN = 1;
 const RECONNECT_MAX_MS = 60_000;
 
+// Outlet into the operator-facing api surface: jex chat replies and lifecycle
+// frames (cycle/tasks/mode/budget) ride one WS broadcast; ApiServer implements it.
+export interface LoopOutlet {
+  chatOut(from: ChatFrom, text: string): void;
+  frame(f: Record<string, unknown>): void;
+}
+
 export interface LoopDeps {
   llm: LLMClient; board: TaskBoard; ctx: ContextAssembler;
   orchestrator: AgentOrchestrator; auditor: Auditor; budget: BudgetGovernor;
@@ -36,6 +44,7 @@ export interface LoopDeps {
   scout?: ToolScout | null;             // autonomous tool inventory; absent = wiring off
   tentacles?: TentacleManager | null;   // external connector system; absent = wiring off
   wsFactory?: (url: string) => WsLike;   // test seam: substitute sockets
+  outlet?: LoopOutlet | null;               // api broadcast; absent = headless (frames dropped)
   reconnectBaseMs?: number;              // test seam: first reconnect delay
 }
 
@@ -61,6 +70,23 @@ export class SchedulerLoop {
   constructor(private d: LoopDeps) {}
 
   wakeCount(): number { return this.wakeN; }
+
+  // takeover mode as last reported by takeoverd; observe is the safe default
+  private modeNow: "observe" | "assist" | "full" = "observe";
+
+  mode(): "observe" | "assist" | "full" { return this.modeNow; }
+
+  // api seam: forward a ctrl frame over the takeover link; false = link down
+  sendCtrl(frame: Record<string, unknown>): boolean {
+    if (!this.ws || this.ws.readyState !== WS_OPEN) return false;
+    this.ws.send(JSON.stringify(frame));
+    return true;
+  }
+
+  // wire the api broadcast after construction (the api itself needs this loop)
+  setOutlet(o: LoopOutlet): void { this.d.outlet = o; }
+
+  private emitTasks(): void { this.d.outlet?.frame({ t: "tasks", tasks: this.d.board.list().map(taskView) }); }
 
   push(event: string): void {
     this.queue.push(event);
@@ -101,145 +127,162 @@ export class SchedulerLoop {
 
   private async cycle(eventSummary: string): Promise<void> {
     this.wakeN++;
-    const gate = this.d.budget.gate();
-    if (gate === "observe-only") return; // spend nothing, observe silently
-    const read = (f: string) => { try { return readFileSync(join(this.d.runtimeDir, f), "utf8"); } catch { return `(${f} missing)`; } };
-    const context = this.d.ctx.build({
-      mission: read("MISSION.md"), rubric: read("RUBRIC.md"), memory: read("MEMORY.md"),
-      board: this.d.board.list(), events: [eventSummary], budgetLine: this.d.budget.line(),
-    });
-    // layer 1: cheap patrol triage
-    const p = await this.d.llm.chat("patrol", [
-      { role: "system", content: "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise." },
-      { role: "user", content: context },
-    ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
-    let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
-    if (gate === "patrol-only") { await this.maybeAudit(p.usage, []); return; } // near the cap: no expensive decide pass
-    if (triage.action !== "act") { await this.maybeAudit(p.usage, []); return; }
+    // the cycle frame reports whatever this wake cost and decided, even on the
+    // cheap early exits — the operator sees every heartbeat
+    let cost = 0;
+    let actions: unknown[] = [];
+    try {
+      const gate = this.d.budget.gate();
+      if (gate === "observe-only") return; // spend nothing, observe silently
+      const read = (f: string) => { try { return readFileSync(join(this.d.runtimeDir, f), "utf8"); } catch { return `(${f} missing)`; } };
+      const context = this.d.ctx.build({
+        mission: read("MISSION.md"), rubric: read("RUBRIC.md"), memory: read("MEMORY.md"),
+        board: this.d.board.list(), events: [eventSummary], budgetLine: this.d.budget.line(),
+      });
+      // layer 1: cheap patrol triage
+      const p = await this.d.llm.chat("patrol", [
+        { role: "system", content: "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: always act on it." },
+        { role: "user", content: context },
+      ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
+      let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
+      if (gate === "patrol-only") { cost = await this.maybeAudit(p.usage, []); return; } // near the cap: no expensive decide pass
+      if (triage.action !== "act") { cost = await this.maybeAudit(p.usage, []); return; }
 
-    // layer 2: strong decide pass — the only prompt that carries the framework manuals
-    const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
-    const tools = this.d.scout?.readToolsBlock() ?? ""; // inventory tail: only the decide pass pays for it
-    const tentacles = this.d.tentacles?.listBlock() ?? ""; // connector inventory rides the same tail
-    const dec = await this.d.llm.chat("decide", [
-      { role: "system", content: `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
-      { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") },
-    ], { json: true, maxTokens: 4096 });
-    let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
+      // layer 2: strong decide pass — the only prompt that carries the framework manuals
+      const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
+      const tools = this.d.scout?.readToolsBlock() ?? ""; // inventory tail: only the decide pass pays for it
+      const tentacles = this.d.tentacles?.listBlock() ?? ""; // connector inventory rides the same tail
+      const dec = await this.d.llm.chat("decide", [
+        { role: "system", content: `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"..."} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
+        { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") },
+      ], { json: true, maxTokens: 4096 });
+      let parsed: any; try { parsed = JSON.parse(dec.content); } catch { parsed = { actions: [] }; }
+      actions = parsed.actions ?? [];
 
-    for (const a of parsed.actions ?? []) {
-      let taskId: string | null = null;
-      try {
-        if (a?.type === "spawn") {
-          const promptOk = typeof a.prompt === "string" && a.prompt.length > 0;
-          const fwOk = a.framework === "hermes" || a.framework === "claude-code";
-          // create the task first so even an invalid action stays visible on the board
-          const t = this.d.board.add({
-            title: a.title ?? (promptOk ? a.prompt.slice(0, 60) : "(spawn without prompt)"),
-            assignee: fwOk ? a.framework : String(a.framework),
-          });
-          taskId = t.id;
-          if (!fwOk || !promptOk) {
-            const problems: string[] = [];
-            if (!fwOk) problems.push(`framework must be 'hermes' or 'claude-code' (got ${JSON.stringify(a.framework)})`);
-            if (!promptOk) problems.push("prompt must be a non-empty string");
-            throw new Error(`invalid spawn action: ${problems.join("; ")}`);
-          }
-          this.d.board.update(t.id, { status: "running" });
-          // background: the cycle moves on to the next action; the card settles
-          // when the sub-agent exits, and the completion re-wakes jex
-          const title = t.title;
-          const prompt = this.withToolManuals(a.prompt);
-          void this.d.orchestrator.spawn(a.framework, prompt).then((r) => {
-            if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
-            this.d.board.update(t.id, {
-              status: r.exitCode === 0 && !r.summary.startsWith("FAIL") ? "done" : "blocked",
-              resultSummary: r.summary, attempts: 1,
+      for (const a of parsed.actions ?? []) {
+        let taskId: string | null = null;
+        try {
+          if (a?.type === "spawn") {
+            const promptOk = typeof a.prompt === "string" && a.prompt.length > 0;
+            const fwOk = a.framework === "hermes" || a.framework === "claude-code";
+            // create the task first so even an invalid action stays visible on the board
+            const t = this.d.board.add({
+              title: a.title ?? (promptOk ? a.prompt.slice(0, 60) : "(spawn without prompt)"),
+              assignee: fwOk ? a.framework : String(a.framework),
             });
-            this.push(`agent_done: ${title} -> ${r.summary}`);
-          }).catch((err: unknown) => {
-            const reason = err instanceof Error ? err.message : String(err);
-            console.error(`[ceo] action failed: ${reason}`);
-            this.d.board.update(t.id, { status: "blocked", resultSummary: `action failed: ${reason}`, attempts: 1 });
-          }).catch((err: unknown) => {
-            // terminal guard: a crash inside the settlement handlers above must
-            // not escape as an unhandled rejection and take the process down
-            console.error(`[ceo] spawn handler crashed: ${err instanceof Error ? err.message : String(err)}`);
-          });
-        } else if (a.type === "mission_update") {
-          if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid mission_update action: text must be a non-empty string");
-          // snapshot the pre-edit docs first: git history keeps the old
-          // mission recoverable, then jex's write-through lands on top
-          this.d.auditor.snapshotRuntime();
-          writeFileSync(join(this.d.runtimeDir, "MISSION.md"), a.text);
-        } else if (a.type === "message") {
-          console.log(`[ceo->human] ${a.text}`);
-        } else if (a.type === "takeover") {
-          if (typeof a.input !== "object" || a.input === null) throw new Error("invalid takeover action: input must be an object");
-          if (this.ws && this.ws.readyState === WS_OPEN) {
-            this.ws.send(JSON.stringify({ t: "ctrl", op: "input", id: randomUUID(), action: a.input }));
-          }
-        } else if (a.type === "cdp") {
-          if (a.op !== "cdp_open" && a.op !== "cdp_snapshot") throw new Error("invalid cdp action: op must be 'cdp_open' or 'cdp_snapshot'");
-          // browser observation rides the takeover link; the server re-gates by mode
-          if (this.ws && this.ws.readyState === WS_OPEN) {
-            this.ws.send(JSON.stringify({ t: "ctrl", op: a.op, url: a.url }));
-          } else {
-            console.error(`[ceo] cdp action dropped: takeover link down`);
-          }
-        } else if (a.type === "steer") {
-          if (typeof a.task_id !== "string" || typeof a.correction !== "string" || a.correction.length === 0) throw new Error("invalid steer action: task_id and a non-empty correction are required");
-          const card = this.d.board.list().find((t) => t.id === a.task_id);
-          if (!card) throw new Error(`invalid steer action: no task ${a.task_id} on the board`);
-          // orchestrator has no per-task kill interface yet: record the
-          // steering intent for the operator; real kill+respawn is deferred
-          console.log(`[ceo] steer noted (kill+respawn deferred): ${card.title} <- ${a.correction}`);
-        } else if (a.type === "toolscout") {
-          if (a.query !== undefined && typeof a.query !== "string") throw new Error("invalid toolscout action: query must be a string");
-          // fire-and-forget: a full scan+verify+manuals pass can take minutes;
-          // the cycle never waits on it, and ToolScout.run itself collapses
-          // re-entry while a pass is in flight
-          if (this.d.scout) {
-            void this.d.scout.run(typeof a.query === "string" ? a.query : undefined).then((r) => {
-              console.log(`[ceo] toolscout: ${r.verified.length} verified`);
+            taskId = t.id;
+            if (!fwOk || !promptOk) {
+              const problems: string[] = [];
+              if (!fwOk) problems.push(`framework must be 'hermes' or 'claude-code' (got ${JSON.stringify(a.framework)})`);
+              if (!promptOk) problems.push("prompt must be a non-empty string");
+              throw new Error(`invalid spawn action: ${problems.join("; ")}`);
+            }
+            this.d.board.update(t.id, { status: "running" });
+            this.emitTasks();
+            // background: the cycle moves on to the next action; the card settles
+            // when the sub-agent exits, and the completion re-wakes jex
+            const title = t.title;
+            const prompt = this.withToolManuals(a.prompt);
+            void this.d.orchestrator.spawn(a.framework, prompt).then((r) => {
+              if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
+              this.d.board.update(t.id, {
+                status: r.exitCode === 0 && !r.summary.startsWith("FAIL") ? "done" : "blocked",
+                resultSummary: r.summary, attempts: 1,
+              });
+              this.emitTasks();
+              this.push(`agent_done: ${title} -> ${r.summary}`);
             }).catch((err: unknown) => {
-              console.error(`[ceo] toolscout failed: ${err instanceof Error ? err.message : String(err)}`);
+              const reason = err instanceof Error ? err.message : String(err);
+              console.error(`[ceo] action failed: ${reason}`);
+              this.d.board.update(t.id, { status: "blocked", resultSummary: `action failed: ${reason}`, attempts: 1 });
+              this.emitTasks();
+            }).catch((err: unknown) => {
+              // terminal guard: a crash inside the settlement handlers above must
+              // not escape as an unhandled rejection and take the process down
+              console.error(`[ceo] spawn handler crashed: ${err instanceof Error ? err.message : String(err)}`);
             });
+          } else if (a.type === "mission_update") {
+            if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid mission_update action: text must be a non-empty string");
+            // snapshot the pre-edit docs first: git history keeps the old
+            // mission recoverable, then jex's write-through lands on top
+            this.d.auditor.snapshotRuntime();
+            writeFileSync(join(this.d.runtimeDir, "MISSION.md"), a.text);
+          } else if (a.type === "reply") {
+            if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid reply action: text must be a non-empty string");
+            this.d.outlet?.chatOut("jex", a.text); // conversational reply: no spawn, no board card
+          } else if (a.type === "message") {
+            console.log(`[ceo->human] ${a.text}`);
+          } else if (a.type === "takeover") {
+            if (typeof a.input !== "object" || a.input === null) throw new Error("invalid takeover action: input must be an object");
+            if (this.ws && this.ws.readyState === WS_OPEN) {
+              this.ws.send(JSON.stringify({ t: "ctrl", op: "input", id: randomUUID(), action: a.input }));
+            }
+          } else if (a.type === "cdp") {
+            if (a.op !== "cdp_open" && a.op !== "cdp_snapshot") throw new Error("invalid cdp action: op must be 'cdp_open' or 'cdp_snapshot'");
+            // browser observation rides the takeover link; the server re-gates by mode
+            if (this.ws && this.ws.readyState === WS_OPEN) {
+              this.ws.send(JSON.stringify({ t: "ctrl", op: a.op, url: a.url }));
+            } else {
+              console.error(`[ceo] cdp action dropped: takeover link down`);
+            }
+          } else if (a.type === "steer") {
+            if (typeof a.task_id !== "string" || typeof a.correction !== "string" || a.correction.length === 0) throw new Error("invalid steer action: task_id and a non-empty correction are required");
+            const card = this.d.board.list().find((t) => t.id === a.task_id);
+            if (!card) throw new Error(`invalid steer action: no task ${a.task_id} on the board`);
+            // orchestrator has no per-task kill interface yet: record the
+            // steering intent for the operator; real kill+respawn is deferred
+            console.log(`[ceo] steer noted (kill+respawn deferred): ${card.title} <- ${a.correction}`);
+          } else if (a.type === "toolscout") {
+            if (a.query !== undefined && typeof a.query !== "string") throw new Error("invalid toolscout action: query must be a string");
+            // fire-and-forget: a full scan+verify+manuals pass can take minutes;
+            // the cycle never waits on it, and ToolScout.run itself collapses
+            // re-entry while a pass is in flight
+            if (this.d.scout) {
+              void this.d.scout.run(typeof a.query === "string" ? a.query : undefined).then((r) => {
+                console.log(`[ceo] toolscout: ${r.verified.length} verified`);
+              }).catch((err: unknown) => {
+                console.error(`[ceo] toolscout failed: ${err instanceof Error ? err.message : String(err)}`);
+              });
+            }
+          } else if (a.type === "tentacle_call") {
+            if (typeof a.tentacle !== "string" || typeof a.op !== "string" || a.op.length === 0) throw new Error("invalid tentacle_call action: tentacle and op must be non-empty strings");
+            if (!this.d.tentacles) throw new Error("tentacle_call action: no tentacle manager wired");
+            const args = (a.args && typeof a.args === "object" && !Array.isArray(a.args)) ? a.args as Record<string, unknown> : {};
+            const name = a.tentacle, op = a.op;
+            // fire-and-forget: every call is independent (no reentry guard), the
+            // cycle moves on, and the result rides the log + the next wake's
+            // event queue — jex sees it, the human sees it, nothing blocks
+            void this.d.tentacles.call(name, op, args).then((r) => {
+              console.log(`[ceo] tentacle ${name}.${op} -> ${r}`);
+              this.push(`tentacle ${name}.${op} -> ${r.slice(0, 200)}`);
+            }).catch((err: unknown) => {
+              console.error(`[ceo] tentacle ${name}.${op} failed: ${err instanceof Error ? err.message : String(err)}`);
+            });
+          } else if (a.type === "tentacle_register") {
+            if (typeof a.spec !== "object" || a.spec === null || Array.isArray(a.spec)) throw new Error("invalid tentacle_register action: spec must be an object");
+            if (!this.d.tentacles) throw new Error("tentacle_register action: no tentacle manager wired");
+            // awaited inline: validation is instant and the probe is bounded by
+            // its own timeout, so the cycle at most pauses a few seconds
+            const r = await this.d.tentacles.register(a.spec);
+            console.log(`[ceo] tentacle registered: ${r.def.name} [${r.probe.status}]`);
+            // hot-load: a spawned sub-agent may have dropped specs under
+            // runtime/tentacles/ while this cycle ran — pick them up now
+            // instead of waiting for the next boot's loadAll
+            await this.d.tentacles.reload();
           }
-        } else if (a.type === "tentacle_call") {
-          if (typeof a.tentacle !== "string" || typeof a.op !== "string" || a.op.length === 0) throw new Error("invalid tentacle_call action: tentacle and op must be non-empty strings");
-          if (!this.d.tentacles) throw new Error("tentacle_call action: no tentacle manager wired");
-          const args = (a.args && typeof a.args === "object" && !Array.isArray(a.args)) ? a.args as Record<string, unknown> : {};
-          const name = a.tentacle, op = a.op;
-          // fire-and-forget: every call is independent (no reentry guard), the
-          // cycle moves on, and the result rides the log + the next wake's
-          // event queue — jex sees it, the human sees it, nothing blocks
-          void this.d.tentacles.call(name, op, args).then((r) => {
-            console.log(`[ceo] tentacle ${name}.${op} -> ${r}`);
-            this.push(`tentacle ${name}.${op} -> ${r.slice(0, 200)}`);
-          }).catch((err: unknown) => {
-            console.error(`[ceo] tentacle ${name}.${op} failed: ${err instanceof Error ? err.message : String(err)}`);
-          });
-        } else if (a.type === "tentacle_register") {
-          if (typeof a.spec !== "object" || a.spec === null || Array.isArray(a.spec)) throw new Error("invalid tentacle_register action: spec must be an object");
-          if (!this.d.tentacles) throw new Error("tentacle_register action: no tentacle manager wired");
-          // awaited inline: validation is instant and the probe is bounded by
-          // its own timeout, so the cycle at most pauses a few seconds
-          const r = await this.d.tentacles.register(a.spec);
-          console.log(`[ceo] tentacle registered: ${r.def.name} [${r.probe.status}]`);
-          // hot-load: a spawned sub-agent may have dropped specs under
-          // runtime/tentacles/ while this cycle ran — pick them up now
-          // instead of waiting for the next boot's loadAll
-          await this.d.tentacles.reload();
+        } catch (e) {
+          // one bad action must not kill the rest of the wake: block its task (if any) and move on
+          const reason = e instanceof Error ? e.message : String(e);
+          console.error(`[ceo] action failed: ${reason}`);
+          if (taskId) { this.d.board.update(taskId, { status: "blocked", resultSummary: `action failed: ${reason}`, attempts: 1 }); this.emitTasks(); }
         }
-      } catch (e) {
-        // one bad action must not kill the rest of the wake: block its task (if any) and move on
-        const reason = e instanceof Error ? e.message : String(e);
-        console.error(`[ceo] action failed: ${reason}`);
-        if (taskId) this.d.board.update(taskId, { status: "blocked", resultSummary: `action failed: ${reason}`, attempts: 1 });
       }
+      cost = await this.maybeAudit({ promptTokens: p.usage.promptTokens + dec.usage.promptTokens, completionTokens: p.usage.completionTokens + dec.usage.completionTokens }, parsed.actions ?? []);
+    } finally {
+      // every cycle ends on the wire: the heartbeat frame plus the fresh budget line
+      this.d.outlet?.frame({ t: "cycle", wake: this.wakeN, cost, actions });
+      this.d.outlet?.frame({ t: "budget", line: this.d.budget.line() });
     }
-    await this.maybeAudit({ promptTokens: p.usage.promptTokens + dec.usage.promptTokens, completionTokens: p.usage.completionTokens + dec.usage.completionTokens }, parsed.actions ?? []);
   }
 
   // Attach the manuals of verified tools and named tentacles the spawn prompt
@@ -290,15 +333,20 @@ export class SchedulerLoop {
     return parts.length ? `${prompt}\n\n# TOOL MANUALS\n${parts.join("\n\n")}` : prompt;
   }
 
-  private async maybeAudit(u: { promptTokens: number; completionTokens: number }, actions: unknown[]): Promise<void> {
+  // Books a cost batch (plus the audit review, when due) and returns the total
+  // booked this call — the number the cycle frame reports.
+  private async maybeAudit(u: { promptTokens: number; completionTokens: number }, actions: unknown[]): Promise<number> {
+    let booked = u.promptTokens + u.completionTokens;
     this.d.budget.spend(u);
-    this.d.auditor.record({ contextDigest: `wake#${this.wakeN}`, actions, cost: u.promptTokens + u.completionTokens });
+    this.d.auditor.record({ contextDigest: `wake#${this.wakeN}`, actions, cost: booked });
     if (this.d.auditor.due()) {
       const patches = await this.d.auditor.review(this.d.llm);
       this.d.budget.spend(patches.usage); // the review pass itself burns tokens — book them
+      booked += patches.usage.promptTokens + patches.usage.completionTokens;
       this.d.auditor.applyPatches(patches);
       if (patches.missionNote && patches.missionNote !== "none") console.log(`[audit] mission note: ${patches.missionNote}`);
     }
+    return booked;
   }
 
   start(tickMs = 60_000): void {
@@ -330,7 +378,13 @@ export class SchedulerLoop {
       try {
         const m = JSON.parse(String(raw));
         if (m.t === "evt" && m.type === "screen_diff") this.push(`screen_diff hamming=${m.hamming}${m.ocrText ? ` ocr="${String(m.ocrText).slice(0,120)}"` : ""}`);
-        if (m.t === "evt" && m.type === "mode_changed") this.push(`mode_changed -> ${m.mode}`);
+        if (m.t === "evt" && m.type === "mode_changed") {
+          if (m.mode === "observe" || m.mode === "assist" || m.mode === "full") {
+            this.modeNow = m.mode;
+            this.d.outlet?.frame({ t: "mode", mode: m.mode });
+          }
+          this.push(`mode_changed -> ${m.mode}`);
+        }
         if (m.t === "evt" && m.type === "cdp_result") this.push(`cdp_${m.op}: ${String(m.result ?? "").slice(0, 200)}`);
         if (m.t === "human") this.push(`human: ${m.text}`);
       } catch { /* ignore malformed */ }

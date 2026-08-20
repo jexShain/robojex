@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // packages/ceo-core/src/index.ts
 import { mkdirSync, existsSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { execSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { LLMClient } from "./llm.js";
 import { TaskBoard } from "./board.js";
 import { ContextAssembler } from "./context.js";
@@ -13,6 +13,7 @@ import { BudgetGovernor, type BudgetMode } from "./budget.js";
 import { SchedulerLoop, type LoopDeps } from "./loop.js";
 import { ToolScout } from "./toolscout.js";
 import { TentacleManager } from "./tentacles.js";
+import { ApiServer } from "./api.js";
 
 // runtime state that must never enter git history (config.json holds the API key)
 export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\nTENTACLES.md\ntentacles/\ntentacle-manuals/\n";
@@ -59,10 +60,12 @@ export function initRuntimeGit(runtimeDir: string, run: (cmd: string, cwd: strin
 
 export function makeShutdownHandler(
   loop: { stop(): void }, orchestrator: { killAll(): void }, exit: () => void = () => process.exit(0),
+  api?: { close(): void },
 ): () => void {
   return () => {
     loop.stop();
     orchestrator.killAll(); // no detached sub-agent process group outlives jex
+    api?.close();           // a lingering api port must not outlive jex either
     exit();
   };
 }
@@ -85,7 +88,7 @@ export function resolveBudgetConfig(cfg: { budgetMode?: string; dailyTokens?: nu
 interface Config {
   baseUrl?: string; apiKey?: string; patrolModel?: string; decideModel?: string;
   budgetMode?: "burn" | "budgeted"; dailyTokens?: number; tickMs?: number; takeoverUrl?: string;
-  webhookPort?: number;
+  webhookPort?: number; apiPort?: number;
 }
 
 // The loop surface main() needs; SchedulerLoop satisfies it structurally and
@@ -102,11 +105,16 @@ export interface AssembleDeps {
   exit?: () => void;                               // test seam: no process.exit
 }
 
-export interface Assembled { loop: StartableLoop; stop: () => void; }
+export interface Assembled { loop: StartableLoop; api: ApiServer; stop: () => void; }
 
 // Build every runtime component and START the scheduler loop. Extracted from
 // main() so the regression test can assert loop.start() runs: a past refactor
 // dropped that call and jex constructed everything yet never ticked.
+// packages/ceo-core/{src,dist} -> packages/web/dist in the repo; under a pkg
+// binary the release layout ships web/ beside the executable.
+const DEFAULT_WEB_DIR = process.env.ROBOJEX_WEB_DIR
+  ?? (import.meta.url ? join(dirname(fileURLToPath(import.meta.url)), "..", "..", "web", "dist") : join(dirname(process.execPath), "web"));
+
 export function assembleAndStart(cfg: Config, runtimeDir: string, deps: AssembleDeps = {}): Assembled {
   const llm = new LLMClient({ baseUrl: cfg.baseUrl ?? "", apiKey: cfg.apiKey ?? "", patrolModel: cfg.patrolModel ?? "", decideModel: cfg.decideModel ?? "" });
   const orchestrator = new AgentOrchestrator({ llm, runtimeDir });
@@ -121,15 +129,29 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
     void scout.run().then((r) => console.log(`[ceo] toolscout: ${r.verified.length} verified`))
       .catch((e: unknown) => console.error(`[ceo] toolscout failed: ${e instanceof Error ? e.message : String(e)}`));
   }
+  const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
+  const auditor = new Auditor({ runtimeDir });
   const loopDeps: LoopDeps = {
-    llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
-    orchestrator, auditor: new Auditor({ runtimeDir }),
+    llm, board, ctx: new ContextAssembler(),
+    orchestrator, auditor,
     budget, runtimeDir,
     takeoverUrl: cfg.takeoverUrl ?? "ws://127.0.0.1:7600",
     scout,
     tentacles,
   };
   const loop = deps.loopFactory ? deps.loopFactory(loopDeps) : new SchedulerLoop(loopDeps);
+  // operator surface: HTTP+WS api (default :7620); the web bundle is served
+  // only when the dist tree exists (source checkout / release layout)
+  const webDir = DEFAULT_WEB_DIR;
+  const api = new ApiServer({
+    port: cfg.apiPort ?? 7620, board, budget, runtimeDir, loop,
+    snapshotRuntime: () => auditor.snapshotRuntime(),
+    ...(existsSync(webDir) ? { webDir } : {}),
+  });
+  if (loop instanceof SchedulerLoop) loop.setOutlet(api); // jex replies + cycle/tasks/mode frames ride the api broadcast
+  void api.start()
+    .then(() => console.log(`[ceo] api on http://127.0.0.1:${api.port}`))
+    .catch((e: unknown) => console.error(`[ceo] api failed: ${e instanceof Error ? e.message : String(e)}`));
   // tentacles boot: load specs/plugins, hardware-scan on first boot, then one
   // probe + manual pass; the webhook sink is wired even when no webhook
   // tentacle exists yet, so one registered later lazily starts the server
@@ -148,7 +170,7 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
     }
   })().catch((e: unknown) => console.error(`[ceo] tentacles failed: ${e instanceof Error ? e.message : String(e)}`));
   loop.start(Number(cfg.tickMs) || 60_000); // jex must schedule: without this it never ticks
-  return { loop, stop: makeShutdownHandler(loop, orchestrator, deps.exit) };
+  return { loop, api, stop: makeShutdownHandler(loop, orchestrator, deps.exit, api) };
 }
 
 function main(): void {

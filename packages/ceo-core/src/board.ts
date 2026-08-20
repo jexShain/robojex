@@ -2,7 +2,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 
-export interface Task { id: string; title: string; status: "todo" | "running" | "done" | "blocked"; priority: number; assignee: string; attempts: number; resultSummary: string; }
+export interface Task { id: string; title: string; status: "todo" | "running" | "done" | "blocked"; priority: number; assignee: string; attempts: number; resultSummary: string; createdAt: number; }
 
 export class TaskBoard {
   private db: DatabaseSync;
@@ -12,12 +12,16 @@ export class TaskBoard {
     this.db.exec(`CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'todo',
       priority INTEGER NOT NULL DEFAULT 0, assignee TEXT NOT NULL DEFAULT '',
-      attempts INTEGER NOT NULL DEFAULT 0, resultSummary TEXT NOT NULL DEFAULT '')`);
+      attempts INTEGER NOT NULL DEFAULT 0, resultSummary TEXT NOT NULL DEFAULT '',
+      createdAt INTEGER NOT NULL DEFAULT 0)`);
+    // boards created before createdAt existed: add the column in place, old rows stay 0
+    const cols = this.db.prepare("PRAGMA table_info(tasks)").all() as unknown as { name: string }[];
+    if (!cols.some((c) => c.name === "createdAt")) this.db.exec("ALTER TABLE tasks ADD COLUMN createdAt INTEGER NOT NULL DEFAULT 0");
   }
   add(t: { title: string; priority?: number; assignee?: string }): Task {
-    const task: Task = { id: randomUUID(), title: t.title, status: "todo", priority: t.priority ?? 0, assignee: t.assignee ?? "", attempts: 0, resultSummary: "" };
-    this.db.prepare("INSERT INTO tasks VALUES (?,?,?,?,?,?,?)")
-      .run(task.id, task.title, task.status, task.priority, task.assignee, task.attempts, task.resultSummary);
+    const task: Task = { id: randomUUID(), title: t.title, status: "todo", priority: t.priority ?? 0, assignee: t.assignee ?? "", attempts: 0, resultSummary: "", createdAt: Date.now() };
+    this.db.prepare("INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)")
+      .run(task.id, task.title, task.status, task.priority, task.assignee, task.attempts, task.resultSummary, task.createdAt);
     return task;
   }
   list(): Task[] {
@@ -27,7 +31,7 @@ export class TaskBoard {
     const cur = this.db.prepare("SELECT * FROM tasks WHERE id=?").get(id) as unknown as Task | undefined;
     if (!cur) return;
     const next = { ...cur, ...patch };
-    this.db.prepare("UPDATE tasks SET title=?,status=?,priority=?,assignee=?,attempts=?,resultSummary=? WHERE id=?")
-      .run(next.title, next.status, next.priority, next.assignee, next.attempts, next.resultSummary, next.id);
+    this.db.prepare("UPDATE tasks SET title=?,status=?,priority=?,assignee=?,attempts=?,resultSummary=?,createdAt=? WHERE id=?")
+      .run(next.title, next.status, next.priority, next.assignee, next.attempts, next.resultSummary, next.createdAt, next.id);
   }
 }

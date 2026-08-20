@@ -30,5 +30,11 @@ export class BudgetGovernor {
     const r = this.gate();
     return `budget: ${this.used}/${this.dailyTokens} tokens (${r === "observe-only" ? "exhausted — observe only" : r})`;
   }
+
+  // One-shot view for the api state frame: mode, cap, spend and the human line.
+  snapshot(): { mode: BudgetMode; dailyTokens: number; spentToday: number; line: string } {
+    this.rollover();
+    return { mode: this.mode, dailyTokens: this.dailyTokens, spentToday: this.used, line: this.line() };
+  }
   reset(): void { this.used = 0; }
 }

@@ -97,13 +97,14 @@ test("assembleAndStart: the loop is not just built but started — default 60s t
   };
 
   const a = mkLoop();
-  const assembled = assembleAndStart({}, mkDir(), { loopFactory: () => a.loop, exit: () => {} });
+  const assembled = assembleAndStart({ apiPort: 0 }, mkDir(), { loopFactory: () => a.loop, exit: () => {} });
   expect(assembled.loop).toBe(a.loop);
   expect(a.started).toEqual([60_000]); // a refactor that drops loop.start() must turn this red
   assembled.stop();
   expect(a.loop.stop).toHaveBeenCalledTimes(1);
 
   const b = mkLoop();
-  assembleAndStart({ tickMs: 1234 }, mkDir(), { loopFactory: () => b.loop, exit: () => {} });
+  const assembledB = assembleAndStart({ apiPort: 0, tickMs: 1234 }, mkDir(), { loopFactory: () => b.loop, exit: () => {} });
   expect(b.started).toEqual([1234]);
+  assembledB.stop(); // also tears the api listener down: no port leaks between runs
 });
