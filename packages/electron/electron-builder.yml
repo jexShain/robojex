@@ -1,6 +1,9 @@
 appId: com.robojex.app
 productName: robojex
 electronVersion: 43.4.1
+publish:
+  provider: generic
+  url: ''
 directories:
   output: ../../dist-electron
 files:
