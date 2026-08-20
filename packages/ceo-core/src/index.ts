@@ -88,7 +88,7 @@ export function resolveBudgetConfig(cfg: { budgetMode?: string; dailyTokens?: nu
 interface Config {
   baseUrl?: string; apiKey?: string; patrolModel?: string; decideModel?: string;
   budgetMode?: "burn" | "budgeted"; dailyTokens?: number; tickMs?: number; takeoverUrl?: string;
-  webhookPort?: number; apiPort?: number;
+  webhookPort?: number; apiPort?: number; apiHost?: string;
 }
 
 // The loop surface main() needs; SchedulerLoop satisfies it structurally and
@@ -144,13 +144,14 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
   // only when the dist tree exists (source checkout / release layout)
   const webDir = DEFAULT_WEB_DIR;
   const api = new ApiServer({
-    port: cfg.apiPort ?? 7620, board, budget, runtimeDir, loop,
+    port: cfg.apiPort ?? 7620, host: cfg.apiHost, board, budget, runtimeDir, loop,
     snapshotRuntime: () => auditor.snapshotRuntime(),
     ...(existsSync(webDir) ? { webDir } : {}),
   });
   if (loop instanceof SchedulerLoop) loop.setOutlet(api); // jex replies + cycle/tasks/mode frames ride the api broadcast
+  const apiHostLog = cfg.apiHost ?? "127.0.0.1";
   void api.start()
-    .then(() => console.log(`[ceo] api on http://127.0.0.1:${api.port}`))
+    .then(() => console.log(`[ceo] api on http://${apiHostLog}:${api.port}`))
     .catch((e: unknown) => console.error(`[ceo] api failed: ${e instanceof Error ? e.message : String(e)}`));
   // tentacles boot: load specs/plugins, hardware-scan on first boot, then one
   // probe + manual pass; the webhook sink is wired even when no webhook
