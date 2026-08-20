@@ -904,7 +904,7 @@ test("spawn parent/schedule parsing: valid fields reach the board; bad ISO or un
     loop.stop();
 
     const byTitle = Object.fromEntries(board.list().map((t) => [t.title, t]));
-    expect(byTitle.good).toMatchObject({ parentId: epic.id, scheduledAt: Date.parse("2026-08-21T09:30:00Z"), dueAt: Date.parse("2026-08-21T12:00:00Z") });
+    expect(byTitle.good).toMatchObject({ parentId: epic.id, scheduledAt: Date.parse("2026-08-21T09:30:00"), dueAt: Date.parse("2026-08-21T12:00:00") }); // trailing Z stripped: naive ISO parses as local
     expect(byTitle["bad time"].scheduledAt).toBe(null);   // unparseable time: dropped, spawn alive
     expect(byTitle["bad time"].status).not.toBe("blocked");
     expect(byTitle["bad parent"].parentId).toBe(null);    // unknown parent: dropped, spawn alive
