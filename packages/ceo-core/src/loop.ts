@@ -326,11 +326,13 @@ export class SchedulerLoop {
     return hit.id;
   }
 
-  // ISO 8601 timestamp → epoch ms for spawn scheduling; absent passes through
-  // as undefined, anything unparseable is dropped with one warn line.
+  // as undefined, anything unparseable is dropped with one warn line. A
+  // trailing Z is stripped first: the decide prompt mandates local-offset
+  // timestamps, so a Z is the model forgetting to convert, never a real UTC
+  // instant (naive ISO parses as local per spec).
   private spawnTime(v: unknown, field: "scheduledAt" | "dueAt"): number | undefined {
     if (v === undefined || v === null || v === "") return undefined;
-    const ms = typeof v === "string" ? Date.parse(v) : Number.NaN;
+    const ms = typeof v === "string" ? Date.parse(v.endsWith("Z") ? v.slice(0, -1) : v) : Number.NaN;
     if (!Number.isFinite(ms)) {
       console.warn(`[loop] spawn ${field} ignored: not an ISO 8601 timestamp (${JSON.stringify(v)})`);
       return undefined;
