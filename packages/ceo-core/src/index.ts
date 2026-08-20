@@ -147,7 +147,7 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
       if (srv) console.log(`[ceo] tentacle webhook server on port ${srv.port}`);
     }
   })().catch((e: unknown) => console.error(`[ceo] tentacles failed: ${e instanceof Error ? e.message : String(e)}`));
-  loop.start(cfg.tickMs ?? 60_000); // jex must schedule: without this it never ticks
+  loop.start(Number(cfg.tickMs) || 60_000); // jex must schedule: without this it never ticks
   return { loop, stop: makeShutdownHandler(loop, orchestrator, deps.exit) };
 }
 

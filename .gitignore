@@ -5,3 +5,4 @@ runtime/
 *.tsbuildinfo
 docs/superpowers/
 build/
+runtime/config.json
