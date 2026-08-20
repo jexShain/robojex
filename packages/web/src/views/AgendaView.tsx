@@ -20,6 +20,7 @@ import {
   snapTo15,
 } from './agendaModel'
 import { DAY_MS, dayColHead, dayStartOf, fmtClock, fmtDayLabel, fmtStamp } from './timefmt'
+import { addDaysLocal } from './agendaModel'
 
 /** Day-mode default hour row height. */
 const BASE_HOUR_H = 56
@@ -119,7 +120,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
 
   const now = Date.now() + state.clockOffset
   const today0 = dayStartOf(now)
-  const day0 = today0 + dayOffset * DAY_MS
+  const day0 = addDaysLocal(today0, dayOffset)
   const blocks = useMemo(() => blocksForDay(state.tasks, day0, now), [state.tasks, day0, now])
   const side = useMemo(() => unscheduledTasks(state.tasks), [state.tasks])
   const isToday = dayOffset === 0

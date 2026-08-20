@@ -10,6 +10,22 @@ export const MIN_BLOCK_MS = 30 * 60_000
 /** One hour in ms. */
 export const HOUR_MS = 3_600_000
 
+/** Hour-row height at the 24h zoom level; deeper zooms scale it up. */
+export const BASE_HOUR_H = 56
+
+/**
+ * N local days after `day0` (a local midnight), landing on local midnight
+ * again. Plain `day0 + n * DAY_MS` drifts across DST transitions (a fall-back
+ * day is 25h), which would duplicate or skip a column; anchoring on
+ * `dayStartOf` keeps every column a real midnight. In fixed-offset zones this
+ * is exactly `day0 + n * DAY_MS`.
+ */
+export function addDaysLocal(day0: number, n: number): number {
+  // +12h lands mid-day even under a ±1h DST shift, so dayStartOf picks the
+  // intended calendar day rather than the one before it.
+  return dayStartOf(day0 + n * DAY_MS + 12 * HOUR_MS)
+}
+
 export interface AgendaBlock {
   task: Task
   topPct: number
@@ -38,61 +54,79 @@ function buildParentMap(tasks: Task[]): Map<string | null | undefined, Task[]> {
   return map
 }
 
-/** Compute tree depth for a task. */
-function treeDepth(task: Task, parentMap: Map<string | null | undefined, Task[]>, cache: Map<string, number>): number {
+/** Compute tree depth for a task (0 = root). Parent chains that cycle are cut
+ * at the first repeat so malformed data cannot recurse forever. */
+function treeDepth(task: Task, byId: Map<string, Task>, cache: Map<string, number>): number {
   const cached = cache.get(task.id)
   if (cached !== undefined) return cached
-  if (!task.parentId) { cache.set(task.id, 0); return 0 }
-  const siblings = parentMap.get(null)
-  const parent = siblings?.find(s => s.id === task.parentId)
-  if (!parent) { cache.set(task.id, 0); return 0 }
-  const depth = treeDepth(parent, parentMap, cache) + 1
+  let depth = 0
+  if (task.parentId && task.parentId !== task.id) {
+    const seen = new Set<string>([task.id])
+    let cur = byId.get(task.parentId)
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id)
+      depth += 1
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined
+    }
+  }
   cache.set(task.id, depth)
   return depth
 }
 
-/** Blocks for tasks whose scheduledAt falls inside the day [day0, day0+24h). */
+/** Blocks for tasks whose scheduledAt falls inside the day [day0, next midnight).
+ * A task scheduled inside the day renders exactly once: nested under its
+ * in-day parent when one exists (any depth), otherwise as a top-level block.
+ * Cycle members whose whole ancestry is in-day surface as roots so no task
+ * silently vanishes. */
 export function blocksForDay(tasks: Task[], day0: number, now: number): AgendaBlock[] {
-  const end = day0 + DAY_MS
+  const end = addDaysLocal(day0, 1)
   const parentMap = buildParentMap(tasks)
+  const byId = new Map(tasks.map((t) => [t.id, t] as const))
   const depthCache = new Map<string, number>()
   const out: AgendaBlock[] = []
-  const ONE_HOUR = HOUR_MS
 
-  for (const t of tasks) {
-    const s = t.scheduledAt
-    if (s == null || s < day0 || s >= end) continue
+  const inDay = (ms: number | null | undefined): ms is number =>
+    ms != null && ms >= day0 && ms < end
+
+  /** True when some ancestor is scheduled in-day — the task will be rendered
+   * inside that ancestor's block. Ancestry cycles (a↔b) would make every
+   * member "nested" under another skipped task, so they surface as roots. */
+  const nestedInDay = (t: Task): boolean => {
+    const seen = new Set<string>([t.id])
+    let cur = t.parentId ? byId.get(t.parentId) : undefined
+    while (cur) {
+      if (seen.has(cur.id)) return false // cycle — surface as a root instead
+      seen.add(cur.id)
+      if (inDay(cur.scheduledAt)) return true
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined
+    }
+    return false
+  }
+
+  const makeBlock = (t: Task, depth: number): AgendaBlock => {
+    const s = t.scheduledAt!
     const due = t.dueAt
     const stop = due != null && due > s ? Math.min(due, end) : s + MIN_BLOCK_MS
-    const depth = treeDepth(t, parentMap, depthCache)
     const block: AgendaBlock = {
       task: t,
       topPct: ((s - day0) / DAY_MS) * 100,
       heightPct: (Math.max(MIN_BLOCK_MS, stop - s) / DAY_MS) * 100,
       spansBeyond: due != null && due > end,
       isOverdue: due != null && due < now && t.status !== 'done',
-      isUpcoming: due != null && due >= now && due - now <= ONE_HOUR && t.status !== 'done',
+      isUpcoming: due != null && due >= now && due - now <= HOUR_MS && t.status !== 'done',
       treeDepth: depth,
       childBlocks: [],
     }
-    // Attach child blocks
-    const children = parentMap.get(t.id) ?? []
-    for (const c of children) {
-      const cs = c.scheduledAt
-      if (cs == null || cs < day0 || cs >= end) continue
-      const cDue = c.dueAt
-      const cStop = cDue != null && cDue > cs ? Math.min(cDue, end) : cs + MIN_BLOCK_MS
-      block.childBlocks.push({
-        task: c, topPct: ((cs - day0) / DAY_MS) * 100,
-        heightPct: (Math.max(MIN_BLOCK_MS, cStop - cs) / DAY_MS) * 100,
-        spansBeyond: cDue != null && cDue > end,
-        isOverdue: cDue != null && cDue < now && c.status !== 'done',
-        isUpcoming: cDue != null && cDue >= now && cDue - now <= ONE_HOUR && c.status !== 'done',
-        treeDepth: depth + 1,
-        childBlocks: [],
-      })
+    for (const c of parentMap.get(t.id) ?? []) {
+      if (inDay(c.scheduledAt)) block.childBlocks.push(makeBlock(c, depth + 1))
     }
-    out.push(block)
+    return block
+  }
+
+  for (const t of tasks) {
+    if (!inDay(t.scheduledAt)) continue
+    if (nestedInDay(t)) continue // rendered inside an ancestor's block
+    out.push(makeBlock(t, treeDepth(t, byId, depthCache)))
   }
   return out.sort((a, b) => a.topPct - b.topPct)
 }
@@ -114,14 +148,14 @@ export interface DayColumn {
 export function dayColumns(tasks: Task[], from0: number, now: number, count = 7): DayColumn[] {
   const today0 = dayStartOf(now)
   return Array.from({ length: count }, (_, i) => {
-    const day0 = from0 + i * DAY_MS
+    const day0 = addDaysLocal(from0, i)
     return { day0, blocks: blocksForDay(tasks, day0, now), today: day0 === today0 }
   })
 }
 
 /** Now-line position inside a day as percent, or null when `now` is outside. */
 export function nowPct(day0: number, now: number): number | null {
-  if (now < day0 || now >= day0 + DAY_MS) return null
+  if (now < day0 || now >= addDaysLocal(day0, 1)) return null
   return ((now - day0) / DAY_MS) * 100
 }
 
@@ -136,28 +170,24 @@ export function clampZoom(idx: number): number {
   return Math.max(0, Math.min(ZOOM_LEVELS.length - 1, idx))
 }
 
-/** Hour row height for a given zoom level. */
+/** Hour row height for a given zoom level (24h → 56px, 3h → 448px). */
 export function hourHeight(zoom: ZoomLevel): number {
-  // 24h → 56px, 12h → 112px, 6h → 224px, 3h → 448px
-  return (24 / zoom) * 56
-}
-
-/** Visible time range for a zoom level + scroll offset (in hours). */
-export function visibleRange(zoom: ZoomLevel, scrollHours: number): { startH: number; endH: number } {
-  return { startH: scrollHours, endH: scrollHours + zoom }
+  return (24 / zoom) * BASE_HOUR_H
 }
 
 // ---- Drag-to-reschedule ----
 
-/** Convert a pointer Y position (relative to the track) to epoch ms, given zoom/scroll context. */
+/** Convert a pointer Y position (relative to the full 24h track, i.e. including
+ * scrollTop) to epoch ms. `viewportHeight` is the visible window's height in
+ * px — the zoom level's worth of hour rows, NOT the whole 24h track. */
 export function yToTime(
   y: number,
-  trackHeight: number,
+  viewportHeight: number,
   day0: number,
   zoom: ZoomLevel,
   scrollHours: number,
 ): number {
-  const pxPerHour = trackHeight / zoom
+  const pxPerHour = viewportHeight / zoom
   const hour = scrollHours + y / pxPerHour
   return day0 + hour * HOUR_MS
 }

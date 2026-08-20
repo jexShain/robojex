@@ -1,10 +1,10 @@
 // packages/web/src/views/ThinkingStream.tsx — live reasoning timeline.
 // Shows patrol → decide → spawn/reply chain with animations.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import type { ThinkingStep } from './thinkingModel'
-import { frameToThinkingSteps, decidingPlaceholder } from './thinkingModel'
+import { frameToThinkingSteps } from './thinkingModel'
 
 const ICONS: Record<ThinkingStep['kind'], string> = {
   patrol: '🔍',
@@ -46,7 +46,6 @@ export function ThinkingStream() {
   const [steps, setSteps] = useState<ThinkingStep[]>([])
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [showDeciding, setShowDeciding] = useState(false)
 
   // Process transcript into thinking steps
   useEffect(() => {
@@ -61,7 +60,6 @@ export function ThinkingStream() {
     }
     if (newSteps.length > steps.length) {
       setSteps(newSteps)
-      setShowDeciding(false)
     }
   }, [state.transcript]) // eslint-disable-line react-hooks/exhaustive-deps
 

@@ -1,8 +1,10 @@
 // packages/web/test/agendaModel.test.ts — pure placement tests for the Agenda
-// view (percent math, 30-min default, cross-day continuation, day columns).
+// view (percent math, 30-min default, cross-day continuation, day columns,
+// task-tree nesting).
 import { describe, expect, test } from 'vitest'
 import {
   MIN_BLOCK_MS,
+  addDaysLocal,
   blocksForDay,
   dayColumns,
   nowPct,

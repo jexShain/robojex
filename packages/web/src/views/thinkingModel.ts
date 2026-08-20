@@ -1,7 +1,7 @@
 // packages/web/src/views/thinkingModel.ts — transforms WS frames into
 // a thinking-step timeline for the ThinkingStream panel.
 
-import type { CycleAction, ServerFrame } from '../state/types'
+import type { ServerFrame } from '../state/types'
 
 export type ThinkingKind =
   | 'patrol'
