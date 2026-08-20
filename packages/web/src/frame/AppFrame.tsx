@@ -12,6 +12,7 @@ import { Sidebar } from '../sidebar/Sidebar'
 import { useStore } from '../state/store'
 import type { ThemeApi } from '../state/theme'
 import { AgendaView } from '../views/AgendaView'
+import { ActivityFeed } from '../views/ActivityFeed'
 import { BoardView } from '../views/BoardView'
 import { loadView, saveView } from '../views/viewState'
 import type { ViewId } from '../views/viewState'
@@ -202,14 +203,21 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
           <ChatStream />
           <InputBar />
         </div>
-        {view === 'board' ? <BoardView /> : null}
+        {view === 'board' ? <div className="rj-animate-in"><BoardView /></div> : null}
         {view === 'agenda' ? (
-          <AgendaView
-            onOpenTask={(id) => {
-              selectTask(id)
-              changeView('board')
-            }}
-          />
+          <div className="rj-animate-in">
+            <AgendaView
+              onOpenTask={(id) => {
+                selectTask(id)
+                changeView('board')
+              }}
+            />
+          </div>
+        ) : null}
+        {view === 'activity' ? (
+          <div className="rj-animate-in">
+            <ActivityFeed />
+          </div>
         ) : null}
       </div>
 

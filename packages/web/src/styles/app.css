@@ -1887,3 +1887,97 @@ body[data-ds-dark-theme] .chip.full {
     transition: none;
   }
 }
+
+/* ============================================================
+   RoboJex Enhancement Animations (appends)
+   ============================================================ */
+
+/* Board card hover lift + glow */
+.board-card {
+  transition: transform var(--rj-duration-fast, 150ms) var(--rj-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+              box-shadow var(--rj-duration-fast, 150ms) var(--rj-ease-smooth, cubic-bezier(0.4, 0, 0.2, 1));
+}
+
+.board-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--rj-glow-primary, 0 0 20px rgba(103, 158, 254, 0.3));
+}
+
+/* Agenda block hover */
+.agenda-block {
+  transition: transform var(--rj-duration-fast, 150ms) var(--rj-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+              box-shadow var(--rj-duration-fast, 150ms) var(--rj-ease-smooth, cubic-bezier(0.4, 0, 0.2, 1));
+}
+
+.agenda-block:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Chat message entrance */
+.msg-user-row,
+.msg-jex {
+  animation: rj-slide-in-up var(--rj-duration-normal, 250ms) var(--rj-ease-out, cubic-bezier(0, 0, 0.2, 1)) both;
+}
+
+/* View switcher active glow */
+.vsw.active button {
+  box-shadow: var(--rj-glow-primary, 0 0 20px rgba(103, 158, 254, 0.3));
+}
+
+/* Connection dot live pulse */
+.conn-dot.live {
+  animation: rj-dot-pulse 2s ease-in-out infinite;
+}
+
+/* Running status badge subtle glow */
+.bc-dot.running,
+.status-running {
+  animation: rj-dot-pulse 2s ease-in-out infinite;
+}
+
+/* Icon button press feedback */
+.icon-btn:active {
+  transform: scale(0.92);
+  transition: transform var(--rj-duration-instant, 80ms);
+}
+
+/* Sidebar nav item hover slide indicator */
+.task-item {
+  position: relative;
+  transition: background var(--rj-duration-fast, 150ms) var(--rj-ease-smooth, cubic-bezier(0.4, 0, 0.2, 1)),
+              color var(--rj-duration-fast, 150ms) var(--rj-ease-smooth, cubic-bezier(0.4, 0, 0.2, 1));
+}
+
+.task-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%) scaleY(0);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 2px 2px 0;
+  background: var(--dsw-alias-state-business-primary);
+  transition: transform var(--rj-duration-fast, 150ms) var(--rj-ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+
+.task-item.active::before,
+.task-item:hover::before {
+  transform: translateY(-50%) scaleY(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rj-animate-in,
+  .rj-animate-in-fast,
+  .rj-animate-slide-up,
+  .rj-animate-scale,
+  .rj-pulse-dot,
+  .rj-celebrate,
+  .rj-float,
+  .rj-spinner,
+  .rj-skeleton {
+    animation: none;
+    transition: none;
+  }
+}

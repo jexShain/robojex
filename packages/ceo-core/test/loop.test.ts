@@ -81,7 +81,7 @@ test("invalid spawn action: task created and blocked, later actions still run", 
   });
   const llm = { chat } as unknown as LLMClient;
   const spawnFn = vi.fn(async () => { throw new Error("spawn must not run for an invalid action"); });
-  const orchestrator = { spawn: spawnFn } as unknown as AgentOrchestrator;
+  const orchestrator = { spawn: spawnFn, getRegistry: () => null } as unknown as AgentOrchestrator;
   const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   const err = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -120,7 +120,7 @@ test("steer action: intent noted, no kill attempted, cycle completes without err
   try {
     const loop = new SchedulerLoop({
       llm, board, ctx: new ContextAssembler(),
-      orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+      orchestrator: { spawn: spawnFn, getRegistry: () => null } as unknown as AgentOrchestrator,
       auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir,
     });
     await loop.runOnce("tick"); // must complete: steer neither throws nor kills
@@ -146,7 +146,7 @@ test("mission_update snapshots runtime git history before the write", async () =
   const llm = { chat } as unknown as LLMClient;
   const loop = new SchedulerLoop({
     llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
-    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir,
   });
   await loop.runOnce("tick");
@@ -166,7 +166,7 @@ test("patrol-only gate: patrol runs, decide never called", async () => {
   budget.spend({ promptTokens: 950, completionTokens: 0 }); // 95%: patrol-only window
   const loop = new SchedulerLoop({
     llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
-    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir }), budget, runtimeDir,
   });
   await loop.runOnce("tick");
@@ -186,7 +186,7 @@ test("decide prompt carries the framework manuals; patrol prompt stays lean", as
   const skillsDir = fileURLToPath(new URL("../../../skills/", import.meta.url)); // repo-root skills/
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir, skillsDir,
   });
   await loop.runOnce("tick");
@@ -210,7 +210,7 @@ test("skills dir missing manuals: no manual block in the decide prompt, cycle st
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"),
     runtimeDir, skillsDir: join(runtimeDir, "no-such-skills"),
   });
@@ -241,7 +241,7 @@ test("spawn is backgrounded: the cycle returns immediately, the card settles lat
   const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board, ctx: new ContextAssembler(),
-    orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: spawnFn, getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
   });
 
@@ -280,7 +280,7 @@ test("in-flight guard: concurrent runOnce calls serialize", async () => {
   const llm = { chat } as unknown as LLMClient;
   const loop = new SchedulerLoop({
     llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
-    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir,
   });
   // event-loop turns, not wall-clock sleeps: pending microtasks drain between checks
@@ -341,7 +341,7 @@ function makeWsLoop(dir: string, extra: Record<string, unknown> = {}): Scheduler
   const llm = { chat: async () => ({ content: '{"action":"none"}', usage: { promptTokens: 0, completionTokens: 0 } }) } as unknown as LLMClient;
   return new SchedulerLoop({
     llm, board: new TaskBoard(join(dir, "board.sqlite")), ctx: new ContextAssembler(),
-    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir: dir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"),
     runtimeDir: dir, ...extra,
   });
@@ -432,7 +432,7 @@ test("ws: cdp action from decide signals the socket; drop is logged when the lin
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(dir, "board.sqlite")), ctx: new ContextAssembler(),
-    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir: dir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"),
     runtimeDir: dir, takeoverUrl: "ws://fake.local",
     wsFactory: () => { const s = new FakeWs(); sockets.push(s); return s as unknown as WsLike; },
@@ -476,7 +476,7 @@ test("spawn settlement handlers that themselves throw stay contained: one log li
   try {
     const loop = new SchedulerLoop({
       llm: { chat } as unknown as LLMClient, board, ctx: new ContextAssembler(),
-      orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+      orchestrator: { spawn: spawnFn, getRegistry: () => null } as unknown as AgentOrchestrator,
       auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
     });
     await loop.runOnce("tick"); // fires the background settlement chain
@@ -500,7 +500,7 @@ test("decide prompt carries the AVAILABLE TOOLS block at the tail; patrol stays 
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir,
     scout: { readToolsBlock: () => "- jq (data) — JSON processor [vjq-1.7] verified 2026-01-01" } as unknown as ToolScout,
   });
@@ -538,7 +538,7 @@ test("toolscout action: scout.run fires in the background with the query; reentr
   try {
     const loop = new SchedulerLoop({
       llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
       auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
       scout: scout as unknown as ToolScout,
     });
@@ -576,7 +576,7 @@ test("spawn prompt: verified tool names in the prompt attach their manuals via w
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn, getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, scout,
   });
   await loop.runOnce("tick");
@@ -604,7 +604,7 @@ test("spawn prompt: a tool name inside a larger word does not match (jqx is not 
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn, getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, scout,
   });
   await loop.runOnce("tick");
@@ -643,7 +643,7 @@ test("spawn prompt: generic words (go/file/http) attach manuals only backticked 
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn, getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, scout,
   });
   await loop.runOnce("tick");
@@ -677,7 +677,7 @@ test("decide prompt carries the # TENTACLES block when listBlock is non-empty; p
   } as unknown as TentacleManager;
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir }), budget: new BudgetGovernor("burn"), runtimeDir, tentacles,
   });
   await loop.runOnce("tick");
@@ -709,7 +709,7 @@ test("tentacle_call action: call fires in the background, result logged and push
     const tentacles = { call, listBlock: () => "", list: () => [], manual: () => null, register: vi.fn(), reload: vi.fn(async () => 0) } as unknown as TentacleManager;
     const loop = new SchedulerLoop({
       llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
       auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, tentacles,
     });
     const pushes: string[] = [];
@@ -754,7 +754,7 @@ test("tentacle_register action: a valid spec is saved through the manager and lo
     const tentacles = { register, reload: vi.fn(async () => 0), listBlock: () => "", list: () => [], manual: () => null, call: vi.fn() } as unknown as TentacleManager;
     const loop = new SchedulerLoop({
       llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
       auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, tentacles,
     });
     await loop.runOnce("tick"); // both actions handled inline: good one saved, bad one logged
@@ -795,7 +795,7 @@ test("spawn prompt: a tentacle named in the prompt attaches its manual; manuals 
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn, getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, scout, tentacles,
   });
   await loop.runOnce("tick");
@@ -832,7 +832,7 @@ test("tentacle_register action: openapiContent imports a rest tentacle; specs wr
   try {
     const loop = new SchedulerLoop({
       llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+      ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
       auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, tentacles,
     });
     await loop.runOnce("tick");
@@ -864,7 +864,7 @@ test("spawn prompt: a tentacle named like a generic word (go) attaches its manua
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    ctx: new ContextAssembler(), orchestrator: { spawn: spawnFn, getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir, tentacles,
   });
   await loop.runOnce("tick");
@@ -894,7 +894,7 @@ test("spawn parent/schedule parsing: valid fields reach the board; bad ISO or un
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board, ctx: new ContextAssembler(),
-    orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: spawnFn, getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
   });
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -927,7 +927,7 @@ test("decide system prompt documents the optional spawn parent/scheduledAt/dueAt
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
-    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
   });
   await loop.runOnce("tick");

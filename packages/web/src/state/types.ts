@@ -71,3 +71,6 @@ export type TranscriptItem =
       ts: number
     }
   | { kind: 'toast'; id: number; tone: 'info' | 'success' | 'warn' | 'error'; text: string; ts: number }
+
+/** Re-exported from activityModel for convenience. */
+export type { ActivityItem } from '../views/activityModel'

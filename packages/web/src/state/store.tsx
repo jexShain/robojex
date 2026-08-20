@@ -11,11 +11,14 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
 } from 'react'
 import type { ReactNode } from 'react'
 import { connectEvents, eventsUrl } from './connection'
 import type { ConnectionHandle } from './connection'
 import type { Budget, ChatMsg, Mode, ServerFrame, Task, TranscriptItem } from './types'
+import { ingestFrame } from '../views/activityModel'
+import type { ActivityItem } from './types'
 
 export interface WebState {
   conn: 'connecting' | 'live' | 'reconnecting'
@@ -197,6 +200,7 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
 
 export interface StoreApi {
   state: WebState
+  activityItems: ActivityItem[]
   selectTask(id: string | null): void
   sendChat(text: string): void
   setMode(mode: Mode): void
@@ -214,11 +218,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const stateRef = useRef(state)
   stateRef.current = state
 
+  const [activityItems, setActivityItems] = useState<ActivityItem[]>([])
+  const activityRef = useRef(activityItems)
+  activityRef.current = activityItems
+
   const connRef = useRef<ConnectionHandle | null>(null)
   useEffect(() => {
     connRef.current = connectEvents({
       url: eventsUrl(),
-      onFrame: (frame) => dispatch({ type: 'frame', frame }),
+      onFrame: (frame) => {
+        dispatch({ type: 'frame', frame })
+        setActivityItems((prev) => ingestFrame(frame as unknown as Record<string, unknown>, prev))
+      },
       onStatus: (conn) => dispatch({ type: 'conn', conn }),
     })
     return () => {
@@ -361,8 +372,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const selectTask = useCallback((id: string | null) => dispatch({ type: 'select-task', id }), [])
 
   const api = useMemo<StoreApi>(
-    () => ({ state, selectTask, sendChat, setMode, appendMission, runCommand }),
-    [state, selectTask, sendChat, setMode, appendMission, runCommand],
+    () => ({ state, activityItems, selectTask, sendChat, setMode, appendMission, runCommand }),
+    [state, activityItems, selectTask, sendChat, setMode, appendMission, runCommand],
   )
 
   return <StoreContext.Provider value={api}>{children}</StoreContext.Provider>
@@ -373,3 +384,6 @@ export function useStore(): StoreApi {
   if (!api) throw new Error('useStore requires <StoreProvider>')
   return api
 }
+
+/** Re-export ActivityItem type for convenience. */
+export type { ActivityItem }

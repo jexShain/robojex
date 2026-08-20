@@ -4,9 +4,10 @@ import { mkdirSync, appendFileSync, writeFileSync, readFileSync, renameSync, exi
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { LLMClient } from "./llm.js";
+import type { AgentRegistry } from "./agent-registry.js";
 
-export type Framework = "hermes" | "claude-code";
-const DEFAULT_CMDS: Record<Framework, (p: string) => string> = {
+export type Framework = string;
+const DEFAULT_CMDS: Record<string, (p: string) => string> = {
   "hermes": (p) => `hermes -p ${shq(p)} --yolo`,
   "claude-code": (p) => `claude -p ${shq(p)} --dangerously-skip-permissions`,
 };
@@ -20,10 +21,16 @@ export class AgentOrchestrator {
   private running = new Map<string, ChildProcess>();
   private waiters: (() => void)[] = [];
   private maxConcurrent: number;
-  constructor(private opts: { llm: LLMClient | null; runtimeDir: string; maxConcurrent?: number; cmds?: Partial<Record<Framework, string>> }) {
+  private registry: AgentRegistry | null = null;
+  constructor(private opts: { llm: LLMClient | null; runtimeDir: string; maxConcurrent?: number; cmds?: Partial<Record<string, string>>; registry?: AgentRegistry }) {
     this.maxConcurrent = opts.maxConcurrent ?? 2;
+    if (opts.registry) this.registry = opts.registry;
     mkdirSync(join(this.opts.runtimeDir, "runs"), { recursive: true });
   }
+
+  setRegistry(registry: AgentRegistry): void { this.registry = registry; }
+
+  getRegistry(): AgentRegistry | null { return this.registry; }
 
   // ---- pid ledger: survives a jex crash on disk so a fresh jex can reap orphans ----
   private ledgerPath(): string { return join(this.opts.runtimeDir, "pids.json"); }
@@ -45,9 +52,26 @@ export class AgentOrchestrator {
     }
     const id = randomUUID().slice(0, 8);
     const logPath = join(this.opts.runtimeDir, "runs", `${id}.log`);
-    const override = this.opts.cmds?.[fw];
-    // DEFAULT_CMDS already embed the prompt; only an override needs it appended
-    const full = override !== undefined ? `${override} ${shq(prompt)}` : DEFAULT_CMDS[fw](prompt);
+    const override = this.opts.cmds?.[fw as string];
+    // 1) explicit override (opts.cmds) — raw command string, prompt shell-quoted
+    // 2) DEFAULT_CMDS (hermes/claude-code) — functions that shell-quote the prompt
+    // 3) registry lookup — template with {prompt} placeholder, shell-quoted at substitution
+    let full: string;
+    if (override !== undefined) {
+      full = `${override} ${shq(prompt)}`;
+    } else if (DEFAULT_CMDS[fw]) {
+      full = DEFAULT_CMDS[fw](prompt);
+    } else if (this.registry) {
+      const spec = this.registry.get(fw);
+      if (!spec) {
+        const available = this.registry.names().join(", ");
+        throw new Error(`unknown agent "${fw}". Available agents: ${available}`);
+      }
+      full = spec.cmd.replace("{prompt}", shq(prompt));
+    } else {
+      const available = Object.keys(DEFAULT_CMDS).join(", ");
+      throw new Error(`unknown framework "${fw}". Available frameworks: ${available}. Set a registry to enable more agents.`);
+    }
     return new Promise<SpawnResult>((resolve) => {
       // detached: child leads its own process group (pgid == pid) so the whole tree dies together
       const child = pspawn(full, { shell: "/bin/bash", stdio: ["ignore", "pipe", "pipe"], detached: true });

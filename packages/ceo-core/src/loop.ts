@@ -152,9 +152,10 @@ export class SchedulerLoop {
       const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
       const tools = this.d.scout?.readToolsBlock() ?? ""; // inventory tail: only the decide pass pays for it
       const tentacles = this.d.tentacles?.listBlock() ?? ""; // connector inventory rides the same tail
+      const agentsBlock = this.d.orchestrator.getRegistry()?.toPromptBlock() ?? "";
       const decideMessages = [
-        { role: "system", content: `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"hermes"|"claude-code","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
-        { role: "user", content: context + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") },
+        { role: "system", content: `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
+        { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") },
       ] satisfies ChatMsg[];
       let dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: 8192 }); // big contexts (tools+tentacles inventories) starve reasoning models below this
       // reasoning models can burn the whole completion budget on reasoning and
@@ -175,7 +176,8 @@ export class SchedulerLoop {
         try {
           if (a?.type === "spawn") {
             const promptOk = typeof a.prompt === "string" && a.prompt.length > 0;
-            const fwOk = a.framework === "hermes" || a.framework === "claude-code";
+            const registryNames = this.d.orchestrator.getRegistry()?.names() ?? [];
+            const fwOk = typeof a.framework === "string" && (a.framework === "hermes" || a.framework === "claude-code" || registryNames.includes(a.framework));
             // optional tree/schedule fields: best-effort, each parse problem
             // costs one warn line and never blocks the spawn itself
             const parentId = this.spawnParent(a.parent);
@@ -190,7 +192,10 @@ export class SchedulerLoop {
             taskId = t.id;
             if (!fwOk || !promptOk) {
               const problems: string[] = [];
-              if (!fwOk) problems.push(`framework must be 'hermes' or 'claude-code' (got ${JSON.stringify(a.framework)})`);
+              if (!fwOk) {
+                const names = this.d.orchestrator.getRegistry()?.names() ?? ["hermes", "claude-code"];
+                problems.push(`framework must be a registered agent name (got ${JSON.stringify(a.framework)}). Available: ${names.join(", ")}`);
+              }
               if (!promptOk) problems.push("prompt must be a non-empty string");
               throw new Error(`invalid spawn action: ${problems.join("; ")}`);
             }

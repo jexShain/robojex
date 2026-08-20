@@ -328,7 +328,7 @@ test("decide reply action: chat_out(from jex) broadcast + recorded, no spawn, no
   const spawn = vi.fn();
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: rig.board, ctx: new ContextAssembler(),
-    orchestrator: { spawn } as unknown as AgentOrchestrator,
+    orchestrator: { spawn, getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir: rig.runtimeDir, reviewEvery: 1000 }), budget: rig.budget, runtimeDir: rig.runtimeDir,
   });
   const api = makeApi(rig, loop);
@@ -341,6 +341,7 @@ test("decide reply action: chat_out(from jex) broadcast + recorded, no spawn, no
 
   await until(() => c.frames.some((f) => f.t === "chat_out" && f.from === "jex"));
   expect(c.frames.find((f) => f.t === "chat_out" && f.from === "jex")!.text).toBe("on it — checking now");
+  await until(() => c.frames.some((f) => f.t === "cycle"));
   const cycle = c.frames.find((f) => f.t === "cycle")!;
   expect(cycle.wake).toBe(1);
   expect(cycle.cost).toBe(82); // patrol 12 + decide 70
@@ -359,7 +360,7 @@ test("decide starvation: empty content at full completion budget retries once at
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: rig.board, ctx: new ContextAssembler(),
-    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir: rig.runtimeDir, reviewEvery: 1000 }), budget: rig.budget, runtimeDir: rig.runtimeDir,
   });
   const api = makeApi(rig, loop);
@@ -385,7 +386,7 @@ test("decide starvation: a short empty answer (api hiccup) does NOT trigger the 
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: rig.board, ctx: new ContextAssembler(),
-    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir: rig.runtimeDir, reviewEvery: 1000 }), budget: rig.budget, runtimeDir: rig.runtimeDir,
   });
   const api = makeApi(rig, loop);
@@ -403,7 +404,7 @@ test("invalid reply action (empty text): logged, cycle still completes and broad
   });
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: rig.board, ctx: new ContextAssembler(),
-    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir: rig.runtimeDir, reviewEvery: 1000 }), budget: rig.budget, runtimeDir: rig.runtimeDir,
   });
   const api = makeApi(rig, loop);
@@ -438,7 +439,7 @@ test("cycle frame fires every decision cycle (even patrol-none); tasks frames fo
   const spawn = vi.fn(async () => ({ exitCode: 0, summary: "all good", logPath: "/dev/null", summaryUsage: null }));
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: rig.board, ctx: new ContextAssembler(),
-    orchestrator: { spawn } as unknown as AgentOrchestrator,
+    orchestrator: { spawn, getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir: rig.runtimeDir, reviewEvery: 1000 }), budget: rig.budget, runtimeDir: rig.runtimeDir,
   });
   const api = makeApi(rig, loop);
@@ -519,7 +520,7 @@ test("mode_changed from takeoverd: state.mode updates and a {t:'mode'} frame bro
   const fakeWs = new FakeWs();
   const loop = new SchedulerLoop({
     llm: { chat } as unknown as LLMClient, board: rig.board, ctx: new ContextAssembler(),
-    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir: rig.runtimeDir, reviewEvery: 1000 }), budget: rig.budget, runtimeDir: rig.runtimeDir,
     takeoverUrl: "ws://fake.local", wsFactory: () => fakeWs as unknown as WsLike,
   });
