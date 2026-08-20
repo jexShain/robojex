@@ -875,3 +875,65 @@ test("spawn prompt: a tentacle named like a generic word (go) attaches its manua
   expect(backticked).toContain("# TOOL MANUALS");
   expect(backticked).toContain("go connector manual.");
 });
+
+test("spawn parent/schedule parsing: valid fields reach the board; bad ISO or unknown parent is dropped with one warn, spawn continues", async () => {
+  const runtimeDir = makeRuntime();
+  const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
+  const epic = board.add({ title: "epic" });
+  const spawnFn = vi.fn(async () => ({ exitCode: 0, summary: "ok", logPath: "/dev/null", summaryUsage: null }));
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return {
+      content: JSON.stringify({ actions: [
+        { type: "spawn", framework: "hermes", title: "good", prompt: "p", parent: epic.id, scheduledAt: "2026-08-21T09:30:00Z", dueAt: "2026-08-21T12:00:00Z" },
+        { type: "spawn", framework: "hermes", title: "bad time", prompt: "p", scheduledAt: "not-a-date" },
+        { type: "spawn", framework: "hermes", title: "bad parent", prompt: "p", parent: "no-such-task" },
+      ] }),
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board, ctx: new ContextAssembler(),
+    orchestrator: { spawn: spawnFn } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await loop.runOnce("tick");
+    await until(() => board.list().length === 4); // epic + three spawned cards
+    loop.stop();
+
+    const byTitle = Object.fromEntries(board.list().map((t) => [t.title, t]));
+    expect(byTitle.good).toMatchObject({ parentId: epic.id, scheduledAt: Date.parse("2026-08-21T09:30:00Z"), dueAt: Date.parse("2026-08-21T12:00:00Z") });
+    expect(byTitle["bad time"].scheduledAt).toBe(null);   // unparseable time: dropped, spawn alive
+    expect(byTitle["bad time"].status).not.toBe("blocked");
+    expect(byTitle["bad parent"].parentId).toBe(null);    // unknown parent: dropped, spawn alive
+    expect(byTitle["bad parent"].status).not.toBe("blocked");
+    expect(spawnFn).toHaveBeenCalledTimes(3);              // nothing blocked the spawns
+    expect(warn).toHaveBeenCalledTimes(2);                 // exactly one line per dropped field
+    expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(/scheduledAt[\s\S]*parent/);
+  } finally {
+    warn.mockRestore();
+  }
+}, 10_000);
+
+test("decide system prompt documents the optional spawn parent/scheduledAt/dueAt fields", async () => {
+  const runtimeDir = makeRuntime();
+  const prompts: { role: string; content: string }[] = [];
+  const chat = vi.fn(async (slot: string, msgs?: { role: string; content: string }[]) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    prompts.push(...(msgs ?? []));
+    return { content: '{"actions":[]}', usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")),
+    ctx: new ContextAssembler(), orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  await loop.runOnce("tick");
+  const system = prompts[0]?.content ?? "";
+  expect(system).toContain('"parent"');
+  expect(system).toContain('"scheduledAt"');
+  expect(system).toContain('"dueAt"');
+  expect(system).toContain("ISO 8601");
+});

@@ -40,8 +40,10 @@ export interface ApiDeps {
 }
 
 // Trimmed card shape the protocol ships, both in state and in tasks frames.
-export function taskView(t: Task): { id: string; title: string; status: string; resultSummary: string; createdAt: number } {
-  return { id: t.id, title: t.title, status: t.status, resultSummary: t.resultSummary, createdAt: t.createdAt };
+// parentId/scheduledAt/dueAt are board-v2 fields (epoch ms numbers); the ?? null
+// keeps hand-built Task fixtures (tests) shipping an explicit null, not undefined.
+export function taskView(t: Task): { id: string; title: string; status: string; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null } {
+  return { id: t.id, title: t.title, status: t.status, resultSummary: t.resultSummary, createdAt: t.createdAt, parentId: t.parentId ?? null, scheduledAt: t.scheduledAt ?? null, dueAt: t.dueAt ?? null };
 }
 
 const RING_MAX = 100;               // chat history: last 100 messages, in memory
@@ -202,6 +204,7 @@ export class ApiServer implements LoopOutlet {
   private state(): Record<string, unknown> {
     const read = (f: string): string => { try { return readFileSync(join(this.d.runtimeDir, f), "utf8"); } catch { return `(${f} missing)`; } };
     return {
+      now: Date.now(), // server clock: clients align sched/due rendering on it
       tasks: this.d.board.list().map(taskView),
       budget: this.d.budget.snapshot(),
       mode: this.d.loop.mode?.() ?? "observe",
@@ -222,6 +225,7 @@ export class ApiServer implements LoopOutlet {
     if (path === "/api/state" && req.method === "GET") { json(res, 200, this.state()); return; }
     if (path === "/api/chat" && req.method === "POST") { await this.postChat(req, res); return; }
     if (path === "/api/mission" && req.method === "POST") { await this.postMission(req, res); return; }
+    if (path === "/api/task" && req.method === "POST") { await this.postTask(req, res); return; }
     if (path === "/api/mode" && req.method === "POST") { await this.postMode(req, res); return; }
     if (path.startsWith("/api/")) { json(res, 404, { error: "not found" }); return; }
     this.serveStatic(res, path);
@@ -263,6 +267,40 @@ export class ApiServer implements LoopOutlet {
     appendFileSync(p, `${prev.endsWith("\n") || prev === "" ? "" : "\n"}${body.text}\n`); // append, never overwrite
     this.chatOut("system", body.text);
     json(res, 202, { ok: true });
+  }
+
+  // POST /api/task: operator-created todo card with optional tree/schedule
+  // fields; 202 + tasks broadcast (same frame the loop emits), 400 with the
+  // first failing field named in the error.
+  private async postTask(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
+    if (typeof body.title !== "string" || body.title.trim().length === 0 || Buffer.byteLength(body.title, "utf8") > 200) {
+      json(res, 400, { error: "title must be a non-empty string of at most 200 bytes" });
+      return;
+    }
+    const times: { scheduledAt?: number; dueAt?: number } = {};
+    for (const f of ["scheduledAt", "dueAt"] as const) {
+      const v = body[f];
+      if (v === undefined || v === null) continue; // absent means unscheduled
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        json(res, 400, { error: `${f} must be a finite number (epoch ms)` }); // JSON 1e999 parses to Infinity
+        return;
+      }
+      times[f] = v;
+    }
+    const pid = body.parentId;
+    let parentId: string | null = null;
+    if (pid !== undefined && pid !== null) {
+      if (typeof pid !== "string" || !this.d.board.list().some((t) => t.id === pid)) {
+        json(res, 400, { error: "parentId must be the id of an existing task" });
+        return;
+      }
+      parentId = pid;
+    }
+    const t = this.d.board.add({ title: body.title, parentId, ...times });
+    this.broadcast({ t: "tasks", tasks: this.d.board.list().map(taskView) });
+    json(res, 202, { ok: true, task: taskView(t) });
   }
 
   private async postMode(req: IncomingMessage, res: ServerResponse): Promise<void> {

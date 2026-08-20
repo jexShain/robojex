@@ -36,12 +36,13 @@ interface Frame {
 
 // The GET /api/state payload as the tests read it (loose: all fields optional).
 interface StateFrame {
-  tasks?: { title?: string; status?: string; resultSummary?: string; createdAt?: number }[];
+  tasks?: { title?: string; status?: string; resultSummary?: string; createdAt?: number; parentId?: string | null; scheduledAt?: number | null; dueAt?: number | null }[];
   budget?: Record<string, unknown>;
   mode?: string;
   mission?: string; rubric?: string; memory?: string;
   chat?: unknown[];
   version?: string;
+  now?: number;
 }
 
 const servers: ApiServer[] = [];
@@ -116,6 +117,64 @@ test("GET /api/state: tasks, budget snapshot, mode, three docs, chat ring, versi
   // VERSION resolves one level above the module: src -> packages/ceo-core/package.json
   const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")) as { version?: string };
   expect(s.version).toBe(pkg.version);
+});
+
+test("GET /api/state v2: tasks carry parentId/scheduledAt/dueAt, top-level now for clock alignment", async () => {
+  const rig = mkRig();
+  const epic = rig.board.add({ title: "epic" });
+  rig.board.add({ title: "child", parentId: epic.id, scheduledAt: 1_760_000_000_000, dueAt: 1_760_100_000_000 });
+  const api = makeApi(rig, { push: vi.fn() });
+  await api.start();
+
+  const res = await fetch(`http://127.0.0.1:${api.port}/api/state`);
+  const s = (await res.json()) as StateFrame;
+  const byTitle = Object.fromEntries((s.tasks ?? []).map((t) => [t.title, t]));
+  expect(byTitle.epic).toMatchObject({ parentId: null, scheduledAt: null, dueAt: null });
+  expect(byTitle.child).toMatchObject({ parentId: epic.id, scheduledAt: 1_760_000_000_000, dueAt: 1_760_100_000_000 });
+  expect(typeof s.now).toBe("number");
+  expect(Math.abs((s.now ?? 0) - Date.now())).toBeLessThan(5_000); // server clock, not stale
+});
+
+test("POST /api/task: 202 creates a todo card with tree/schedule fields and broadcasts tasks; every invalid shape is a 400 with a reason", async () => {
+  const rig = mkRig();
+  const epic = rig.board.add({ title: "epic" });
+  const loop = { push: vi.fn() };
+  const api = makeApi(rig, loop);
+  await api.start();
+  const c = wsCollect(api);
+  await c.opened;
+
+  const scheduledAt = Date.now() + 3_600_000, dueAt = Date.now() + 7_200_000;
+  const ok = await post(api, "/api/task", { title: "child job", parentId: epic.id, scheduledAt, dueAt });
+  expect(ok.status).toBe(202);
+  const created = rig.board.list().find((t) => t.title === "child job");
+  expect(created).toMatchObject({ status: "todo", parentId: epic.id, scheduledAt, dueAt });
+  await until(() => c.frames.some((f) => f.t === "tasks"));
+  const frame = c.frames.find((f) => f.t === "tasks")!;
+  const child = (frame.tasks as StateFrame["tasks"])!.find((t) => t.title === "child job");
+  expect(child).toMatchObject({ status: "todo", parentId: epic.id, scheduledAt, dueAt }); // frames carry the new fields too
+
+  const rejects: [unknown, string][] = [
+    [{}, "title"],
+    [{ title: "   " }, "title"],
+    [{ title: "x".repeat(201) }, "200 bytes"],
+    [{ title: "ok", scheduledAt: "tomorrow" }, "scheduledAt"],
+    [{ title: "ok", dueAt: "2026-08-21" }, "dueAt"],
+    [{ title: "ok", parentId: 42 }, "parentId"],
+    [{ title: "ok", parentId: "missing-id" }, "parentId"],
+  ];
+  for (const [body, reason] of rejects) {
+    const r = await post(api, "/api/task", body);
+    expect(r.status, `body ${JSON.stringify(body)} should 400`).toBe(400);
+    expect(((await r.json()) as { error?: string }).error).toContain(reason);
+  }
+  // 1e999 parses to Infinity: the finite-number gate must catch it
+  const inf = await fetch(`http://127.0.0.1:${api.port}/api/task`, { method: "POST", headers: { "content-type": "application/json" }, body: `{"title":"ok","scheduledAt":1e999}` });
+  expect(inf.status).toBe(400);
+  expect(((await inf.json()) as { error?: string }).error).toContain("scheduledAt");
+
+  expect(rig.board.list()).toHaveLength(2); // nothing above entered the board
+  c.ws.close();
 });
 
 test("POST /api/chat: 202, enqueues 'chat: <text>', broadcasts chat_out(user); WS {t:'chat'} frame is equivalent; bad input 400", async () => {
