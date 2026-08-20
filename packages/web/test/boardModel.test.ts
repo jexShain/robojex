@@ -44,6 +44,20 @@ describe('buildForest', () => {
     expect(forest.map((r) => r.task.id)).toEqual(['x'])
   })
 
+  test('parent-cycle members and self-references surface as roots — none drop out', () => {
+    const forest = buildForest([
+      T({ id: 'r' }),
+      T({ id: 'a', parentId: 'b' }),
+      T({ id: 'b', parentId: 'a' }),
+      T({ id: 'self', parentId: 'self' }),
+    ])
+    const rootIds = forest.map((x) => x.task.id).sort()
+    expect(rootIds).toEqual(['a', 'b', 'r', 'self'])
+    // cycle members are detached from their nominal parents
+    const layout = layoutForest(forest, new Set())
+    expect(layout.nodes.map((p) => p.node.task.id).sort()).toEqual(['a', 'b', 'r', 'self'])
+  })
+
   test('blocked bubbles up to ancestors but not sideways', () => {
     const forest = buildForest([
       T({ id: 'root' }),

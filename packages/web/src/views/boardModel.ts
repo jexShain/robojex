@@ -50,8 +50,10 @@ export function edgePath(x1: number, y1: number, x2: number, y2: number): string
 }
 
 /** Nest tasks by parentId into a forest. Orphans (missing/dangling parent)
- * surface as roots so nothing ever disappears; a `seen` guard tolerates
- * parent cycles from stale data. Siblings order by createdAt. */
+ * surface as roots so nothing ever disappears. Parent-cycle and
+ * self-referencing members are unreachable from any root, so a second sweep
+ * promotes every unvisited node to a root (mirroring core nestTasks and the
+ * CLI renderer). Siblings order by createdAt. */
 export function buildForest(tasks: Task[]): BoardNode[] {
   const nodes = new Map<string, BoardNode>()
   for (const t of tasks)
@@ -59,24 +61,40 @@ export function buildForest(tasks: Task[]): BoardNode[] {
   const roots: BoardNode[] = []
   for (const t of tasks) {
     const n = nodes.get(t.id)!
-    const p = t.parentId ? nodes.get(t.parentId) : undefined
+    const p = t.parentId && t.parentId !== t.id ? nodes.get(t.parentId) : undefined
     if (p) p.children.push(n)
     else roots.push(n)
   }
-  const walk = (n: BoardNode, depth: number, seen: Set<string>): void => {
-    if (seen.has(n.task.id)) return
-    seen.add(n.task.id)
+  const walk = (n: BoardNode, depth: number): void => {
     n.depth = depth
     n.children.sort((a, b) => a.task.createdAt - b.task.createdAt)
     let blocked = n.task.status === 'blocked'
     for (const c of n.children) {
-      walk(c, depth + 1, seen)
+      walk(c, depth + 1)
       blocked = blocked || c.subtreeBlocked
     }
     n.subtreeBlocked = blocked
   }
-  const seen = new Set<string>()
-  for (const r of roots) walk(r, 0, seen)
+  for (const r of roots) walk(r, 0)
+  // orphan sweep: cycle members never got visited from a root — promote them
+  // (detached from their nominal parent) so no task silently vanishes
+  const reached = new Set<string>()
+  const collect = (n: BoardNode): void => {
+    if (reached.has(n.task.id)) return
+    reached.add(n.task.id)
+    n.children.forEach(collect)
+  }
+  roots.forEach(collect)
+  for (const t of tasks) {
+    if (!reached.has(t.id)) {
+      const n = nodes.get(t.id)!
+      for (const other of nodes.values())
+        other.children = other.children.filter((c) => c.task.id !== t.id)
+      n.children = [] // drop in-cycle children too; they resurface as roots themselves
+      roots.push(n)
+      walk(n, 0)
+    }
+  }
   return roots
 }
 
@@ -142,7 +160,7 @@ export function layoutForest(forest: BoardNode[], collapsed: ReadonlySet<string>
     }
 
   const width = (maxDepth + 1) * CARD_W + maxDepth * LAYER_GAP
-  const height = nodes.length > 0 ? Math.max(...nodes.map((n) => n.y)) + CARD_H : 0
+  const height = nodes.reduce((max, n) => (n.y > max ? n.y : max), 0) + CARD_H
   return { nodes, edges, width, height }
 }
 
