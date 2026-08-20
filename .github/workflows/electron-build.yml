@@ -34,7 +34,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: robojex-windows
-          path: packages/electron/dist-electron/*.exe
+          path: dist-electron/*.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -61,4 +61,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: robojex-linux
-          path: packages/electron/dist-electron/*.AppImage
+          path: dist-electron/*.AppImage
