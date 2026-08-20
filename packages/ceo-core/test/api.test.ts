@@ -75,9 +75,9 @@ function makeApi(rig: Rig, loop: { push: (e: string) => void; sendCtrl?: (f: Rec
 }
 
 // The scripted-LLM seam: patrol decides act/none per wake, decide returns one action set.
-type FakeLlm = (slot: string, msgs?: { role: string; content: string }[]) => Promise<{ content: string; usage: { promptTokens: number; completionTokens: number } }>;
+type FakeLlm = (slot: string, msgs?: { role: string; content: string }[], opts?: { maxTokens?: number }) => Promise<{ content: string; usage: { promptTokens: number; completionTokens: number } }>;
 function fakeLlmChat(impl: FakeLlm): Mock {
-  return vi.fn(async (slot: string, msgs?: { role: string; content: string }[]) => impl(slot, msgs));
+  return vi.fn(async (slot: string, msgs?: { role: string; content: string }[], opts?: { maxTokens?: number }) => impl(slot, msgs, opts));
 }
 
 // WS client that records every parsed frame from /api/events.
