@@ -10,6 +10,8 @@
   ],
   "scripts": {
     "build": "tsc -b packages/ceo-core packages/takeoverd",
+    "electron:dev": "electron packages/electron/main.js",
+    "electron:build": "cd packages/web && npx vite build && cd ../.. && electron-builder --config packages/electron/electron-builder.yml",
     "test": "vitest run"
   },
   "devDependencies": {
@@ -18,6 +20,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.7.0",
     "@yao-pkg/pkg": "^6.22.0",
+    "electron": "^43.4.1",
     "esbuild": "^0.28.2",
     "into-stream": "^6.0.0",
     "typescript": "^5.9.3",

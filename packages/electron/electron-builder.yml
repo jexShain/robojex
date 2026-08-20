@@ -1,0 +1,11 @@
+appId: com.robojex.app
+productName: robojex
+files:
+  - packages/web/dist/**/*
+  - packages/electron/**/*
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
