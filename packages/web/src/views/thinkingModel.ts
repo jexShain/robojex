@@ -22,7 +22,8 @@ export interface ThinkingStep {
   taskIds?: string[]
 }
 
-let nextId = 0
+let _seq = 0
+function seqId(): number { return ++_seq }
 
 /** Extract thinking steps from a single WS frame. */
 export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
@@ -31,7 +32,7 @@ export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
       const steps: ThinkingStep[] = []
       // Patrol step
       steps.push({
-        id: nextId++,
+        id: seqId(),
         kind: 'patrol',
         ts: Date.now(),
         label: `🔍 Patrol — ${frame.cost.toFixed(0)} tokens`,
@@ -49,7 +50,7 @@ export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
         if (others.length) parts.push(`${others.length} other`)
         if (parts.length) label += ` — ${parts.join(', ')}`
         steps.push({
-          id: nextId++,
+          id: seqId(),
           kind: 'decision',
           ts: Date.now() + 1,
           label,
@@ -58,7 +59,7 @@ export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
         // Spawn sub-steps
         for (const a of spawns) {
           steps.push({
-            id: nextId++,
+            id: seqId(),
             kind: 'spawn',
             ts: Date.now() + 2,
             label: `⚡ Spawn — ${a.title || a.text || 'unnamed'}`,
@@ -71,7 +72,7 @@ export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
     case 'chat_out': {
       if (frame.from !== 'jex') return []
       return [{
-        id: nextId++,
+        id: seqId(),
         kind: 'reply',
         ts: frame.ts,
         label: `💬 Reply — ${frame.text.slice(0, 60)}${frame.text.length > 60 ? '…' : ''}`,
@@ -86,7 +87,7 @@ export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
 /** Returns the 'deciding' placeholder step shown between patrol and decision. */
 export function decidingPlaceholder(): ThinkingStep {
   return {
-    id: nextId++,
+    id: seqId(),
     kind: 'deciding',
     ts: Date.now(),
     label: '🧠 Deciding…',

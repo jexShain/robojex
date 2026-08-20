@@ -267,7 +267,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
           </div>
           {/* Drag ghost */}
           {dragBlock && isDragging.current ? (
-            <div className="drag-ghost" style={{ top: dragY - 12 }}>
+            <div className="drag-ghost" style={{ position: 'fixed', top: dragY - 12, left: 120, zIndex: 9999, pointerEvents: 'none' }}>
               {dragBlock.task.title}
             </div>
           ) : null}

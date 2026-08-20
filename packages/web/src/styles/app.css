@@ -1921,7 +1921,7 @@ body[data-ds-dark-theme] .chip.full {
 }
 
 /* View switcher active glow */
-.vsw.active button {
+.vsw.active {
   box-shadow: var(--rj-glow-primary, 0 0 20px rgba(103, 158, 254, 0.3));
 }
 
