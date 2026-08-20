@@ -4,6 +4,8 @@
 import { statusTone, useStore } from '../state/store'
 import type { ThemeApi, ThemePref } from '../state/theme'
 import type { Task } from '../state/types'
+import { ViewSwitcher } from '../views/ViewSwitcher'
+import type { ViewId } from '../views/viewState'
 
 const MODE_LABEL: Record<string, string> = {
   observe: 'observe',
@@ -80,10 +82,14 @@ export function Sidebar({
   theme,
   overlay = false,
   onCollapse,
+  view,
+  onView,
 }: {
   theme: ThemeApi
   overlay?: boolean
   onCollapse(): void
+  view: ViewId
+  onView(view: ViewId): void
 }) {
   const { state, selectTask } = useStore()
   const budget = state.budget
@@ -130,6 +136,7 @@ export function Sidebar({
       </div>
 
       <div className="sidebar-foot">
+        <ViewSwitcher view={view} onChange={onView} />
         <div className="budget-row" title={budget?.line ?? 'budget unknown'}>
           <span>{budget ? budget.line : 'budget unknown'}</span>
           {budget && budget.dailyTokens > 0 ? (

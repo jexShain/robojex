@@ -30,6 +30,9 @@ export interface WebState {
   transcript: TranscriptItem[]
   /** Input locked between send and the next jex chat_out (or 30s timeout). */
   waiting: boolean
+  /** Server clock skew from the last hello (serverNow − localNow); Agenda
+   * renders sched/due on the aligned clock per the board-v2 contract. */
+  clockOffset: number
 }
 
 type Action =
@@ -52,6 +55,7 @@ const initialState: WebState = {
   memory: '',
   transcript: [],
   waiting: false,
+  clockOffset: 0,
 }
 
 // Transcript ids only need uniqueness within a session; StrictMode's double
@@ -63,12 +67,20 @@ function chatToItem(m: ChatMsg): TranscriptItem {
   return { kind: 'msg', id: nextId(), from: m.from, text: m.text, ts: m.ts }
 }
 
-/** Map a task status string to a dot/toast tone vocabulary. */
+/** Map a task status string to a dot/toast tone vocabulary. Core statuses
+ * are exactly todo/running/done/blocked (board v2); 'blocked' renders as the
+ * failed/red tone. */
 export function statusTone(status: string): 'done' | 'running' | 'pending' | 'failed' {
   const s = status.toLowerCase()
   if (s.includes('done') || s.includes('complete') || s.includes('success')) return 'done'
   if (s.includes('run') || s.includes('progress') || s.includes('active')) return 'running'
-  if (s.includes('fail') || s.includes('error') || s.includes('abort') || s.includes('cancel'))
+  if (
+    s.includes('fail') ||
+    s.includes('error') ||
+    s.includes('abort') ||
+    s.includes('cancel') ||
+    s.includes('block')
+  )
     return 'failed'
   return 'pending'
 }
@@ -134,6 +146,7 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
         mission: s.mission,
         rubric: s.rubric,
         memory: s.memory,
+        clockOffset: typeof s.now === 'number' ? s.now - Date.now() : 0,
         waiting: false,
         // Full rebuild on (re)connect — the ring replays recent history.
         transcript: s.chat.map(chatToItem),

@@ -11,6 +11,10 @@ import { DetailsPanel } from '../details/DetailsPanel'
 import { Sidebar } from '../sidebar/Sidebar'
 import { useStore } from '../state/store'
 import type { ThemeApi } from '../state/theme'
+import { AgendaView } from '../views/AgendaView'
+import { BoardView } from '../views/BoardView'
+import { loadView, saveView } from '../views/viewState'
+import type { ViewId } from '../views/viewState'
 
 const SIDEBAR_DEFAULT = 260
 const SIDEBAR_MIN = 200
@@ -90,6 +94,13 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
   const [detailsW, setDetailsW] = useState(0)
   const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_QUERY).matches)
   const [narrowExpanded, setNarrowExpanded] = useState(false)
+  // Center view (Chat/Board/Agenda), persisted; chat state survives switches
+  // because the pane is only hidden, never unmounted.
+  const [view, setView] = useState<ViewId>(loadView)
+  const changeView = useCallback((v: ViewId) => {
+    setView(v)
+    saveView(v)
+  }, [])
 
   useEffect(() => {
     const mq = window.matchMedia(NARROW_QUERY)
@@ -157,7 +168,12 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
           />
         ) : (
           <>
-            <Sidebar theme={theme} onCollapse={() => setSidebarCollapsed(true)} />
+            <Sidebar
+              theme={theme}
+              onCollapse={() => setSidebarCollapsed(true)}
+              view={view}
+              onView={changeView}
+            />
             <div
               className="handle-sidebar"
               onPointerDown={beginSidebar}
@@ -172,13 +188,29 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
             theme={theme}
             overlay
             onCollapse={() => setNarrowExpanded(false)}
+            view={view}
+            onView={changeView}
           />
         ) : null}
       </div>
 
       <div className="col-center">
-        <ChatStream />
-        <InputBar />
+        {/* Chat pane (stream + input) is hidden — never unmounted — while
+         * Board/Agenda show, so the transcript scroll and the input draft
+         * survive round-trips. Input is chat-only (spec): invisible elsewhere. */}
+        <div className={`chat-pane${view === 'chat' ? '' : ' offscreen'}`}>
+          <ChatStream />
+          <InputBar />
+        </div>
+        {view === 'board' ? <BoardView /> : null}
+        {view === 'agenda' ? (
+          <AgendaView
+            onOpenTask={(id) => {
+              selectTask(id)
+              changeView('board')
+            }}
+          />
+        ) : null}
       </div>
 
       {narrow ? (

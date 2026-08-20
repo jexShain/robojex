@@ -9,6 +9,12 @@ export interface Task {
   status: string
   resultSummary?: string
   createdAt: number
+  /** board v2: parent task id (null = root); absent on pre-v2 cores. */
+  parentId?: string | null
+  /** board v2: planned start, epoch ms. */
+  scheduledAt?: number | null
+  /** board v2: deadline, epoch ms. */
+  dueAt?: number | null
 }
 
 export interface Budget {
@@ -33,6 +39,8 @@ export interface StateSnapshot {
   memory: string
   chat: ChatMsg[]
   version: string
+  /** board v2: server epoch ms — clock alignment for sched/due rendering. */
+  now?: number
 }
 
 /** One decided action inside a cycle frame; shape is open-ended. */
