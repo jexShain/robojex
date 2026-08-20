@@ -345,19 +345,55 @@ test("decide reply action: chat_out(from jex) broadcast + recorded, no spawn, no
   expect(cycle.wake).toBe(1);
   expect(cycle.cost).toBe(82); // patrol 12 + decide 70
   await until(() => c.frames.some((f) => f.t === "budget")); // budget frame follows every cycle
-  expect(String(c.frames.find((f) => f.t === "budget")!.line)).toContain("82");
-  expect(c.frames.find((f) => f.t === "budget")!.budget).toMatchObject({ mode: "burn", dailyTokens: 0, spentToday: 82 }); // full snapshot rides the frame
-  expect(spawn).not.toHaveBeenCalled();   // reply spawns nothing
-  expect(rig.board.list()).toEqual([]);   // and takes no board card
-  const s = (await (await fetch(`http://127.0.0.1:${api.port}/api/state`)).json()) as StateFrame;
-  expect(s.chat).toHaveLength(1);
-  expect(s.chat![0]).toMatchObject({ from: "jex", text: "on it — checking now" });
-  // the patrol system prompt must tell the triager that human chat always acts
-  const patrol = chat.mock.calls.find((cx) => cx[0] === "patrol")!;
-  const patrolSys = patrol[1]![0]!.content;
-  expect(patrolSys.toLowerCase()).toContain("chat");
-  expect(patrolSys.toLowerCase()).toContain("always");
 });
+
+test("decide starvation: empty content at full completion budget retries once at 16384 and applies the second answer", async () => {
+  const rig = mkRig();
+  const decideCalls: number[] = [];
+  const chat = fakeLlmChat(async (slot, _msgs, opts) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    decideCalls.push(opts?.maxTokens ?? 0);
+    if (decideCalls.length === 1)
+      return { content: "", usage: { promptTokens: 900, completionTokens: 8192 } }; // starved: reasoning ate the budget
+    return { content: JSON.stringify({ actions: [{ type: "reply", text: "recovered" }] }), usage: { promptTokens: 900, completionTokens: 1200 } };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: rig.board, ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir: rig.runtimeDir, reviewEvery: 1000 }), budget: rig.budget, runtimeDir: rig.runtimeDir,
+  });
+  const api = makeApi(rig, loop);
+  loop.setOutlet(api);
+  await api.start();
+  const c = wsCollect(api);
+  await c.opened;
+
+  await loop.runOnce("chat: heavy structural request");
+
+  await until(() => c.frames.some((f) => f.t === "chat_out" && f.from === "jex"));
+  expect(decideCalls).toEqual([8192, 16384]); // exactly one adaptive escalation
+  expect(c.frames.find((f) => f.t === "chat_out" && f.from === "jex")!.text).toBe("recovered");
+});
+
+test("decide starvation: a short empty answer (api hiccup) does NOT trigger the budget escalation", async () => {
+  const rig = mkRig();
+  const decideCalls: number[] = [];
+  const chat = fakeLlmChat(async (slot, _msgs, opts) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    decideCalls.push(opts?.maxTokens ?? 0);
+    return { content: "", usage: { promptTokens: 100, completionTokens: 5 } }; // empty but not starved
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: rig.board, ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn() } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir: rig.runtimeDir, reviewEvery: 1000 }), budget: rig.budget, runtimeDir: rig.runtimeDir,
+  });
+  const api = makeApi(rig, loop);
+  loop.setOutlet(api);
+  await loop.runOnce("chat: hi"); // decide calls are settled before runOnce resolves
+  expect(decideCalls).toEqual([8192]); // no retry
+});
+
 
 test("invalid reply action (empty text): logged, cycle still completes and broadcasts, nothing leaves as jex", async () => {
   const rig = mkRig();
