@@ -1,0 +1,4 @@
+{ "name": "@robojex/cli", "version": "0.0.1", "type": "module",
+  "bin": { "jex": "dist/index.js" },
+  "scripts": { "test": "vitest run" },
+  "dependencies": { "ws": "^8.18.0" } }
