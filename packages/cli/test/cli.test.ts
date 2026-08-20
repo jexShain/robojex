@@ -9,7 +9,7 @@ import { createServer, type Server } from "node:http";
 import { spawn } from "node:child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs, wsEventsUrl, summarizeFrame } from "../src/index.js";
 
 const PKG_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -159,7 +159,7 @@ interface CliResult { code: number; stdout: string; stderr: string }
 function runOnce(url: string, opts: { input?: string; env?: Record<string, string> } = {}): Promise<CliResult> {
   const child = spawn(
     process.execPath,
-    ["--experimental-strip-types", "src/index.ts", "--once", "--url", url],
+    ["--experimental-strip-types", "--import", pathToFileURL(join(PKG_DIR, "test", "js2ts.mjs")).href, "src/index.ts", "--once", "--url", url],
     { cwd: PKG_DIR, env: { ...process.env, ...opts.env }, stdio: ["pipe", "pipe", "pipe"] },
   );
   let stdout = "";

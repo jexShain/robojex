@@ -11,6 +11,7 @@ import { createInterface } from "node:readline";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
+import { parseAgendaDate, renderAgenda, renderBoard, spinnerFrames, SPINNER_INTERVAL_MS, statusColor, type BoardTask } from "./render.js";
 
 export const DEFAULT_URL = "http://127.0.0.1:7620";
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -31,6 +32,8 @@ export const HELP_TEXT = [
   "",
   "  /mode [observe|assist|full]  show or switch the mode",
   "  /tasks                       list the task board",
+  "  /board                       task tree view (status dots, ⏱/⏳ times)",
+  "  /agenda [YYYY-MM-DD]         hourly schedule for today or a date",
   "  /mission <text>              append a line to MISSION",
   "  /budget                      show the budget line",
   "  /help                        this help",
@@ -38,6 +41,8 @@ export const HELP_TEXT = [
   "  anything else is chat to jex.",
   "  Ctrl+C interrupts a pending reply (press twice to quit); Ctrl-D quits.",
 ].join("\n");
+
+export type { BoardTask };
 
 export type CliArgs = { url: string; once: boolean; help: boolean };
 
@@ -64,8 +69,6 @@ export function wsEventsUrl(base: string): string {
 
 // ------------------------------------------------------------------ protocol
 
-export type BoardTask = { id: string; title: string; status: string; resultSummary?: string };
-
 export type Frame =
   | { t: "hello"; state: CoreState }
   | { t: "chat_out"; from: "user" | "jex" | "system"; text: string; ts?: number }
@@ -75,6 +78,7 @@ export type Frame =
   | { t: "budget"; line: string };
 
 export type CoreState = {
+  now?: number; // server epoch ms: clock anchor for board/agenda rendering
   tasks?: BoardTask[];
   budget?: { mode?: string; dailyTokens?: number; spentToday?: number; line?: string };
   mode?: string;
@@ -125,6 +129,8 @@ interface ConnectionHandlers {
   onLine: (line: string) => void;
   /** Socket dropped after a successful open (once mode fails fast on this). */
   onDeath?: () => void;
+  /** Every decoded frame, before dispatch routing (spinner stop, task toasts). */
+  onFrame?: (f: Frame) => void;
 }
 
 // DSH ConnectionController logic: every dial bumps `generation`; frames from
@@ -179,6 +185,7 @@ class EventsConnection {
   }
 
   private dispatch(f: Frame): void {
+    this.h.onFrame?.(f);
     if (f.t === "chat_out") {
       if (f.from === "jex") this.h.onJexReply(f.text);
       else if (f.from === "system") this.h.onLine(`system› ${f.text}`);
@@ -280,8 +287,41 @@ type ChatOutcome = { kind: "reply"; text: string } | { kind: "timeout" } | { kin
 async function runInteractive(baseUrl: string, timeoutMs: number): Promise<void> {
   const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: PROMPT });
   const notice = (line: string): void => { process.stdout.write(`${dim(line)}\n`); };
-  // Async frame lines land mid-typing: newline + redraw so live input survives.
-  const print = (line: string): void => { process.stdout.write(`${line}\n`); rl.prompt(true); };
+
+  // Wait spinner (board-plan.md): braille frames redrawn in place while a
+  // chat reply is pending; any chat_out/cycle frame — or the wait settling —
+  // stops it and erases the line. No-op without a TTY (piped output).
+  const spin = {
+    timer: null as NodeJS.Timeout | null,
+    frame: 0,
+    active: false,
+    draw(): void {
+      process.stdout.write(`\r\x1b[2K${BLUE_450}${spinnerFrames[this.frame]} waiting for jex…${RESET}`);
+    },
+    start(): void {
+      if (!rl.terminal) return; // no redraw-in-place without a real terminal
+      this.active = true;
+      this.frame = 0;
+      this.draw();
+      this.timer = setInterval(() => {
+        this.frame = (this.frame + 1) % spinnerFrames.length;
+        this.draw();
+      }, SPINNER_INTERVAL_MS);
+    },
+    stop(): void {
+      if (this.timer) { clearInterval(this.timer); this.timer = null; }
+      if (this.active) { this.active = false; process.stdout.write("\r\x1b[2K"); }
+    },
+  };
+
+  // Async frame lines land mid-typing: newline + redraw so live input survives
+  // — while the spinner owns the current line, clear it first (the next tick
+  // reclaims the fresh line) and skip the prompt redraw.
+  const print = (line: string): void => {
+    if (spin.active) process.stdout.write("\r\x1b[2K");
+    process.stdout.write(`${line}\n`);
+    if (!spin.active) rl.prompt(true);
+  };
 
   let jexSink: ((t: string) => void) | null = null;
   let waiting: { interrupt: () => void } | null = null;
@@ -289,9 +329,30 @@ async function runInteractive(baseUrl: string, timeoutMs: number): Promise<void>
   let exiting = false;
   let opens = 0;
 
+  // Task toasts: a tasks frame while NOT waiting for a reply prints one
+  // status-change line (`✓ task <status>: <title>`), throttled to one per
+  // second so bursts never flood the transcript. hello seeds the baseline so
+  // the first broadcast after connecting does not toast the whole board.
+  let seen = new Map<string, string>();
+  let lastToast = 0;
+  const onTasks = (list: BoardTask[]): void => {
+    const changed = list.filter((t) => seen.get(t.id) !== t.status);
+    seen = new Map(list.map((t) => [t.id, t.status]));
+    if (!changed.length || waiting) return;
+    if (Date.now() - lastToast < 1_000) return;
+    lastToast = Date.now();
+    const pick = changed.find((t) => t.status === "done") ?? changed[0]!;
+    print(`\x1b[${statusColor(pick.status)}m✓${RESET} task ${pick.status}: ${pick.title}`);
+  };
+
   const conn = new EventsConnection(baseUrl, true, {
     onJexReply: (t) => jexSink?.(t),
     onLine: print,
+    onFrame: (f) => {
+      if (f.t === "chat_out" || f.t === "cycle") spin.stop();
+      else if (f.t === "hello") seen = new Map((f.state.tasks ?? []).map((t) => [t.id, t.status]));
+      else if (f.t === "tasks") onTasks(f.tasks);
+    },
   });
   void conn.connect().then(() => {
     opens++;
@@ -314,8 +375,10 @@ async function runInteractive(baseUrl: string, timeoutMs: number): Promise<void>
       return;
     }
     const timer = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+    spin.start();
     const outcome = await promise;
     clearTimeout(timer);
+    spin.stop();
     if (outcome.kind === "reply") print(outcome.text);
     else if (outcome.kind === "timeout") notice(`·· no reply from jex within ${timeoutMs}ms`);
     else notice("·· interrupted");
@@ -341,6 +404,19 @@ async function runInteractive(baseUrl: string, timeoutMs: number): Promise<void>
         const tasks = (await getState(baseUrl, timeoutMs)).tasks ?? [];
         if (!tasks.length) { write("(no tasks)"); return; }
         for (const t of tasks) write(`${t.status.padEnd(8)} ${t.title} (${t.id})`);
+        return;
+      }
+      if (cmd === "/board") {
+        const st = await getState(baseUrl, timeoutMs);
+        const tasks = st.tasks ?? [];
+        if (!tasks.length) { write("(no tasks)"); return; }
+        write(renderBoard(tasks, st.now ?? Date.now()));
+        return;
+      }
+      if (cmd === "/agenda") {
+        if (arg && parseAgendaDate(arg) === null) { write("usage: /agenda [YYYY-MM-DD]"); return; }
+        const st = await getState(baseUrl, timeoutMs);
+        write(renderAgenda(st.tasks ?? [], st.now ?? Date.now(), arg || undefined));
         return;
       }
       if (cmd === "/mission") {
