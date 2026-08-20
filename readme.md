@@ -7,7 +7,7 @@
 │  ceo-core    │ ◄──────────────────────► │  takeoverd    │          │ sub-agents     │
 │  LLM 决策循环 │      屏幕事件/模式/注入    │  屏幕+键鼠+热键 │ ◄───────  │ hermes/claude  │
 └──────┬──────┘                          └──────────────┘          └───────────────┘
-       │ :7610 webhook(外部系统唤醒)        viewer/index.html(浏览器实时观看)
+       │ :7610 webhook(外部系统唤醒)        web 控制台 :7620(对话+任务+屏幕)
        ▼
   任务板(board.sqlite)· 审计 · 预算 · ToolScout · Tentacles
 ```
