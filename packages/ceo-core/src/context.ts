@@ -21,6 +21,13 @@ export class ContextAssembler {
     sections.push(`# NEW EVENTS SINCE LAST WAKE\n${parts.events.length ? parts.events.join("\n") : "(none)"}`);
     sections.push(`# TASK BOARD\n${this.boardBlock(parts.board) || "(empty)"}`);
     if (parts.budgetLine) sections.push(`# BUDGET\n${parts.budgetLine}`);
+    // anchor clock: reasoning models default to UTC when emitting timestamps;
+    // showing the local offset keeps scheduledAt/dueAt on the user's day
+    const now = Date.now();
+    const off = -new Date(now).getTimezoneOffset();
+    const sign = off >= 0 ? "+" : "-";
+    const offStr = `${sign}${String(Math.floor(Math.abs(off) / 60)).padStart(2, "0")}:${String(Math.abs(off) % 60).padStart(2, "0")}`;
+    sections.push(`# CLOCK\nnow = ${new Date(now).toISOString().replace("Z", offStr)} (local offset ${offStr}); emit timestamps WITH this offset, never Z`);
     let out = sections.join("\n\n");
     // memory gets whatever room is left, then hard-truncate everything
     const left = HARD_CHAR_CAP - out.length - 64;

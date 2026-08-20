@@ -482,7 +482,7 @@ async function runInteractive(baseUrl: string, timeoutMs: number): Promise<void>
     notice("·· press Ctrl+C again to exit");
     rl.prompt(true);
   });
-  rl.on("close", () => shutdown(0)); // Ctrl-D
+  rl.on("close", () => { void queue.then(() => shutdown(0)); }); // Ctrl-D; piped stdin must let in-flight commands finish
 
   rl.prompt();
   await new Promise<void>(() => { /* exits via signals */ });

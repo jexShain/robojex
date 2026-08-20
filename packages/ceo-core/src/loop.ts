@@ -313,8 +313,12 @@ export class SchedulerLoop {
       console.warn(`[loop] spawn parent ignored: must be a task id string`);
       return undefined;
     }
-    const candidates = this.d.board.list().filter((t) => t.id.startsWith(v));
-    const hit = candidates.find((t) => t.id === v) ?? (candidates.length === 1 ? candidates[0] : undefined);
+    const tasks = this.d.board.list();
+    const candidates = tasks.filter((t) => t.id.startsWith(v));
+    const hit = candidates.find((t) => t.id === v)
+      ?? (candidates.length === 1 ? candidates[0] : undefined)
+      // LLMs naturally reference a just-spawned epic by its title, not its id
+      ?? (tasks.filter((t) => t.title === v).length === 1 ? tasks.find((t) => t.title === v) : undefined);
     if (!hit) {
       console.warn(`[loop] spawn parent ignored: no task '${v}' on the board`);
       return undefined;
