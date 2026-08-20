@@ -26,14 +26,15 @@ jobs:
           Copy-Item -Recurse packages/web/dist packages/electron/dist
         shell: pwsh
       - name: Build Electron app
-        run: npx --yes electron-builder --project packages/electron --publish never
+        working-directory: packages/electron
+        run: npx --yes electron-builder --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: robojex-windows
-          path: dist-electron/*.exe
+          path: packages/electron/dist-electron/*.exe
 
   build-linux:
     runs-on: ubuntu-latest
@@ -52,11 +53,12 @@ jobs:
       - name: Copy web dist into electron package
         run: cp -r packages/web/dist packages/electron/dist
       - name: Build Electron app
-        run: npx --yes electron-builder --project packages/electron --publish never
+        working-directory: packages/electron
+        run: npx --yes electron-builder --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
           name: robojex-linux
-          path: dist-electron/*.AppImage
+          path: packages/electron/dist-electron/*.AppImage
