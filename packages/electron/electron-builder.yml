@@ -1,8 +1,10 @@
 appId: com.robojex.app
 productName: robojex
+directories:
+  output: ../../dist-electron
 files:
-  - packages/web/dist/**/*
-  - packages/electron/**/*
+  - "**/*"
+  - "!node_modules/**/*"
 win:
   target:
     - nsis

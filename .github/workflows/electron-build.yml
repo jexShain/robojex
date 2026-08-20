@@ -1,0 +1,62 @@
+name: Build Electron App
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Build web frontend
+        run: npx --yes vite build --outDir dist
+        working-directory: packages/web
+        env:
+          CI: true
+      - name: Copy web dist into electron package
+        run: |
+          Remove-Item -Recurse -Force packages/electron/dist -ErrorAction SilentlyContinue
+          Copy-Item -Recurse packages/web/dist packages/electron/dist
+        shell: pwsh
+      - name: Build Electron app
+        run: npx --yes electron-builder --project packages/electron --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: robojex-windows
+          path: dist-electron/*.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Build web frontend
+        run: npx --yes vite build --outDir dist
+        working-directory: packages/web
+        env:
+          CI: true
+      - name: Copy web dist into electron package
+        run: cp -r packages/web/dist packages/electron/dist
+      - name: Build Electron app
+        run: npx --yes electron-builder --project packages/electron --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: robojex-linux
+          path: dist-electron/*.AppImage

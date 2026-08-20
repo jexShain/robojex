@@ -6,3 +6,4 @@ runtime/
 docs/superpowers/
 build/
 runtime/config.json
+dist-electron/
