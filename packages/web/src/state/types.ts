@@ -12,7 +12,7 @@ export interface Task {
 }
 
 export interface Budget {
-  mode: Mode
+  mode: 'burn' | 'budgeted' // core BudgetGovernor mode, not the takeover mode
   dailyTokens: number
   spentToday: number
   line: string
@@ -47,9 +47,9 @@ export type ServerFrame =
   | { t: 'hello'; state: StateSnapshot }
   | { t: 'chat_out'; from: 'user' | 'jex' | 'system'; text: string; ts: number }
   | { t: 'tasks'; tasks: Task[] }
-  | { t: 'cycle'; wake: string; cost: number; actions: CycleAction[] }
+  | { t: 'cycle'; wake: number; cost: number; actions: CycleAction[] }
   | { t: 'mode'; mode: Mode }
-  | { t: 'budget'; line: string }
+  | { t: 'budget'; line: string; budget?: Budget }
 
 /** Unified chat transcript entry rendered by ChatStream. */
 export type TranscriptItem =
@@ -57,7 +57,7 @@ export type TranscriptItem =
   | {
       kind: 'cycle'
       id: number
-      wake: string
+      wake: number
       cost: number
       actions: CycleAction[]
       ts: number

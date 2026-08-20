@@ -11,6 +11,17 @@ import type { SlashEntry } from './SlashMenu'
 
 const MAX_HEIGHT = 176 // 8 lines at 1.55 × 14.5px
 
+/** Resolve a palette pick against the typed text: complete a partial prefix
+ * (typing `/mode ass` + Enter submits `/mode assist`), keep any typed argument
+ * (`/mission ship it` stays intact), never submit the raw partial. */
+function resolvePick(label: string, typed: string): string {
+  const base = label.split(' ')[0]!
+  const completed = label.replace(/ <text>$/, '')
+  if (typed !== completed && completed.startsWith(typed)) return completed
+  const arg = typed.slice(base.length).trim()
+  return arg ? `${base} ${arg}` : completed
+}
+
 export function InputBar() {
   const { state, sendChat, runCommand } = useStore()
   const [value, setValue] = useState('')
@@ -55,13 +66,10 @@ export function InputBar() {
     if (!runCommand(text)) sendChat(text)
   }
 
-  /** Enter/Tab with the palette open: selected entry, plus any typed argument. */
+  /** Enter/Tab with the palette open: complete the selected entry, keep any typed argument. */
   const submitSelected = (): void => {
     const entry = entries[activeIdx]
-    if (!entry) return
-    const base = entry.label.split(' ')[0]!
-    const arg = value.trim().slice(base.length).trim()
-    submit(arg ? `${base} ${arg}` : entry.label.replace(/ <text>$/, ''))
+    if (entry) submit(resolvePick(entry.label, value.trim()))
   }
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>): void => {
@@ -127,9 +135,7 @@ export function InputBar() {
     histIdx.current = -1 // manual edits leave history navigation
   }
   const onPickEntry = (entry: SlashEntry): void => {
-    const base = entry.label.split(' ')[0]!
-    const arg = value.trim().slice(base.length).trim()
-    submit(arg ? `${base} ${arg}` : entry.label.replace(/ <text>$/, ''))
+    submit(resolvePick(entry.label, value.trim()))
   }
 
   return (

@@ -41,8 +41,8 @@ test("summarizeFrame: state frames collapse to one line; chat frames are not sum
       { id: "t3", title: "c", status: "done" },
     ],
   })).toBe("tasks 3 (2 done, 1 running)");
-  expect(summarizeFrame({ t: "cycle", wake: "patrol", cost: 0.0123, actions: [{}, {}] }))
-    .toBe("cycle wake=patrol cost=0.0123 actions=2");
+  expect(summarizeFrame({ t: "cycle", wake: 3, cost: 0.0123, actions: [{}, {}] }))
+    .toBe("cycle wake=3 cost=0.0123 actions=2");
   expect(summarizeFrame({ t: "mode", mode: "assist" })).toBe("mode assist");
   expect(summarizeFrame({ t: "budget", line: "burn · today 12k/2M" })).toBe("budget burn · today 12k/2M");
   expect(summarizeFrame({ t: "chat_out", from: "jex", text: "hi" })).toBeNull();

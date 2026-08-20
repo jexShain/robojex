@@ -7,6 +7,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { readFileSync, appendFileSync, statSync, createReadStream } from "node:fs";
 import { join, dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { networkInterfaces } from "node:os";
 import { WebSocketServer, WebSocket } from "ws";
 import type { TaskBoard, Task } from "./board.js";
 import type { BudgetGovernor } from "./budget.js";
@@ -55,12 +56,41 @@ const MIME: Record<string, string> = {
   ".map": "application/json", ".woff": "font/woff", ".woff2": "font/woff2",
 };
 
-// Version of the running core: read from package.json beside the module; under
-// a pkg binary no file sits there and we fall back to "dev".
+// The api is unauthenticated, so it must only answer the operator's own
+// browser. Host must name this machine (anti DNS-rebinding: a rebound domain
+// resolves to 127.0.0.1 but still carries evil.com in Host), and a browser
+// Origin — when one is sent — must target the same host, so the console works
+// same-origin from any NIC address (e.g. http://10.10.7.69:7620), or be a
+// loopback origin on any port (vite dev server proxying the api).
+// Returns the Origin to echo for CORS ("" when none was sent), null to refuse.
+const LOOPBACK_HOSTS: Record<string, true> = { localhost: true, "127.0.0.1": true, "::1": true };
+const LOCAL_HOSTS = (() => {
+  const hosts = new Set(Object.keys(LOOPBACK_HOSTS)); // dynamic: NIC addresses join at runtime
+  for (const addrs of Object.values(networkInterfaces()))
+    for (const a of addrs ?? []) if (a.address) hosts.add(a.address);
+  return hosts;
+})();
+
+function originGate(req: IncomingMessage): string | null {
+  const raw = req.headers.host?.trim().toLowerCase() ?? "";
+  // strip the port: IPv6 literals arrive bracketed ([::1]:7620), IPv4/dns as host:port
+  const host = raw.startsWith("[") ? raw.slice(1, raw.indexOf("]")) : raw.replace(/:\d+$/, "");
+  if (!host || !LOCAL_HOSTS.has(host)) return null;
+  const origin = req.headers.origin;
+  if (typeof origin !== "string" || origin === "") return ""; // non-browser client or same-origin GET
+  let parsed: URL;
+  try { parsed = new URL(origin); } catch { return null; } // includes Origin: null (sandboxed frames)
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  return parsed.hostname === host || LOOPBACK_HOSTS[parsed.hostname] ? origin : null;
+}
+
+// Version of the running core: read from the package.json one level above this
+// module (src -> package root, dist -> package root); under a pkg binary no
+// file sits there and we fall back to "dev".
 const VERSION = (() => {
   try {
     const p = import.meta.url
-      ? join(dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json")
+      ? join(dirname(fileURLToPath(import.meta.url)), "..", "package.json")
       : join(dirname(process.execPath), "package.json");
     return String((JSON.parse(readFileSync(p, "utf8")) as { version?: string }).version ?? "dev");
   } catch { return "dev"; }
@@ -85,12 +115,16 @@ export class ApiServer implements LoopOutlet {
   constructor(private d: ApiDeps) {
     this.server = (d.httpFactory ?? createServer)();
     this.server.on("request", (req, res) => { this.onHttp(req, res).catch(() => res.destroy()); });
-    this.wss = (d.wssFactory ?? (() => new WebSocketServer({ noServer: true })))();
+    // 1MB covers any legal frame (chat texts cap at 16KB); the ws default of
+    // 100MiB would let one frame blow up the ring, the broadcast and the loop.
+    this.wss = (d.wssFactory ?? (() => new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 })))();
     this.wss.on("connection", (ws) => this.onConnection(ws));
     this.root = d.webDir ? resolve(d.webDir) : null;
     this.server.on("upgrade", (req, socket, head) => {
       const path = new URL(req.url ?? "/", "http://local").pathname;
-      if (path !== "/api/events") { socket.destroy(); return; }
+      // browsers do not gate WS on CORS: the same Host/Origin check as HTTP
+      // applies, otherwise any webpage can open /api/events cross-origin.
+      if (path !== "/api/events" || originGate(req) === null) { socket.destroy(); return; }
       this.wss.handleUpgrade(req, socket, head, (ws) => this.wss.emit("connection", ws, req));
     });
   }
@@ -149,11 +183,14 @@ export class ApiServer implements LoopOutlet {
   private onConnection(ws: WebSocket): void {
     this.clients.add(ws);
     ws.on("close", () => this.clients.delete(ws));
+    // ws re-emits receiver errors (e.g. a frame past maxPayload) on the
+    // socket: without a listener one bad client would crash the whole console.
+    ws.on("error", () => this.clients.delete(ws));
     try { ws.send(JSON.stringify({ t: "hello", state: this.state() })); } catch { /* client gone already */ }
     ws.on("message", (raw: unknown) => {
       let m: Record<string, unknown>;
       try { m = JSON.parse(String(raw)) as Record<string, unknown>; } catch { return; }
-      if (m.t === "chat" && typeof m.text === "string") this.handleChat(m.text); // ≡ POST /api/chat
+      if (m.t === "chat" && this.validText(m.text)) this.handleChat(m.text); // ≡ POST /api/chat: same non-empty ≤16KB rule
     });
   }
 
@@ -175,8 +212,9 @@ export class ApiServer implements LoopOutlet {
   }
 
   private async onHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // dev mode serves the vite dev server origin: CORS stays open
-    res.setHeader("access-control-allow-origin", "*");
+    const origin = originGate(req);
+    if (origin === null) { res.writeHead(403, { "content-type": "text/plain; charset=utf-8" }); res.end("forbidden origin"); return; }
+    if (origin !== "") res.setHeader("access-control-allow-origin", origin); // echo exactly the origin just vetted
     res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
     res.setHeader("access-control-allow-headers", "content-type");
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }

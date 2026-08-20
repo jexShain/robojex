@@ -174,6 +174,7 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
       return state.mode === frame.mode ? state : { ...state, mode: frame.mode }
     case 'budget': {
       if (!state.budget) return state // no baseline yet; wait for hello
+      if (frame.budget) return { ...state, budget: frame.budget }
       return state.budget.line === frame.line
         ? state
         : { ...state, budget: { ...state.budget, line: frame.line } }

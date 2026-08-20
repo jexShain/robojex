@@ -70,7 +70,7 @@ export type Frame =
   | { t: "hello"; state: CoreState }
   | { t: "chat_out"; from: "user" | "jex" | "system"; text: string; ts?: number }
   | { t: "tasks"; tasks: BoardTask[] }
-  | { t: "cycle"; wake?: string; cost?: number; actions?: unknown[] }
+  | { t: "cycle"; wake?: number; cost?: number; actions?: unknown[] }
   | { t: "mode"; mode: string }
   | { t: "budget"; line: string };
 

@@ -281,7 +281,9 @@ export class SchedulerLoop {
     } finally {
       // every cycle ends on the wire: the heartbeat frame plus the fresh budget line
       this.d.outlet?.frame({ t: "cycle", wake: this.wakeN, cost, actions });
-      this.d.outlet?.frame({ t: "budget", line: this.d.budget.line() });
+      // full snapshot (not just the line) so clients' progress bars advance
+      // live; the line stays for one-line CLI summaries
+      this.d.outlet?.frame({ t: "budget", line: this.d.budget.line(), budget: this.d.budget.snapshot() });
     }
   }
 

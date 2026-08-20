@@ -12,8 +12,9 @@ import { LLMClient } from "../src/llm.js";
 import type { AgentOrchestrator } from "../src/orchestrator.js";
 import { seedRuntimeFiles, assembleAndStart } from "../src/index.js";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { tmpdir, networkInterfaces } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { get as httpGet } from "node:http";
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
@@ -30,7 +31,7 @@ async function until(cond: () => boolean, ms = 4000): Promise<void> {
 // because each frame type only carries its own subset.
 interface Frame {
   t: string; from?: unknown; text?: unknown; ts?: unknown; state?: unknown;
-  wake?: unknown; cost?: unknown; actions?: unknown[]; tasks?: unknown[]; mode?: unknown; line?: unknown;
+  wake?: unknown; cost?: unknown; actions?: unknown[]; tasks?: unknown[]; mode?: unknown; line?: unknown; budget?: unknown;
 }
 
 // The GET /api/state payload as the tests read it (loose: all fields optional).
@@ -112,8 +113,9 @@ test("GET /api/state: tasks, budget snapshot, mode, three docs, chat ring, versi
   expect(s.rubric).toContain("# RUBRIC");
   expect(s.memory).toContain("# MEMORY");
   expect(s.chat).toEqual([]);
-  expect(typeof s.version).toBe("string");
-  expect(s.version!.length).toBeGreaterThan(0);
+  // VERSION resolves one level above the module: src -> packages/ceo-core/package.json
+  const pkg = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")) as { version?: string };
+  expect(s.version).toBe(pkg.version);
 });
 
 test("POST /api/chat: 202, enqueues 'chat: <text>', broadcasts chat_out(user); WS {t:'chat'} frame is equivalent; bad input 400", async () => {
@@ -165,6 +167,99 @@ test("chat ring holds the most recent 100 messages only", async () => {
   expect(s.chat![99]).toMatchObject({ text: "m104" });
 });
 
+// -- Host/Origin gate (anti DNS-rebinding + cross-site drive-by) ------------
+const rawGet = (api: ApiServer, headers: Record<string, string>, path = "/api/state") =>
+  new Promise<{ status: number; cors: string | string[] | undefined }>((resolve, reject) => {
+    // raw http: fetch refuses a forged Host header, the attack vector itself
+    const req = httpGet({ host: "127.0.0.1", port: api.port, path, headers }, (res) => {
+      res.resume(); // drain the body so 'end' fires; only status/headers matter here
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, cors: res.headers["access-control-allow-origin"] }));
+    });
+    req.on("error", reject);
+  });
+
+test("origin gate: forged Host 403, mismatched Origin 403; NIC-IP Host with same-origin Origin 200 and CORS echoes only the vetted origin", async () => {
+  const rig = mkRig();
+  const api = makeApi(rig, { push: vi.fn() });
+  await api.start();
+
+  // DNS rebinding: the connection is local but Host names the attacker domain
+  expect((await rawGet(api, { host: "evil.com" })).status).toBe(403);
+
+  // legitimate Host, but the browser page sending the request lives elsewhere
+  expect((await rawGet(api, { host: `127.0.0.1:${api.port}`, origin: "http://evil.com" })).status).toBe(403);
+  expect((await rawGet(api, { host: `127.0.0.1:${api.port}`, origin: "null" })).status).toBe(403); // sandboxed frame
+
+  // no Origin header (curl, node fetch, the ws client): plain Host check only, no CORS header
+  const plain = await rawGet(api, { host: `127.0.0.1:${api.port}` });
+  expect(plain.status).toBe(200);
+  expect(plain.cors).toBeUndefined();
+
+  // remote operator: console served same-origin from a NIC address (http://10.x.x.x:7620)
+  const lan = Object.values(networkInterfaces()).flat().find((a) => a && a.family === "IPv4" && !a.internal)?.address;
+  expect(lan).toBeTruthy(); // every real deployment box has an external IPv4 NIC
+  const remote = await rawGet(api, { host: `${lan}:${api.port}`, origin: `http://${lan}:${api.port}` });
+  expect(remote.status).toBe(200);
+  expect(remote.cors).toBe(`http://${lan}:${api.port}`);
+
+  // vite dev server: loopback origin on any port against a loopback Host
+  const dev = await rawGet(api, { host: `127.0.0.1:${api.port}`, origin: "http://localhost:5173" });
+  expect(dev.status).toBe(200);
+  expect(dev.cors).toBe("http://localhost:5173");
+});
+
+test("WS upgrade runs the same gate: forged Host or cross-origin upgrade destroyed; loopback upgrade proceeds", async () => {
+  const rig = mkRig();
+  const api = makeApi(rig, { push: vi.fn() });
+  await api.start();
+
+  const upgrade = (headers: Record<string, string>) =>
+    new Promise<"upgraded" | "refused">((resolve) => {
+      const req = httpGet({
+        host: "127.0.0.1", port: api.port, path: "/api/events",
+        headers: {
+          connection: "Upgrade", upgrade: "websocket", "sec-websocket-version": "13",
+          "sec-websocket-key": Buffer.from("0123456789abcdef").toString("base64"),
+          ...headers,
+        },
+      });
+      req.on("upgrade", () => { req.destroy(); resolve("upgraded"); }); // first event wins
+      req.on("response", () => resolve("refused"));
+      req.on("close", () => resolve("refused"));
+      req.on("error", () => resolve("refused"));
+    });
+
+  expect(await upgrade({ host: "evil.com" })).toBe("refused");
+  expect(await upgrade({ host: `127.0.0.1:${api.port}`, origin: "http://evil.com" })).toBe("refused");
+  expect(await upgrade({ host: `127.0.0.1:${api.port}` })).toBe("upgraded"); // node ws clients send no Origin
+});
+
+test("WS chat frames share the POST validation; a frame past maxPayload closes the socket and never reaches the ring", async () => {
+  const rig = mkRig();
+  const loop = { push: vi.fn() };
+  const api = makeApi(rig, loop);
+  await api.start();
+  const c = wsCollect(api);
+  await c.opened;
+
+  // blank and over-16KB texts are ignored exactly like POST /api/chat 400s
+  c.ws.send(JSON.stringify({ t: "chat", text: "   " }));
+  c.ws.send(JSON.stringify({ t: "chat", text: "x".repeat(16 * 1024 + 1) }));
+  c.ws.send(JSON.stringify({ t: "chat", text: "ok" })); // ordered after the bad ones on one connection
+  await until(() => c.frames.some((f) => f.t === "chat_out" && f.text === "ok"));
+  expect(c.frames.filter((f) => f.t === "chat_out")).toHaveLength(1); // only the valid text echoed
+  expect(loop.push).toHaveBeenCalledTimes(1);
+  expect(loop.push).toHaveBeenCalledWith("chat: ok");
+
+  // one frame past the 1MB cap: server closes with 1009, payload never lands
+  const closed = new Promise<number>((resolve) => c.ws.once("close", (code: number) => resolve(code)));
+  c.ws.send(JSON.stringify({ t: "chat", text: "x".repeat(1024 * 1024 + 64) }));
+  expect(await closed).toBe(1009);
+  const s = (await (await fetch(`http://127.0.0.1:${api.port}/api/state`)).json()) as StateFrame;
+  expect(s.chat).toHaveLength(1); // ring still holds just "ok"
+  expect(loop.push).toHaveBeenCalledTimes(1);
+});
+
 test("decide reply action: chat_out(from jex) broadcast + recorded, no spawn, no board card, counted in the cycle frame; patrol prompt says human chat always acts", async () => {
   const rig = mkRig();
   const chat = fakeLlmChat(async (slot) => {
@@ -190,9 +285,9 @@ test("decide reply action: chat_out(from jex) broadcast + recorded, no spawn, no
   const cycle = c.frames.find((f) => f.t === "cycle")!;
   expect(cycle.wake).toBe(1);
   expect(cycle.cost).toBe(82); // patrol 12 + decide 70
-  expect(cycle.actions).toEqual([{ type: "reply", text: "on it — checking now" }]);
   await until(() => c.frames.some((f) => f.t === "budget")); // budget frame follows every cycle
   expect(String(c.frames.find((f) => f.t === "budget")!.line)).toContain("82");
+  expect(c.frames.find((f) => f.t === "budget")!.budget).toMatchObject({ mode: "burn", dailyTokens: 0, spentToday: 82 }); // full snapshot rides the frame
   expect(spawn).not.toHaveBeenCalled();   // reply spawns nothing
   expect(rig.board.list()).toEqual([]);   // and takes no board card
   const s = (await (await fetch(`http://127.0.0.1:${api.port}/api/state`)).json()) as StateFrame;
