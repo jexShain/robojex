@@ -14,6 +14,7 @@ import type { ThemeApi } from '../state/theme'
 import { AgendaView } from '../views/AgendaView'
 import { ActivityFeed } from '../views/ActivityFeed'
 import { BoardView } from '../views/BoardView'
+import { ThinkingStream } from '../views/ThinkingStream'
 import { loadView, saveView } from '../views/viewState'
 import type { ViewId } from '../views/viewState'
 
@@ -217,6 +218,11 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
         {view === 'activity' ? (
           <div className="rj-animate-in">
             <ActivityFeed />
+          </div>
+        ) : null}
+        {view === 'thinking' ? (
+          <div className="rj-animate-in">
+            <ThinkingStream />
           </div>
         ) : null}
       </div>

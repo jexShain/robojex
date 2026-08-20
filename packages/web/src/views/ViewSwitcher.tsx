@@ -1,5 +1,5 @@
-// packages/web/src/views/ViewSwitcher.tsx — three-state segmented control
-// (Chat / Board / Agenda) for the sidebar foot.
+// packages/web/src/views/ViewSwitcher.tsx — four-state segmented control
+// (Chat / Board / Agenda / Thinking) for the sidebar foot.
 
 import type { ViewId } from './viewState'
 
@@ -24,9 +24,15 @@ const ICONS: Record<ViewId, JSX.Element> = {
       <path d="M5 9h3.4" />
     </svg>
   ),
+  thinking: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <circle cx="8" cy="5.5" r="3.5" />
+      <path d="M3.5 14c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5" />
+    </svg>
+  ),
 }
 
-const LABELS: Record<ViewId, string> = { chat: 'Chat', board: 'Board', agenda: 'Agenda' }
+const LABELS: Record<ViewId, string> = { chat: 'Chat', board: 'Board', agenda: 'Agenda', thinking: 'Thinking' }
 
 export function ViewSwitcher({
   view,

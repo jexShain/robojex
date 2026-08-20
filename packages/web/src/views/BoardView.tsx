@@ -57,9 +57,10 @@ function BoardCard({
   onSelect(): void
   onToggle(): void
 }) {
-  const { task, children, subtreeBlocked } = placed.node
+  const { task, children, subtreeBlocked, subtreeRunning, allChildrenDone } = placed.node
   const tone = statusTone(task.status)
   const hasKids = children.length > 0
+  const staggerCls = placed.childIndex > 0 ? `rj-stagger-${Math.min(placed.childIndex, 6)}` : ''
   return (
     <div
       className={[
@@ -69,6 +70,9 @@ function BoardCard({
         hasKids && collapsed ? 'shut' : '',
         subtreeBlocked && tone !== 'failed' ? 'warn' : '',
         active ? 'active' : '',
+        subtreeRunning ? 'subtree-pulse' : '',
+        allChildrenDone ? 'subtree-celebrate' : '',
+        staggerCls,
       ]
         .filter(Boolean)
         .join(' ')}
@@ -225,7 +229,10 @@ export function BoardView() {
                 </linearGradient>
               </defs>
               {layout.edges.map((e) => (
-                <path key={e.childId} d={e.d} pathLength={1} />
+                <g key={e.childId}>
+                  <path d={e.d} pathLength={1} />
+                  <circle cx={e.x2} cy={e.y2} r={3} fill="var(--dsw-alias-accent-default)" opacity={0.7} />
+                </g>
               ))}
             </svg>
             {layout.nodes.map((p) => (

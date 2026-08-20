@@ -76,7 +76,7 @@ describe('unscheduledTasks', () => {
 
 describe('dayColumns', () => {
   test('seven consecutive days, today flagged, blocks per column', () => {
-    const cols = dayColumns([T({ scheduledAt: at(9), dueAt: at(10) }), T({ scheduledAt: at(9) + DAY_MS })], DAY0)
+    const cols = dayColumns([T({ scheduledAt: at(9), dueAt: at(10) }), T({ scheduledAt: at(9) + DAY_MS })], DAY0, DAY0 + 12 * 3_600_000)
     expect(cols).toHaveLength(7)
     expect(cols.map((c) => c.day0)).toEqual(Array.from({ length: 7 }, (_, i) => DAY0 + i * DAY_MS))
     expect(cols.filter((c) => c.today).map((c) => c.day0)).toEqual([DAY0])

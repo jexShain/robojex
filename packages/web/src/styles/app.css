@@ -1981,3 +1981,238 @@ body[data-ds-dark-theme] .chip.full {
     transition: none;
   }
 }
+
+/* ============================================================
+   T4 Agenda Enhancements: overdue/upcoming glow, zoom badge,
+   drag ghost, now-marker pulse, tree indentation
+   ============================================================ */
+
+/* Overdue task blocks — red glow */
+.agenda-block.overdue {
+  box-shadow: 0 0 8px 2px rgba(239, 68, 68, 0.5), inset 0 0 0 1px rgba(239, 68, 68, 0.3);
+  animation: rj-glow-red var(--rj-duration-slow, 2s) ease-in-out infinite alternate;
+}
+
+@keyframes rj-glow-red {
+  from { box-shadow: 0 0 6px 1px rgba(239, 68, 68, 0.4); }
+  to   { box-shadow: 0 0 14px 4px rgba(239, 68, 68, 0.6); }
+}
+
+/* Upcoming task blocks — accent glow */
+.agenda-block.upcoming {
+  box-shadow: var(--rj-glow-sm, 0 0 6px 1px rgba(103, 158, 254, 0.3));
+  animation: rj-glow-accent var(--rj-duration-slow, 2s) ease-in-out infinite alternate;
+}
+
+@keyframes rj-glow-accent {
+  from { box-shadow: 0 0 4px 1px rgba(103, 158, 254, 0.25); }
+  to   { box-shadow: 0 0 12px 3px rgba(103, 158, 254, 0.45); }
+}
+
+/* Now-marker pulse dot */
+.an-dot {
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-accent-default);
+}
+
+/* Zoom badge in subbar */
+.agenda-zoom-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-surface-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Drag ghost */
+.drag-ghost {
+  position: absolute;
+  left: 60px;
+  right: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--dsw-alias-surface-primary);
+  border: 1px dashed var(--dsw-alias-border-l2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.9;
+  animation: rj-fade-in var(--rj-duration-instant, 80ms) var(--rj-ease-out, ease-out);
+}
+
+/* Task-tree indented blocks transition */
+.agenda-block {
+  transition: margin-left var(--rj-duration-fast, 150ms) var(--rj-ease-out, ease-out),
+              box-shadow var(--rj-duration-normal, 250ms) var(--rj-ease-out, ease-out);
+}
+
+/* Dragging state — reduce opacity on original */
+.agenda-block:active {
+  opacity: 0.7;
+  transition: opacity var(--rj-duration-instant, 80ms);
+}
+
+
+/* ============================================================
+   T3 Board Tree Enhancements: parent card style, pulse, celebrate,
+   stagger, junction dot glow
+   ============================================================ */
+
+/* Parent cards with children — accent left border, bolder title */
+.board-card.has-kids {
+  border-left: 3px solid var(--dsw-alias-accent-default);
+}
+.board-card.has-kids .bc-title {
+  font-weight: 600;
+}
+
+/* Running subtree — pulse glow on whole branch */
+.board-card.subtree-pulse {
+  animation: rj-pulse-glow var(--rj-duration-slow, 2s) ease-in-out infinite alternate;
+}
+@keyframes rj-pulse-glow {
+  from { box-shadow: 0 0 0 0 rgba(103, 158, 254, 0); }
+  to   { box-shadow: 0 0 12px 2px rgba(103, 158, 254, 0.35); }
+}
+
+/* All children done — celebrate effect */
+.board-card.subtree-celebrate {
+  animation: rj-celebrate var(--rj-duration-slow, 2s) var(--rj-ease-out, ease-out);
+}
+
+/* Stagger entrance for child cards (driven by rj-stagger-N from effects.css) */
+.board-card[class*="rj-stagger"] {
+  animation: rj-fade-slide-in var(--rj-duration-normal, 250ms) var(--rj-ease-out, ease-out) backwards;
+}
+
+/* ============================================================
+   T7 Thinking Stream: timeline of jex's reasoning steps
+   ============================================================ */
+
+.thinking-stream {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ts-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.ts-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.ts-count {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-surface-secondary);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+.ts-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.ts-entry {
+  padding: 6px 16px;
+  border-left: 2px solid var(--dsw-alias-border-l1);
+  margin-left: 12px;
+}
+
+.ts-entry.ts-patrol { border-left-color: var(--dsw-alias-accent-default); }
+.ts-entry.ts-decision { border-left-color: #22c55e; }
+.ts-entry.ts-spawn { border-left-color: #f59e0b; }
+.ts-entry.ts-reply { border-left-color: #a78bfa; }
+.ts-entry.ts-deciding { border-left-color: var(--dsw-alias-border-l2); }
+
+.ts-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+  padding: 4px 0;
+}
+
+.ts-main:has(+ .ts-detail) {
+  cursor: pointer;
+}
+
+.ts-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.ts-time {
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.ts-label {
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-chevron {
+  font-size: 10px;
+  color: var(--dsw-alias-label-secondary);
+  flex-shrink: 0;
+}
+
+.ts-detail {
+  margin: 4px 0 4px 22px;
+  padding: 8px 10px;
+  background: var(--dsw-alias-surface-secondary);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: var(--dsw-alias-font-mono, monospace);
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.ts-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--dsw-alias-label-secondary);
+  gap: 8px;
+}
+
+.ts-empty-icon {
+  font-size: 40px;
+  opacity: 0.4;
+}

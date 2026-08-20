@@ -1,10 +1,9 @@
-// packages/web/src/views/AgendaView.tsx — calendar on the task board. Two
-// modes: Day (24h vertical timeline, hour grid, now-line heartbeat, unscheduled
-// side list) and Days (7 columns with per-day positioning). Placement math is
-// agendaModel.ts; this file owns mode/day state, the scroll-to-now effect and
-// the 60s now-line heartbeat.
+// packages/web/src/views/AgendaView.tsx — calendar on the task board.
+// Modes: Day (zoomable 24h vertical timeline, hour grid, now-line with pulse,
+// drag-to-reschedule, overdue/upcoming glow, task-tree grouping) and Days
+// (7 columns with per-day positioning).
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { statusTone, useStore } from '../state/store'
 import type { Task } from '../state/types'
 import {
@@ -13,13 +12,23 @@ import {
   dayColumns,
   nowPct,
   unscheduledTasks,
+  ZOOM_LEVELS,
+  type ZoomLevel,
+  clampZoom,
+  hourHeight,
+  yToTime,
+  snapTo15,
 } from './agendaModel'
 import { DAY_MS, dayColHead, dayStartOf, fmtClock, fmtDayLabel, fmtStamp } from './timefmt'
 
-/** Day-mode hour row height; 24 rows = 1344px scrollable track. */
-const HOUR_H = 56
+/** Day-mode default hour row height. */
+const BASE_HOUR_H = 56
 /** Days-mode compressed track. */
 const DAYS_HOUR_H = 32
+/** Max tree indentation in px. */
+const TREE_INDENT = 20
+/** Drag threshold in px before starting a drag. */
+const DRAG_THRESHOLD = 4
 
 const toneOf = (t: Task): string => `tone-${statusTone(t.status)}`
 
@@ -31,30 +40,43 @@ function blockTip(t: Task): string {
   const range = s != null ? `${fmtClock(s)}${d != null ? `–${fmtClock(d)}` : ''}` : ''
   return range ? `${t.status} · ${range}` : t.status
 }
+
 function AgendaBlockView({
   block,
   now,
   compact,
   onOpen,
+  onDragStart,
 }: {
   block: AgendaBlock
   now: number
   compact?: boolean
   onOpen(id: string): void
+  onDragStart?: (e: PointerEvent, block: AgendaBlock) => void
 }) {
   const t = block.task
   const s = t.scheduledAt
   const d = t.dueAt
   const range = s != null ? `${fmtClock(s)}${d != null ? `–${fmtClock(d)}` : ''}` : ''
   const low = block.topPct < 12
+  const indent = block.treeDepth * TREE_INDENT
+  const cls = [
+    'agenda-block',
+    toneOf(t),
+    compact ? 'compact' : '',
+    low ? 'tip-below' : '',
+    block.isOverdue ? 'overdue' : '',
+    block.isUpcoming ? 'upcoming' : '',
+  ].filter(Boolean).join(' ')
   return (
     <button
       type="button"
-      className={`agenda-block ${toneOf(t)}${compact ? ' compact' : ''}${low ? ' tip-below' : ''}`}
-      style={{ top: `${block.topPct}%`, height: `${block.heightPct}%` }}
+      className={cls}
+      style={{ top: `${block.topPct}%`, height: `${block.heightPct}%`, marginLeft: indent }}
       data-tip={blockTip(t)}
       title={compact ? `${range} ${t.title}` : undefined}
       onClick={() => onOpen(t.id)}
+      onPointerDown={onDragStart ? (e: any) => onDragStart(e.nativeEvent, block) : undefined}
     >
       {!compact ? <span className="ab-time">{range}</span> : null}
       <span className="ab-title">{t.title}</span>
@@ -68,6 +90,7 @@ function AgendaBlockView({
 function NowLine({ pct, now }: { pct: number; now: number }) {
   return (
     <div className="agenda-now" style={{ top: `${pct}%` }} aria-hidden="true">
+      <span className="an-dot rj-pulse-dot" />
       <span className="an-time">{fmtClock(now)}</span>
     </div>
   )
@@ -78,8 +101,17 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
   const [dayOffset, setDayOffset] = useState(0)
   const [, setTick] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [zoomIdx, setZoomIdx] = useState(0)
+  const [scrollHours, setScrollHours] = useState(0)
+  const [dragBlock, setDragBlock] = useState<AgendaBlock | null>(null)
+  const [dragY, setDragY] = useState(0)
+  const dragStartY = useRef(0)
+  const isDragging = useRef(false)
 
-  // 60s heartbeat advances the now-line (spec).
+  const zoom = ZOOM_LEVELS[zoomIdx] as ZoomLevel
+  const h = hourHeight(zoom)
+
+  // 60s heartbeat advances the now-line.
   useEffect(() => {
     const timer = window.setInterval(() => setTick((x) => x + 1), 60_000)
     return () => window.clearInterval(timer)
@@ -88,17 +120,89 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
   const now = Date.now() + state.clockOffset
   const today0 = dayStartOf(now)
   const day0 = today0 + dayOffset * DAY_MS
-  const blocks = useMemo(() => blocksForDay(state.tasks, day0), [state.tasks, day0])
+  const blocks = useMemo(() => blocksForDay(state.tasks, day0, now), [state.tasks, day0, now])
   const side = useMemo(() => unscheduledTasks(state.tasks), [state.tasks])
   const isToday = dayOffset === 0
   const line = isToday ? nowPct(day0, now) : null
 
-  // Default scroll lands the current hour at the top (today only).
+  // Auto-scroll to current hour on today.
   useEffect(() => {
-    if (isToday && scrollRef.current)
-      scrollRef.current.scrollTop = Math.max(0, ((now - day0) / DAY_MS) * (24 * HOUR_H) - HOUR_H)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isToday])
+    if (isToday && scrollRef.current) {
+      const currentHour = (now - day0) / 3_600_000
+      const targetHours = Math.max(0, currentHour - zoom / 3)
+      setScrollHours(targetHours)
+    }
+  }, [isToday, zoom])
+
+  // Wheel zoom.
+  const onWheel = useCallback((e: WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault()
+      const dir = e.deltaY < 0 ? -1 : 1
+      setZoomIdx((i) => clampZoom(i + dir))
+    } else {
+      // Normal scroll → pan time.
+      const pxPerHour = (scrollRef.current?.clientHeight ?? 800) / zoom
+      setScrollHours((h) => Math.max(0, h + e.deltaY / pxPerHour))
+    }
+  }, [zoom])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [onWheel])
+
+  // Drag-to-reschedule handlers.
+  const onPointerDown = useCallback((e: PointerEvent, block: AgendaBlock) => {
+    dragStartY.current = e.clientY
+    isDragging.current = false
+    setDragBlock(block)
+    setDragY(e.clientY)
+    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+  }, [])
+
+  const onPointerMove = useCallback((e: PointerEvent) => {
+    if (!dragBlock) return
+    const dy = Math.abs(e.clientY - dragStartY.current)
+    if (!isDragging.current && dy > DRAG_THRESHOLD) isDragging.current = true
+    if (isDragging.current) {
+      setDragY(e.clientY)
+    }
+  }, [dragBlock])
+
+  const onPointerUp = useCallback((e: PointerEvent) => {
+    if (!dragBlock || !isDragging.current) { setDragBlock(null); return }
+    const el = scrollRef.current
+    if (el) {
+      const rect = el.getBoundingClientRect()
+      const y = e.clientY - rect.top + el.scrollTop
+      const trackH = 24 * h
+      const newTime = snapTo15(yToTime(y, trackH, day0, zoom, scrollHours))
+      // TODO: emit reschedule via WebSocket — for now update visual only
+      console.log(`[drag-reschedule] ${dragBlock.task.id} → ${new Date(newTime).toISOString()}`)
+    }
+    setDragBlock(null)
+    isDragging.current = false
+  }, [dragBlock, day0, zoom, scrollHours, h])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.addEventListener('pointermove', onPointerMove as any)
+    el.addEventListener('pointerup', onPointerUp as any)
+    return () => {
+      el.removeEventListener('pointermove', onPointerMove as any)
+      el.removeEventListener('pointerup', onPointerUp as any)
+    }
+  }, [onPointerMove, onPointerUp])
+
+  // Rendered hours based on zoom.
+  const visibleHours = Math.ceil(zoom)
+  const startHour = Math.floor(scrollHours)
+  const hourLabels = Array.from({ length: visibleHours + 1 }, (_, i) => startHour + i).filter(h => h >= 0 && h < 24)
+  const trackH = 24 * h
 
   return (
     <div className="agenda-body-wrap">
@@ -133,22 +237,39 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
         ) : (
           <span className="agenda-date dim">today</span>
         )}
+        <span className="agenda-zoom-badge">{zoom}h</span>
       </div>
       <div className="agenda-body">
         <div className="agenda-timeline" ref={scrollRef}>
-          <div className="agenda-track" style={{ height: 24 * HOUR_H }}>
-            {Array.from({ length: 24 }, (_, h) => (
-              <div className="agenda-hour" key={h} style={{ top: h * HOUR_H }}>
-                <span className="ah-label">{String(h).padStart(2, '0')}</span>
+          <div className="agenda-track" style={{ height: trackH }}>
+            {hourLabels.map((hr) => (
+              <div className="agenda-hour" key={hr} style={{ top: hr * h }}>
+                <span className="ah-label">{String(hr).padStart(2, '0')}</span>
                 <span className="ah-line hour" />
                 <span className="ah-line half" />
               </div>
             ))}
             {blocks.map((b) => (
-              <AgendaBlockView key={b.task.id} block={b} now={now} onOpen={onOpen} />
+              <AgendaBlockView
+                key={b.task.id}
+                block={b}
+                now={now}
+                onOpen={onOpen}
+                onDragStart={onPointerDown}
+              />
             ))}
+            {/* Child blocks (tree grouping) */}
+            {blocks.flatMap((b) => b.childBlocks.map((c) => (
+              <AgendaBlockView key={c.task.id} block={c} now={now} onOpen={onOpen} onDragStart={onPointerDown} />
+            )))}
             {line !== null ? <NowLine pct={line} now={now} /> : null}
           </div>
+          {/* Drag ghost */}
+          {dragBlock && isDragging.current ? (
+            <div className="drag-ghost" style={{ top: dragY - 12 }}>
+              {dragBlock.task.title}
+            </div>
+          ) : null}
         </div>
         <aside className="agenda-unsched">
           <div className="au-head">no time scheduled</div>
@@ -186,7 +307,7 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
   }, [])
   const now = Date.now() + state.clockOffset
   const dayStart = dayStartOf(now)
-  const cols = dayColumns(state.tasks, dayStart)
+  const cols = dayColumns(state.tasks, dayStart, now)
   const line = nowPct(dayStart, now)
 
   return (
@@ -265,7 +386,7 @@ export function AgendaView({ onOpenTask }: { onOpenTask(id: string): void }) {
         </div>
         <span className="agenda-hint">
           {mode === 'day'
-            ? 'click a block to open it on the board'
+            ? 'scroll to pan · ctrl+scroll to zoom · drag blocks to reschedule'
             : '7-day outlook · blocks span to their due'}
         </span>
       </div>

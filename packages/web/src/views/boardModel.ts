@@ -22,18 +22,27 @@ export interface BoardNode {
   /** Some task in this subtree (incl. self) is blocked — display-layer
    * warning bubble per the contract (no core-side propagation). */
   subtreeBlocked: boolean
+  /** True when every direct child is 'done' (display-layer celebrate trigger). */
+  allChildrenDone: boolean
+  /** True when any node in this subtree (incl. self) is 'running'. */
+  subtreeRunning: boolean
 }
 
 export interface PlacedNode {
   node: BoardNode
   x: number
   y: number
+  /** 0-based index among siblings — drives stagger class (rj-stagger-N). */
+  childIndex: number
 }
 
 export interface BoardEdge {
   parentId: string
   childId: string
   d: string
+  /** Child connection point for SVG junction dot. */
+  x2: number
+  y2: number
 }
 
 export interface BoardLayout {
@@ -57,7 +66,7 @@ export function edgePath(x1: number, y1: number, x2: number, y2: number): string
 export function buildForest(tasks: Task[]): BoardNode[] {
   const nodes = new Map<string, BoardNode>()
   for (const t of tasks)
-    nodes.set(t.id, { task: t, children: [], depth: 0, subtreeBlocked: false })
+    nodes.set(t.id, { task: t, children: [], depth: 0, subtreeBlocked: false, allChildrenDone: false, subtreeRunning: false })
   const roots: BoardNode[] = []
   for (const t of tasks) {
     const n = nodes.get(t.id)!
@@ -69,11 +78,15 @@ export function buildForest(tasks: Task[]): BoardNode[] {
     n.depth = depth
     n.children.sort((a, b) => a.task.createdAt - b.task.createdAt)
     let blocked = n.task.status === 'blocked'
+    let running = n.task.status === 'running'
     for (const c of n.children) {
       walk(c, depth + 1)
       blocked = blocked || c.subtreeBlocked
+      running = running || c.subtreeRunning
     }
     n.subtreeBlocked = blocked
+    n.subtreeRunning = running
+    n.allChildrenDone = n.children.length > 0 && n.children.every((c) => c.task.status === 'done')
   }
   for (const r of roots) walk(r, 0)
   // orphan sweep: cycle members never got visited from a root — promote them
@@ -85,10 +98,11 @@ export function buildForest(tasks: Task[]): BoardNode[] {
     n.children.forEach(collect)
   }
   roots.forEach(collect)
+  const allNodes = Array.from(nodes.values())
   for (const t of tasks) {
     if (!reached.has(t.id)) {
       const n = nodes.get(t.id)!
-      for (const other of nodes.values())
+      for (const other of allNodes)
         other.children = other.children.filter((c) => c.task.id !== t.id)
       n.children = [] // drop in-cycle children too; they resurface as roots themselves
       roots.push(n)
@@ -139,7 +153,7 @@ export function layoutForest(forest: BoardNode[], collapsed: ReadonlySet<string>
       const childYs = n.children.map(place)
       y = (childYs[0]! + childYs[childYs.length - 1]!) / 2
     }
-    nodes.push({ node: n, x, y })
+    nodes.push({ node: n, x, y, childIndex: 0 })
     return y
   }
   for (const r of forest) place(r)
@@ -147,6 +161,21 @@ export function layoutForest(forest: BoardNode[], collapsed: ReadonlySet<string>
   // DOM order top-to-bottom (tab order + entrance stagger).
   nodes.sort((a, b) => a.y - b.y || a.x - b.x)
   const byId = new Map(nodes.map((p) => [p.node.task.id, p]))
+
+  // Assign childIndex: 0-based index among visible siblings sharing a parent.
+  const parentChildMap = new Map<string, PlacedNode[]>()
+  for (const p of nodes) {
+    const pid = p.node.task.parentId
+    if (pid && byId.has(pid)) {
+ const arr = parentChildMap.get(pid) ?? []
+      arr.push(p)
+      parentChildMap.set(pid, arr)
+    }
+  }
+  parentChildMap.forEach((siblings) =>
+    siblings.forEach((s, i) => (s.childIndex = i)),
+  )
+
   const edges: BoardEdge[] = []
   for (const p of nodes)
     for (const c of p.node.children) {
@@ -156,6 +185,8 @@ export function layoutForest(forest: BoardNode[], collapsed: ReadonlySet<string>
         parentId: p.node.task.id,
         childId: c.task.id,
         d: edgePath(p.x + CARD_W, p.y + CARD_H / 2, cp.x, cp.y + CARD_H / 2),
+        x2: cp.x,
+        y2: cp.y + CARD_H / 2,
       })
     }
 
