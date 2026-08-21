@@ -65,8 +65,10 @@ function withCard(ctx: ToolCtx, rawId: unknown, fn: (t: Task) => string): string
 }
 
 export function boardTools(): ToolEntry[] {
-  const boardSchema = (name: string, description: string, props: Record<string, { type: string; description: string; enum?: string[] }>, required: string[]): ToolEntry => ({
-    name, toolset: "kanban", writes: true, handler: (a, ctx) => boardDispatch(name, a, ctx),
+  // writes defaults to true (approval-gated under assist); the four pure-read
+  // variants opt out so assist-mode board inspection needs no approval round
+  const boardSchema = (name: string, description: string, props: Record<string, { type: string; description: string; enum?: string[] }>, required: string[], writes = true): ToolEntry => ({
+    name, toolset: "kanban", writes, handler: (a, ctx) => boardDispatch(name, a, ctx),
     schema: { name, description, parameters: { type: "object", properties: props, required } },
   });
   // single dispatch keeps every kanban variant visible in one switch
@@ -92,19 +94,19 @@ export function boardTools(): ToolEntry[] {
     { name: "todo", toolset: "todo", writes: true, handler: todo,
       schema: { name: "todo", description: "Lightweight personal todo list backed by the task board.", parameters: { type: "object", properties: { action: { type: "string", description: "What to do", enum: ["add", "list", "complete"] }, title: { type: "string", description: "Task title (action='add')" }, task_id: { type: "string", description: "Task id (action='complete'; unique prefix works)" } }, required: ["action"] } } },
     boardSchema("kanban_create", "Create a kanban card in a column (todo/doing/done/blocked).", { title: { type: "string", description: "Card title" }, column: { type: "string", description: "Column", enum: ["todo", "doing", "done", "blocked"] } }, ["title"]),
-    boardSchema("kanban_list", "Show the whole board grouped by column.", {}, []),
-    boardSchema("kanban_show", "Show one card with status and notes.", { card_id: { type: "string", description: "Card id (unique prefix works)" } }, ["card_id"]),
+    boardSchema("kanban_list", "Show the whole board grouped by column.", {}, [], false),
+    boardSchema("kanban_show", "Show one card with status and notes.", { card_id: { type: "string", description: "Card id (unique prefix works)" } }, ["card_id"], false),
     boardSchema("kanban_complete", "Mark a card done.", { card_id: { type: "string", description: "Card id" } }, ["card_id"]),
     boardSchema("kanban_block", "Mark a card blocked with a reason.", { card_id: { type: "string", description: "Card id" }, reason: { type: "string", description: "Why it is blocked" } }, ["card_id"]),
     boardSchema("kanban_unblock", "Reopen a blocked card.", { card_id: { type: "string", description: "Card id" } }, ["card_id"]),
     boardSchema("kanban_comment", "Append a note to a card.", { card_id: { type: "string", description: "Card id" }, text: { type: "string", description: "Note text" } }, ["card_id", "text"]),
-    boardSchema("kanban_heartbeat", "Signal this card's worker is still alive.", { card_id: { type: "string", description: "Card id" } }, ["card_id"]),
+    boardSchema("kanban_heartbeat", "Signal this card's worker is still alive.", { card_id: { type: "string", description: "Card id" } }, ["card_id"], false),
     boardSchema("kanban_request_review", "Ask the human to review a card.", { card_id: { type: "string", description: "Card id" } }, ["card_id"]),
     boardSchema("kanban_request_changes", "Report that a card needs rework.", { card_id: { type: "string", description: "Card id" }, notes: { type: "string", description: "What must change" } }, ["card_id"]),
     boardSchema("kanban_link", "Attach a link/note to a card (alias of kanban_attach).", { card_id: { type: "string", description: "Card id" }, url: { type: "string", description: "Link to attach" } }, ["card_id", "url"]),
     boardSchema("kanban_attach", "Attach a link to a card.", { card_id: { type: "string", description: "Card id" }, url: { type: "string", description: "Link" } }, ["card_id", "url"]),
     boardSchema("kanban_attach_url", "Attach a URL to a card.", { card_id: { type: "string", description: "Card id" }, url: { type: "string", description: "URL" } }, ["card_id", "url"]),
-    boardSchema("kanban_attachments", "List a card's attachments.", { card_id: { type: "string", description: "Card id" } }, ["card_id"]),
+    boardSchema("kanban_attachments", "List a card's attachments.", { card_id: { type: "string", description: "Card id" } }, ["card_id"], false),
   ];
 }
 
