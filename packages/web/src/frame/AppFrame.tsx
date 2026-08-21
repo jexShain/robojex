@@ -10,6 +10,7 @@ import { InputBar } from '../chat/InputBar'
 import { DetailsPanel } from '../details/DetailsPanel'
 import { Sidebar } from '../sidebar/Sidebar'
 import { useStore } from '../state/store'
+import { HudBar } from './HudBar'
 import type { ThemeApi } from '../state/theme'
 import { AgendaView } from '../views/AgendaView'
 import { ActivityFeed } from '../views/ActivityFeed'
@@ -197,6 +198,7 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
       </div>
 
       <div className="col-center">
+        <HudBar onCollapse={() => location.assign('/widget')} />
         {/* Chat pane (stream + input) is hidden — never unmounted — while
          * Board/Agenda show, so the transcript scroll and the input draft
          * survive round-trips. Input is chat-only (spec): invisible elsewhere. */}
