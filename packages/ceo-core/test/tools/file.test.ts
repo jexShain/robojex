@@ -1,6 +1,6 @@
 // packages/ceo-core/test/tools/file.test.ts
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileTools } from "../../src/tools/file.js";
@@ -35,6 +35,20 @@ describe("read_file", () => {
   it("binary extension is refused without reading", async () => {
     const r = await call("read_file", { path: join(dir, "x.png") });
     expect(r).toMatch(/binary|refus/i);
+  });
+  it("truncates giant lines and ensures progress", async () => {
+    const giantLine = "x".repeat(150_000); // 150K single line
+    writeFileSync(join(dir, "giant.txt"), giantLine + "\nsecond line\n");
+    const r = await call("read_file", { path: join(dir, "giant.txt") });
+    expect(r).toContain("... [line truncated]");
+    expect(r).not.toContain("second line"); // Should stop at first line
+    const nextMatch = r.match(/next_offset[=:]?\s*(\d+)/i);
+    expect(nextMatch).toBeTruthy();
+    const nextOffset = nextMatch ? parseInt(nextMatch[1], 10) : 0;
+    expect(nextOffset).toBeGreaterThan(1); // Should advance to line 2
+    // Verify we can read from next_offset
+    const r2 = await call("read_file", { path: join(dir, "giant.txt"), offset: nextOffset });
+    expect(r2).toContain("second line");
   });
 });
 
@@ -83,5 +97,17 @@ describe("search_files", () => {
     writeFileSync(join(dir, "node_modules", "pkg", "h.txt"), "needle");
     const r = await call("search_files", { pattern: "needle", target: "content", path: dir });
     expect(r).not.toContain("node_modules");
+  });
+  it("skips symlinks to avoid loops and duplicates", async () => {
+    const realDir = join(dir, "real");
+    mkdirSync(realDir);
+    writeFileSync(join(realDir, "needle.txt"), "needle content here");
+    symlinkSync(realDir, join(dir, "loop")); // Directory symlink
+    symlinkSync(join(realDir, "needle.txt"), join(dir, "link.txt")); // File symlink
+    const r = await call("search_files", { pattern: "needle", target: "content", path: dir });
+    // Should find the real file once, but not via symlink
+    const matches = r.match(/needle\.txt/g);
+    expect(matches).toBeTruthy();
+    expect(matches?.length).toBe(1); // Only one occurrence, not duplicated
   });
 });

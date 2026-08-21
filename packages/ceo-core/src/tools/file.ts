@@ -2,9 +2,8 @@
 // File tools — semantic port of hermes-agent tools/file_tools.py: same tool
 // names, same parameter shapes (path/offset/limit; old_string/new_string;
 // pattern/target), zero npm deps (node:fs only).
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, statSync, lstatSync, unlinkSync } from "node:fs";
 import { dirname, join, relative, extname } from "node:path";
-import { tmpdir } from "node:os";
 import type { ToolEntry, ToolCtx } from "./registry.js";
 
 const BINARY_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".zip", ".gz", ".tar", ".tgz", ".jar", ".exe", ".dll", ".so", ".dylib", ".bin", ".woff", ".woff2", ".ttf", ".eot", ".mp3", ".mp4", ".avi", ".mov", ".sqlite", ".db", ".pdf", ".doc", ".xls", ".ppt"]);
@@ -31,15 +30,30 @@ async function readFile(args: Record<string, unknown>, ctx: ToolCtx): Promise<st
   const offset = Math.max(1, Number(args.offset ?? 1));
   const limit = Math.min(2000, Math.max(1, Number(args.limit ?? 2000)));
   const lines = readFileSync(path, "utf8").split("\n");
+  // Remove phantom trailing newline if file ends with \n
+  if (lines.length > 0 && lines[lines.length - 1] === "" && lines.length > 1) lines.pop();
+  
+  if (lines.length === 0) return "(empty file)";
+  if (offset > lines.length) return `(EOF: offset ${offset} is past the last line ${lines.length})`;
   const slice: string[] = [];
   let chars = 0; let next: number | null = null;
   for (let i = offset - 1; i < Math.min(lines.length, offset - 1 + limit); i++) {
     const row = `${i + 1}|${lines[i]}`;
+    // If first line itself exceeds budget, truncate and ensure progress
+    if (i === offset - 1 && row.length > READ_CHAR_BUDGET) {
+      const truncated = row.slice(0, READ_CHAR_BUDGET - 30) + "... [line truncated]";
+      slice.push(truncated);
+      next = i + 2; // Next line to ensure progress
+      break;
+    }
     if (chars + row.length > READ_CHAR_BUDGET) { next = i + 1; break; }
     slice.push(row); chars += row.length + 1;
   }
-  if (offset - 1 + limit < lines.length && next === null) next = offset - 1 + limit + 1 > lines.length ? null : offset + slice.length;
-  const tail = next !== null ? `\n[next_offset: ${next} — ${lines.length} lines total]` : (offset + slice.length - 1 < lines.length ? `\n[next_offset: ${offset + slice.length}]` : "");
+  // Simplified next logic: set next only if we filled budget and more lines remain
+  if (next === null && offset - 1 + limit < lines.length && offset - 1 + slice.length < lines.length) {
+    next = offset + slice.length;
+  }
+  const tail = next !== null ? `\n[next_offset: ${next} — ${lines.length} lines total]` : "";
   return slice.join("\n") + tail;
 }
 
@@ -50,8 +64,13 @@ async function writeFile(args: Record<string, unknown>, ctx: ToolCtx): Promise<s
   mkdirSync(dirname(path), { recursive: true });
   // atomic write: temp file in the same dir, then rename over the target
   const tmp = join(dirname(path), `.rjtmp-${process.pid}-${Date.now()}`);
-  writeFileSync(tmp, content);
-  renameSync(tmp, path);
+  try {
+    writeFileSync(tmp, content);
+    renameSync(tmp, path);
+  } finally {
+    // Cleanup temp file if rename failed (ignore errors if already gone)
+    try { unlinkSync(tmp); } catch { /* temp already renamed or doesn't exist */ }
+  }
   return `wrote ${Buffer.byteLength(content)} bytes to ${path}`;
 }
 
@@ -72,9 +91,13 @@ async function patch(args: Record<string, unknown>, ctx: ToolCtx): Promise<strin
     return `error: old_string not found in ${path}${near}`;
   }
   if (count > 1 && args.replace_all !== true) return `error: old_string matches ${count} locations — add surrounding context lines to make it unique, or set replace_all=true`;
-  const out = args.replace_all === true ? src.split(oldS).join(newS) : src.replace(oldS, newS);
+  const out = src.split(oldS).join(newS);
   const tmp = join(dirname(path), `.rjtmp-${process.pid}-${Date.now()}`);
-  writeFileSync(tmp, out); renameSync(tmp, path);
+  try {
+    writeFileSync(tmp, out); renameSync(tmp, path);
+  } finally {
+    try { unlinkSync(tmp); } catch { /* temp already renamed or doesn't exist */ }
+  }
   const n = args.replace_all === true ? count : 1;
   return `patched ${path}: ${n} replacement${n > 1 ? "s" : ""}\n-${oldS.split("\n").slice(0, 3).join("\n-")}\n+${newS.split("\n").slice(0, 3).join("\n+")}`;
 }
@@ -87,7 +110,9 @@ function* walk(dir: string, budget: { n: number }): Generator<string> {
   for (const name of names) {
     if (budget.n <= 0) return;
     const p = join(dir, name);
-    let st; try { st = statSync(p); } catch { continue; }
+    let st; try { st = lstatSync(p); } catch { continue; }
+    // Skip symlinks to avoid loops and duplicates
+    if (st.isSymbolicLink()) continue;
     if (st.isDirectory()) { if (!SKIP_DIRS.has(name)) yield* walk(p, budget); }
     else { budget.n--; yield p; }
   }
