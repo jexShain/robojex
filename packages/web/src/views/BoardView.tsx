@@ -40,6 +40,39 @@ function Badges({ task, now }: { task: Task; now: number }) {
   )
 }
 
+const VERDICT_GLYPH: Record<string, string> = {
+  pass: '✓',
+  partial: '◐',
+  fail: '✗',
+  unchecked: '○',
+}
+
+/** Card-corner progress ring (20px SVG) + verdict badge. The ring fill arcs
+ * by task.progress; stroke color follows the verdict semantics:
+ * pass→green, partial→amber, fail→red, unchecked→gray. */
+function ProgressRing({ task }: { task: Task }) {
+  const verdict = (task.verdict ?? 'unchecked').toLowerCase()
+  const v = VERDICT_GLYPH[verdict] ? verdict : 'unchecked'
+  const progress = typeof task.progress === 'number' ? Math.max(0, Math.min(100, task.progress)) : 0
+  return (
+    <div className="bc-progress">
+      <svg className="ring" viewBox="0 0 36 36" width="20" height="20" aria-label={`progress ${progress}%`}>
+        <circle cx="18" cy="18" r="15.9" className="ring-bg" />
+        <circle
+          cx="18"
+          cy="18"
+          r="15.9"
+          className={`ring-fg v-${v}`}
+          strokeDasharray={`${progress} 100`}
+          pathLength={100}
+        />
+        <text x="18" y="21" textAnchor="middle" className="ring-txt">{progress}</text>
+      </svg>
+      <span className={`bc-verdict v-${v}`} title={`verdict: ${v}`}>{VERDICT_GLYPH[v]}</span>
+    </div>
+  )
+}
+
 /** One node card: status dot, title, sched/due badges, caret + child count.
  * The card selects the task (details panel); the caret button toggles. */
 function BoardCard({
@@ -90,6 +123,7 @@ function BoardCard({
     >
       <span className="bc-dot" />
       <span className="bc-title">{task.title}</span>
+      {typeof task.progress === 'number' || task.verdict ? <ProgressRing task={task} /> : null}
       <div className="bc-meta">
         <Badges task={task} now={now} />
         {hasKids ? (

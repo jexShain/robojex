@@ -161,8 +161,9 @@ export function nowPct(day0: number, now: number): number | null {
 
 // ---- Zoom ----
 
-/** Supported zoom levels: hours shown per screen-height. */
-export const ZOOM_LEVELS = [24, 12, 6, 3] as const
+/** Supported zoom levels: hours shown per screen-height. The 1h and 0.5h
+ * levels unlock minute-grid resolution (5-min snap + minute tick marks). */
+export const ZOOM_LEVELS = [24, 12, 6, 3, 1, 0.5] as const
 export type ZoomLevel = (typeof ZOOM_LEVELS)[number]
 
 /** Clamp zoom index. */
@@ -192,7 +193,17 @@ export function yToTime(
   return day0 + hour * HOUR_MS
 }
 
+/** Snap epoch ms to the nearest `minutes`-minute boundary. */
+export function snapTo(ms: number, minutes: number): number {
+  return Math.round(ms / (minutes * 60_000)) * (minutes * 60_000)
+}
+
+/** Snap granularity for a zoom level: ≤1h → 5-min, else 15-min. */
+export function snapMinutes(zoom: ZoomLevel): number {
+  return zoom <= 1 ? 5 : 15
+}
+
 /** Snap epoch ms to nearest 15-minute boundary. */
 export function snapTo15(ms: number): number {
-  return Math.round(ms / (15 * 60_000)) * (15 * 60_000)
+  return snapTo(ms, 15)
 }

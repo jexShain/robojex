@@ -101,3 +101,276 @@
 .hud-collapse:hover {
   background: var(--dsw-alias-button-ghost-active-hover, rgba(0, 0, 0, 0.06));
 }
+
+/* ============================================================
+   W3 Board progress ring + verdict badge
+   ============================================================ */
+
+/* Card-corner container: ring sits top-right, verdict glyph beside it. */
+.bc-progress {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Progress ring: 20px SVG. The fg circle rotates -90° so the arc starts
+ * at 12 o'clock; strokeDasharray + pathLength=100 maps progress% directly. */
+.ring {
+  display: block;
+  overflow: visible;
+}
+
+.ring-bg {
+  fill: none;
+  stroke: var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1));
+  stroke-width: 3;
+}
+
+.ring-fg {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  transition: stroke-dasharray var(--rj-duration-normal, 250ms) var(--rj-ease-out, cubic-bezier(0, 0, 0.2, 1));
+}
+
+/* Verdict semantic colors — green/amber/red/gray. Glow reserved for
+ * verdict semantics (constraint: glow only for status meaning). */
+.ring-fg.v-pass {
+  stroke: var(--dsw-alias-state-success-primary, #22c55e);
+  filter: drop-shadow(0 0 3px rgba(34, 197, 94, 0.5));
+}
+
+.ring-fg.v-partial {
+  stroke: var(--dsw-alias-state-warn-primary, #f59e0b);
+  filter: drop-shadow(0 0 3px rgba(245, 158, 11, 0.5));
+}
+
+.ring-fg.v-fail {
+  stroke: var(--dsw-alias-state-error-primary, #ef4444);
+  filter: drop-shadow(0 0 3px rgba(239, 68, 68, 0.5));
+}
+
+.ring-fg.v-unchecked {
+  stroke: var(--dsw-alias-label-tertiary, #999);
+}
+
+/* Ring center number — tiny monospace, dimmed. */
+.ring-txt {
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--dsw-alias-label-secondary, #666);
+  dominant-baseline: middle;
+}
+
+/* Stream entrance: fade-in + brief highlight flash (terminal "new line"). */
+.ts-entry.rj-animate-in,
+.activity-item.rj-animate-in {
+  animation: rj-stream-in var(--rj-duration-fast, 150ms) var(--rj-ease-out, cubic-bezier(0, 0, 0.2, 1)) both,
+             rj-line-flash 600ms var(--rj-ease-out, ease-out) both;
+}
+
+@keyframes rj-stream-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Verdict glyph badge — small, sits right of the ring. */
+.bc-verdict {
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+.bc-verdict.v-pass { color: var(--dsw-alias-state-success-primary, #22c55e); }
+.bc-verdict.v-partial { color: var(--dsw-alias-state-warn-primary, #f59e0b); }
+.bc-verdict.v-fail { color: var(--dsw-alias-state-error-primary, #ef4444); }
+.bc-verdict.v-unchecked { color: var(--dsw-alias-label-tertiary, #999); }
+
+/* Reserve card right padding so the ring never overlaps the meta row. */
+.board-card .bc-title {
+  padding-right: 52px;
+}
+
+/* ============================================================
+   W3 Agenda minute-level grid (≤1h zoom)
+   ============================================================ */
+
+/* 5-minute tick lines — finer than the hour/half rules. */
+.agenda-hour .ah-line.min {
+  border-top: 1px dotted var(--dsw-alias-border-l1, rgba(0, 0, 0, 0.04));
+  opacity: 0.5;
+}
+
+/* ============================================================
+   W3 Thinking/Activity terminal-style stream
+   ============================================================ */
+
+/* Monospace throughout the stream surfaces the "log/terminal" character. */
+.thinking-stream,
+.activity-feed {
+  font-family: var(--ds-font-family-code, monospace);
+}
+
+.ts-entry {
+  font-family: var(--ds-font-family-code, monospace);
+}
+
+@keyframes rj-line-flash {
+  0%   { background: var(--dsw-alias-state-business-primary, rgba(103, 158, 254, 0.18)); }
+  100% { background: transparent; }
+}
+
+
+@keyframes rj-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(1.4); }
+}
+
+/* Terminal cursor blink on the empty-state waiting line. */
+.ts-empty p::after {
+  content: '_';
+  animation: rj-blink 1s steps(1) infinite;
+}
+
+@keyframes rj-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* Activity feed (previously unstyled) — terminal log aesthetic. */
+.activity-feed {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.activity-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  flex: none;
+}
+
+.activity-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.activity-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-business-primary, #5686fe);
+  animation: rj-dot-pulse 2s ease-in-out infinite;
+}
+
+.activity-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 16px;
+  border-left: 2px solid transparent;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.activity-item:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.activity-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-top: 6px;
+}
+
+.activity-dot.green { background: var(--dsw-alias-state-success-primary, #22c55e); }
+.activity-dot.blue { background: var(--dsw-alias-state-business-primary, #5686fe); }
+.activity-dot.amber { background: var(--dsw-alias-state-warn-primary, #f59e0b); }
+.activity-dot.red { background: var(--dsw-alias-state-error-primary, #ef4444); }
+.activity-dot.gray { background: var(--dsw-alias-label-tertiary, #999); }
+
+.activity-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-item-title {
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-item-detail {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-item-time {
+  flex: none;
+  font-size: 10px;
+  color: var(--dsw-alias-label-dimmed);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.activity-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.fw-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.fw-badge.heroku { background: rgba(103, 158, 254, 0.15); color: var(--dsw-alias-state-business-primary, #5686fe); }
+.fw-badge.claude-code { background: rgba(245, 158, 11, 0.15); color: var(--dsw-alias-state-warn-primary, #f59e0b); }
+.fw-badge.codex { background: rgba(34, 197, 94, 0.15); color: var(--dsw-alias-state-success-primary, #22c55e); }
+.fw-badge.opencode { background: rgba(167, 139, 250, 0.15); color: #a78bfa; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-entry.rj-animate-in,
+  .activity-item.rj-animate-in,
+  .ts-empty p::after {
+    animation: none;
+  }
+}

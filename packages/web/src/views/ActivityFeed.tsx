@@ -21,7 +21,7 @@ function ItemRow({ item }: { item: ActivityItem }) {
  const fw = (item.type === 'spawn' || item.type === 'task_done') ? frameworkBadge(item.detail) : null
 
  return (
-   <div className="activity-item">
+   <div className="activity-item rj-animate-in">
      <div className={`activity-dot ${item.color}`} />
      <div className="activity-content">
        <div className="activity-item-title">

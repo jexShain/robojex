@@ -4,10 +4,16 @@
 import { describe, expect, test } from 'vitest'
 import {
   MIN_BLOCK_MS,
+  ZOOM_LEVELS,
   addDaysLocal,
   blocksForDay,
+  clampZoom,
   dayColumns,
+  hourHeight,
   nowPct,
+  snapMinutes,
+  snapTo,
+  snapTo15,
   unscheduledTasks,
 } from '../src/views/agendaModel'
 import { DAY_MS, dayStartOf } from '../src/views/timefmt'
@@ -93,5 +99,67 @@ describe('nowPct', () => {
     expect(nowPct(DAY0, DAY0 + 7.2 * 3_600_000)).toBeCloseTo(30)
     expect(nowPct(DAY0, DAY0 - 1)).toBeNull()
     expect(nowPct(DAY0, DAY0 + DAY_MS)).toBeNull()
+  })
+})
+
+describe('ZOOM_LEVELS', () => {
+  test('includes 1h and 0.5h minute-resolution levels', () => {
+    expect(ZOOM_LEVELS).toEqual([24, 12, 6, 3, 1, 0.5])
+    expect(ZOOM_LEVELS).toContain(1)
+    expect(ZOOM_LEVELS).toContain(0.5)
+  })
+})
+
+describe('hourHeight', () => {
+  test('scales inversely with zoom; 0.5h doubles the 1h height', () => {
+    const h1 = hourHeight(1)
+    const hHalf = hourHeight(0.5)
+    const h24 = hourHeight(24)
+    expect(h24).toBe(56) // BASE_HOUR_H at the widest level
+    expect(h1).toBe(24 * 56) // 1344
+    expect(hHalf).toBe(2 * h1) // 2688 — 0.5h is twice as tall per hour
+  })
+})
+
+describe('snapMinutes', () => {
+  test('≤1h zoom → 5-min, else 15-min', () => {
+    expect(snapMinutes(0.5)).toBe(5)
+    expect(snapMinutes(1)).toBe(5)
+    expect(snapMinutes(3)).toBe(15)
+    expect(snapMinutes(24)).toBe(15)
+  })
+})
+
+describe('snapTo', () => {
+  test('rounds to nearest N-minute boundary', () => {
+    const noon = DAY0 + 12 * 3_600_000
+    expect(snapTo(noon, 5)).toBe(noon)
+    expect(snapTo(noon + 2 * 60_000, 5)).toBe(noon) // 12:02 → 12:00
+    expect(snapTo(noon + 3 * 60_000, 5)).toBe(noon + 5 * 60_000) // 12:03 → 12:05
+    expect(snapTo(noon + 8 * 60_000, 15)).toBe(noon + 15 * 60_000) // 12:08 → 12:15
+  })
+
+  test('snapTo15 delegates to snapTo(ms, 15)', () => {
+    const t = DAY0 + 12 * 3_600_000 + 7 * 60_000
+    expect(snapTo15(t)).toBe(snapTo(t, 15))
+  })
+})
+
+describe('blocksForDay at 0.5h zoom', () => {
+  test('heightPct is zoom-independent; 0.5h placement math unchanged', () => {
+    // blocksForDay uses percent math (ms / DAY_MS), independent of zoom.
+    // A 30-min block at 09:00 is the same percent regardless of zoom level.
+    const [b] = blocksForDay([T({ scheduledAt: at(9) })], DAY0)
+    expect(b).toBeDefined()
+    expect(b!.topPct).toBeCloseTo((9 / 24) * 100)
+    expect(b!.heightPct).toBeCloseTo((MIN_BLOCK_MS / DAY_MS) * 100)
+  })
+})
+
+describe('clampZoom', () => {
+  test('clamps to the 0.5h..24h range via index', () => {
+    expect(clampZoom(-1)).toBe(0)
+    expect(clampZoom(ZOOM_LEVELS.length)).toBe(ZOOM_LEVELS.length - 1)
+    expect(clampZoom(3)).toBe(3)
   })
 })

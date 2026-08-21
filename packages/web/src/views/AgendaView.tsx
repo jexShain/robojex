@@ -16,8 +16,9 @@ import {
   type ZoomLevel,
   clampZoom,
   hourHeight,
+  snapMinutes,
+  snapTo,
   yToTime,
-  snapTo15,
 } from './agendaModel'
 import { DAY_MS, dayColHead, dayStartOf, fmtClock, fmtDayLabel, fmtStamp } from './timefmt'
 import { addDaysLocal } from './agendaModel'
@@ -180,7 +181,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
       const rect = el.getBoundingClientRect()
       const y = e.clientY - rect.top + el.scrollTop
       const trackH = 24 * h
-      const newTime = snapTo15(yToTime(y, trackH, day0, zoom, scrollHours))
+      const newTime = snapTo(yToTime(y, trackH, day0, zoom, scrollHours), snapMinutes(zoom))
       // TODO: emit reschedule via WebSocket — for now update visual only
       console.log(`[drag-reschedule] ${dragBlock.task.id} → ${new Date(newTime).toISOString()}`)
     }
@@ -204,6 +205,12 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
   const startHour = Math.floor(scrollHours)
   const hourLabels = Array.from({ length: visibleHours + 1 }, (_, i) => startHour + i).filter(h => h >= 0 && h < 24)
   const trackH = 24 * h
+
+  // Minute grid: only at ≤1h zoom, 5-min ticks within each hour (skip 0, the
+  // hour line already covers it). `h` is the per-hour pixel height.
+  const minuteTicks = zoom <= 1
+    ? Array.from({ length: 11 }, (_, i) => (i + 1) * 5)
+    : []
 
   return (
     <div className="agenda-body-wrap">
@@ -244,10 +251,13 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
         <div className="agenda-timeline" ref={scrollRef}>
           <div className="agenda-track" style={{ height: trackH }}>
             {hourLabels.map((hr) => (
-              <div className="agenda-hour" key={hr} style={{ top: hr * h }}>
+              <div className="agenda-hour" key={hr} style={{ top: hr * h, height: h }}>
                 <span className="ah-label">{String(hr).padStart(2, '0')}</span>
                 <span className="ah-line hour" />
-                <span className="ah-line half" />
+                {zoom > 1 ? <span className="ah-line half" style={{ top: h / 2 }} /> : null}
+                {minuteTicks.map((m) => (
+                  <span key={m} className="ah-line min" style={{ top: (m / 60) * h }} />
+                ))}
               </div>
             ))}
             {blocks.map((b) => (
