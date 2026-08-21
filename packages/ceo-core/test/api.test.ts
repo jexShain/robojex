@@ -350,7 +350,7 @@ test("decide reply action: chat_out(from jex) broadcast + recorded, no spawn, no
   await until(() => c.frames.some((f) => f.t === "budget")); // budget frame follows every cycle
 });
 
-test("decide starvation: empty content at full completion budget retries once at 16384 and applies the second answer", async () => {
+test("decide starvation: empty content at full completion budget retries once at double and applies the second answer", async () => {
   const rig = mkRig();
   const decideCalls: number[] = [];
   const chat = fakeLlmChat(async (slot, _msgs, opts) => {
@@ -374,7 +374,7 @@ test("decide starvation: empty content at full completion budget retries once at
   await loop.runOnce("chat: heavy structural request");
 
   await until(() => c.frames.some((f) => f.t === "chat_out" && f.from === "jex"));
-  expect(decideCalls).toEqual([8192, 16384]); // exactly one adaptive escalation
+  expect(decideCalls).toEqual([4096, 8192]); // exactly one adaptive escalation (balanced gear: 4096 → 2x)
   expect(c.frames.find((f) => f.t === "chat_out" && f.from === "jex")!.text).toBe("recovered");
 });
 
@@ -394,7 +394,7 @@ test("decide starvation: a short empty answer (api hiccup) does NOT trigger the 
   const api = makeApi(rig, loop);
   loop.setOutlet(api);
   await loop.runOnce("chat: hi"); // decide calls are settled before runOnce resolves
-  expect(decideCalls).toEqual([8192]); // no retry
+  expect(decideCalls).toEqual([4096]); // no retry (balanced gear budget)
 });
 
 

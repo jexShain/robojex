@@ -4,7 +4,7 @@
 // chat/mission/mode POSTs and the static web bundle; /api/events streams
 // hello/chat_out/tasks/cycle/mode/budget frames and accepts {t:"chat"}.
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, appendFileSync, statSync, createReadStream } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, statSync, createReadStream } from "node:fs";
 import { join, dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { networkInterfaces } from "node:os";
@@ -12,6 +12,10 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { TaskBoard, Task } from "./board.js";
 import type { BudgetGovernor } from "./budget.js";
 import type { LoopOutlet } from "./loop.js";
+import type { ChatService } from "./chat-service.js";
+import type { GearController } from "./gears.js";
+import { isGearId, GEAR_IDS } from "./gears.js";
+import type { LLMClient } from "./llm.js";
 
 export type ChatFrom = "user" | "jex" | "system";
 export interface ChatMessage { from: ChatFrom; ts: number; text: string; }
@@ -39,6 +43,9 @@ export interface ApiDeps {
   snapshotRuntime?: () => void;        // history hook fired before a mission append
   httpFactory?: () => Server;          // test seam: substitute the http server
   wssFactory?: () => WebSocketServer;  // test seam: substitute the ws server
+  chat?: ChatService;                  // direct-chat surface (conversations + SSE); absent = routes 503
+  gear?: GearController;               // autonomy gears; absent = gear routes 503, state.gear = balanced
+  llm?: LLMClient;                     // /api/models proxy; absent = 503
 }
 
 // Trimmed card shape the protocol ships, both in state and in tasks frames.
@@ -231,6 +238,7 @@ export class ApiServer implements LoopOutlet {
       budget: this.d.budget.snapshot(),
       mode: this.d.loop.mode?.() ?? "observe",
       tickN: this.d.loop.tickN?.() ?? 0,
+      gear: this.d.gear?.current() ?? "balanced",
       mission: read("MISSION.md"), rubric: read("RUBRIC.md"), memory: read("MEMORY.md"),
       chat: this.ring.slice(),
       version: this.d.version ?? VERSION,
@@ -241,15 +249,55 @@ export class ApiServer implements LoopOutlet {
     const origin = originGate(req);
     if (origin === null) { res.writeHead(403, { "content-type": "text/plain; charset=utf-8" }); res.end("forbidden origin"); return; }
     if (origin !== "") res.setHeader("access-control-allow-origin", origin); // echo exactly the origin just vetted
-    res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
+    res.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
     res.setHeader("access-control-allow-headers", "content-type");
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
     const path = new URL(req.url ?? "/", "http://local").pathname;
     if (path === "/api/state" && req.method === "GET") { json(res, 200, this.state()); return; }
     if (path === "/api/chat" && req.method === "POST") { await this.postChat(req, res); return; }
+    // -- direct-chat surface (ChatService) ---------------------------------
+    if (path === "/api/chat/stream" && req.method === "POST") { await this.postChatStream(req, res); return; }
+    if (path === "/api/chat/stop" && req.method === "POST") { await this.postChatStop(req, res); return; }
+    if (path === "/api/conversations" && req.method === "GET") {
+      if (!this.d.chat) { json(res, 503, { error: "chat not wired" }); return; }
+      json(res, 200, { conversations: this.d.chat.store.listConversations() });
+      return;
+    }
+    if (path === "/api/conversations" && req.method === "POST") { await this.postConversation(req, res); return; }
+    {
+      const m = path.match(/^\/api\/conversations\/([^/]+)$/);
+      const mm = path.match(/^\/api\/conversations\/([^/]+)\/messages$/);
+      const dm = path.match(/^\/api\/messages\/([^/]+)$/);
+      const seg = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
+      if (mm && req.method === "GET") {
+        if (!this.d.chat) { json(res, 503, { error: "chat not wired" }); return; }
+        const id = seg(mm[1]);
+        if (!this.d.chat.store.get(id)) { json(res, 404, { error: "conversation not found" }); return; }
+        json(res, 200, { messages: this.d.chat.store.listMessages(id) });
+        return;
+      }
+      if (m && req.method === "PATCH") { await this.patchConversation(req, res, seg(m[1])); return; }
+      if (m && req.method === "DELETE") {
+        if (!this.d.chat) { json(res, 503, { error: "chat not wired" }); return; }
+        json(res, 200, { ok: this.d.chat.store.delete(seg(m[1])) });
+        return;
+      }
+      if (dm && req.method === "DELETE") {
+        if (!this.d.chat) { json(res, 503, { error: "chat not wired" }); return; }
+        json(res, 200, { ok: this.d.chat.store.deleteMessage(seg(dm[1])) });
+        return;
+      }
+    }
+    // -- gears / models / usage --------------------------------------------
+    if (path === "/api/gear" && req.method === "GET") { this.getGear(res); return; }
+    if (path === "/api/gear" && req.method === "PUT") { await this.putGear(req, res); return; }
+    if (path === "/api/models" && req.method === "GET") { await this.getModels(res); return; }
+    if (path === "/api/usage" && req.method === "GET") { this.getUsage(req, res); return; }
     if (path === "/api/mission" && req.method === "POST") { await this.postMission(req, res); return; }
     if (path === "/api/task" && req.method === "POST") { await this.postTask(req, res); return; }
     if (path === "/api/mode" && req.method === "POST") { await this.postMode(req, res); return; }
+    if (path === "/api/settings" && req.method === "GET") { this.getSettings(res); return; }
+    if (path === "/api/settings" && req.method === "PUT") { await this.putSettings(req, res); return; }
     if (path.startsWith("/api/")) { json(res, 404, { error: "not found" }); return; }
     this.serveStatic(res, path);
   }
@@ -279,6 +327,94 @@ export class ApiServer implements LoopOutlet {
     // ≡ POST /api/chat: same tokenization and shortcut routing as WS {t:"chat"}
     await this.routeChat(body.text);
     json(res, 202, { ok: true });
+  }
+
+  // -- direct-chat surface ------------------------------------------------
+  // SSE: the body parses as JSON first (same cap/validation as every POST),
+  // then the chat service owns the response from headers to last frame.
+  private async postChatStream(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.d.chat) { json(res, 503, { error: "chat not wired" }); return; }
+    let body: Record<string, unknown>;
+    try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
+    await this.d.chat.handleStream(req, res, body);
+  }
+
+  private async postChatStop(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.d.chat) { json(res, 503, { error: "chat not wired" }); return; }
+    let conversationId: string | undefined;
+    try {
+      const body = await this.readJson(req);
+      if (typeof body.conversationId === "string" && body.conversationId.length > 0) conversationId = body.conversationId;
+    } catch { /* empty body also means stop-all */ }
+    json(res, 200, { ok: true, stopped: this.d.chat.stop(conversationId) });
+  }
+
+  private async postConversation(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.d.chat) { json(res, 503, { error: "chat not wired" }); return; }
+    let title: string | undefined;
+    try {
+      const body = await this.readJson(req);
+      if (typeof body.title === "string") title = body.title;
+    } catch { /* no/empty body: default title */ }
+    json(res, 201, this.d.chat.store.create(title));
+  }
+
+  private async patchConversation(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
+    if (!this.d.chat) { json(res, 503, { error: "chat not wired" }); return; }
+    let body: Record<string, unknown>;
+    try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
+    const patch: { title?: string; pinned?: boolean | 0 | 1; archived?: boolean | 0 | 1 } = {};
+    if (body.title !== undefined) {
+      if (typeof body.title !== "string" || body.title.trim().length === 0) { json(res, 400, { error: "title must be a non-empty string" }); return; }
+      patch.title = body.title;
+    }
+    for (const f of ["pinned", "archived"] as const) {
+      const v = body[f];
+      if (v === undefined) continue;
+      if (typeof v !== "boolean" && v !== 0 && v !== 1) { json(res, 400, { error: `${f} must be a boolean` }); return; }
+      patch[f] = v;
+    }
+    const updated = this.d.chat.store.update(id, patch);
+    if (!updated) { json(res, 404, { error: "conversation not found" }); return; }
+    json(res, 200, updated);
+  }
+
+  // -- gears / models / usage ----------------------------------------------
+  private gearBody(): { gear: string; gears: unknown[]; appliedTickMs: number } {
+    const g = this.d.gear!;
+    return { gear: g.current(), gears: g.list(), appliedTickMs: g.appliedTickMs() };
+  }
+
+  /** Hot switch through the wired controller + WS broadcast {t:'gear'}. The
+   *  loop retime rides GearController.onApply (index.ts wiring). */
+  private gearSwitch(gear: string): void {
+    this.d.gear!.set(gear);
+    this.broadcast({ t: "gear", gear: this.d.gear!.current() });
+  }
+
+  private getGear(res: ServerResponse): void {
+    if (!this.d.gear) { json(res, 503, { error: "gear not wired" }); return; }
+    json(res, 200, this.gearBody());
+  }
+
+  private async putGear(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.d.gear) { json(res, 503, { error: "gear not wired" }); return; }
+    let body: Record<string, unknown>;
+    try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
+    if (!isGearId(body.gear)) { json(res, 400, { error: `gear must be one of ${GEAR_IDS.join("|")}` }); return; }
+    try { this.gearSwitch(body.gear); } catch (e) { json(res, 500, { error: e instanceof Error ? e.message : "gear switch failed" }); return; }
+    json(res, 200, this.gearBody());
+  }
+
+  private async getModels(res: ServerResponse): Promise<void> {
+    if (!this.d.llm) { json(res, 503, { error: "llm not wired" }); return; }
+    json(res, 200, { models: await this.d.llm.listModels() });
+  }
+
+  private getUsage(req: IncomingMessage, res: ServerResponse): void {
+    if (!this.d.chat) { json(res, 503, { error: "chat not wired" }); return; }
+    const q = new URL(req.url ?? "/", "http://local").searchParams.get("days");
+    json(res, 200, { usage: this.d.chat.usage(q === null ? 7 : Number(q)) });
   }
 
   private async postMission(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -340,6 +476,65 @@ export class ApiServer implements LoopOutlet {
     json(res, 202, { ok: true });
   }
 
+  // -- Settings CRUD -----------------------------------------------------
+  // Safe subset of Config keys the UI may read/write. API key is masked on read.
+  private static SETTINGS_KEYS = ["baseUrl", "apiKey", "patrolModel", "decideModel",
+    "budgetMode", "dailyTokens", "tickMs", "takeoverUrl", "apiPort", "apiHost", "autonomyGear"] as const;
+
+  private getSettings(res: ServerResponse): void {
+    const cfgPath = join(this.d.runtimeDir, "config.json");
+    let cfg: Record<string, unknown> = {};
+    try { cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as Record<string, unknown>; } catch { /* first run: empty config */ }
+    const safe: Record<string, unknown> = {};
+    for (const k of ApiServer.SETTINGS_KEYS) {
+      if (k in cfg) safe[k] = k === "apiKey" ? maskKey(String(cfg[k])) : cfg[k];
+    }
+    json(res, 200, safe);
+  }
+
+  private async putSettings(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
+    for (const k of Object.keys(body)) {
+      if (!(ApiServer.SETTINGS_KEYS as readonly string[]).includes(k)) {
+        json(res, 400, { error: `unknown setting: ${k}` }); return;
+      }
+    }
+    for (const numKey of ["dailyTokens", "tickMs", "apiPort", "webhookPort"] as const) {
+      const v = body[numKey];
+      if (v !== undefined && v !== null && (typeof v !== "number" || !Number.isFinite(v))) {
+        json(res, 400, { error: `${numKey} must be a number` }); return;
+      }
+    }
+    for (const strKey of ["baseUrl", "apiKey", "patrolModel", "decideModel", "takeoverUrl", "apiHost", "budgetMode", "autonomyGear"] as const) {
+      const v = body[strKey];
+      if (v !== undefined && v !== null && typeof v !== "string") {
+        json(res, 400, { error: `${strKey} must be a string` }); return;
+      }
+    }
+    if (body.budgetMode && body.budgetMode !== "burn" && body.budgetMode !== "budgeted") {
+      json(res, 400, { error: "budgetMode must be burn|budgeted" }); return;
+    }
+    if (body.autonomyGear !== undefined && body.autonomyGear !== null && !isGearId(body.autonomyGear)) {
+      json(res, 400, { error: `autonomyGear must be one of ${GEAR_IDS.join("|")}` }); return;
+    }
+    const cfgPath = join(this.d.runtimeDir, "config.json");
+    let cfg: Record<string, unknown> = {};
+    try { cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as Record<string, unknown>; } catch { /* ok */ }
+    if (typeof body.apiKey === "string" && body.apiKey.startsWith("***")) {
+      delete body.apiKey;
+    }
+    Object.assign(cfg, body);
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n");
+    // autonomyGear hot-applies (tick retime + WS broadcast) instead of waiting
+    // for a restart; gearSwitch re-persists the same value harmlessly
+    let note = "Restart ceo-core to apply changes";
+    if (isGearId(body.autonomyGear) && this.d.gear && this.d.gear.current() !== body.autonomyGear) {
+      try { this.gearSwitch(body.autonomyGear); note = `gear switched to ${body.autonomyGear}`; } catch { /* config already written */ }
+    }
+    json(res, 200, { ok: true, note });
+  }
+
   private serveStatic(res: ServerResponse, pathname: string): void {
     const root = this.root;
     if (!root) { json(res, 404, { error: "not found" }); return; }
@@ -365,6 +560,11 @@ export class ApiServer implements LoopOutlet {
     });
     createReadStream(target).pipe(res);
   }
+}
+
+function maskKey(key: string): string {
+  if (key.length <= 8) return "***";
+  return key.slice(0, 4) + "***" + key.slice(-4);
 }
 
 function fileStat(p: string): { size: number } | null {

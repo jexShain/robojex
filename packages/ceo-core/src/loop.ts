@@ -11,6 +11,7 @@ import type { Auditor } from "./auditor.js";
 import type { BudgetGovernor } from "./budget.js";
 import { manualsBlock } from "./skills.js";
 import { taskView, type ChatFrom } from "./api.js";
+import { getGearDef, loopPrompt, type GearId } from "./gears.js";
 import type { ToolScout } from "./toolscout.js";
 import type { TentacleManager } from "./tentacles.js";
 import type { ToolManager } from "./tools/manager.js";
@@ -81,6 +82,37 @@ export class SchedulerLoop {
 
   // takeover mode as last reported by takeoverd; observe is the safe default
   private modeNow: "observe" | "assist" | "full" = "observe";
+  // autonomy gear: dormant stops ticking entirely; eco thins patrol to every
+  // 5th tick; higher gears retime faster and buy bigger decide budgets
+  private gearNow: GearId = "balanced";
+  private tickMsNow = 60_000;
+  private ticking = false;
+
+  gear(): GearId { return this.gearNow; }
+  currentTickMs(): number { return this.tickMsNow; }
+
+  /** Hot gear switch (GearController.set → onApply): swaps the prompt profile
+   *  and retimes the tick without restarting the loop or the takeover link. */
+  setGear(gear: string): void {
+    const def = getGearDef(gear);
+    if (!def) { console.warn(`[loop] unknown gear ${JSON.stringify(gear)}: ignored`); return; }
+    this.gearNow = def.id;
+    this.setTickMs(def.tickMs);
+  }
+
+  /** Retime the tick interval: 0 stops ticking (dormant); while stopped
+   *  (before start / after stop) only the default is recorded. */
+  setTickMs(ms: number): void {
+    const next = Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0;
+    this.tickMsNow = next;
+    clearInterval(this.timer);
+    this.timer = undefined;
+    if (next > 0 && this.ticking) {
+      this.timer = setInterval(() => { this.pumpGantt(); this.push("tick"); }, next);
+      this.timer.unref();
+    }
+  }
+
   // gantt pump idempotence: tasks already surfaced by due_spawn/unlocked stay
   // quiet until their status changes; lost on restart, re-emit is idempotent
   private ganttDispatched = new Set<string>();
@@ -207,8 +239,16 @@ export class SchedulerLoop {
     let cost = 0;
     let actions: unknown[] = [];
     try {
+      const gdef = getGearDef(this.gearNow)!;
+      if (gdef.id === "dormant") return; // jex asleep: no patrol, no decide; direct chat still streams
       const gate = this.d.budget.gate();
       if (gate === "observe-only") return; // spend nothing, observe silently
+      // eco thins the patrol cadence: pure tick wakes skip unless this is the
+      // Nth tick; real events (chat, gantt, tool results) always pass through
+      const parts = eventSummary.split(";").map((s) => s.trim()).filter(Boolean);
+      const pureTick = parts.length > 0 && parts.every((p) => p === "tick");
+      if (pureTick && gdef.patrolEvery > 0 && this.tickCount % gdef.patrolEvery !== 0) return;
+      const gearPrefix = loopPrompt(this.gearNow);
       const read = (f: string) => { try { return readFileSync(join(this.d.runtimeDir, f), "utf8"); } catch { return `(${f} missing)`; } };
       const context = this.d.ctx.build({
         mission: read("MISSION.md"), rubric: read("RUBRIC.md"), memory: read("MEMORY.md"),
@@ -216,7 +256,7 @@ export class SchedulerLoop {
       });
       // layer 1: cheap patrol triage
       const p = await this.d.llm.chat("patrol", [
-        { role: "system", content: "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: always act on it. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, or needs its acceptance checked — always act)." },
+        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: always act on it. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, or needs its acceptance checked — always act)." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
       let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
@@ -230,16 +270,17 @@ export class SchedulerLoop {
       const builtin = this.d.builtinTools?.schemasBlock() ?? ""; // builtin tool schemas ride it too
       const agentsBlock = this.d.orchestrator.getRegistry()?.toPromptBlock() ?? "";
       const decideMessages = [
-        { role: "system", content: `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)","accept":"acceptance criteria (optional)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tool_call","tool":"<name from BUILTIN TOOLS>","args":{}} | {"type":"verify","task_id":"...","progress":0-100,"verdict":"pass|partial|fail","note":"one-line evidence"} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. tool_call runs one builtin tool directly (see # BUILTIN TOOLS in the context): small file, terminal, memory, or board work needs no sub-agent, and the result arrives as an event on the next wake. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself. You are an orchestrator and acceptance judge, never a worker: ALL productive work goes to coding agents via spawn; builtin tools are for LOOKING (verifying outputs, checking state), never for building.` },
+        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)","accept":"acceptance criteria (optional)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tool_call","tool":"<name from BUILTIN TOOLS>","args":{}} | {"type":"verify","task_id":"...","progress":0-100,"verdict":"pass|partial|fail","note":"one-line evidence"} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. tool_call runs one builtin tool directly (see # BUILTIN TOOLS in the context): small file, terminal, memory, or board work needs no sub-agent, and the result arrives as an event on the next wake. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself. You are an orchestrator and acceptance judge, never a worker: ALL productive work goes to coding agents via spawn; builtin tools are for LOOKING (verifying outputs, checking state), never for building.` },
         { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") + (builtin ? `\n\n${builtin}` : "") },
       ] satisfies ChatMsg[];
-      let dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: 8192 }); // big contexts (tools+tentacles inventories) starve reasoning models below this
+      const decideMax = gdef.decideMaxTokens; // the gear buys the decide budget
+      let dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: decideMax }); // big contexts (tools+tentacles inventories) starve reasoning models below this
       // reasoning models can burn the whole completion budget on reasoning and
       // emit no content; one adaptive retry at double budget recovers those
       // cycles instead of silently no-opping them
-      if (dec.content.length === 0 && dec.usage.completionTokens >= 8192) {
-        console.warn(`[loop] decide starved (completion=${dec.usage.completionTokens}) — retrying at 16384`);
-        dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: 16384 });
+      if (dec.content.length === 0 && dec.usage.completionTokens >= decideMax) {
+        console.warn(`[loop] decide starved (completion=${dec.usage.completionTokens}) — retrying at ${decideMax * 2}`);
+        dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: decideMax * 2 });
       }
       let parsed: any; try { parsed = JSON.parse(dec.content); } catch {
         console.warn(`[loop] decide content unparseable (len=${dec.content.length}, completion=${dec.usage.completionTokens}) — treating as no-op`);
@@ -533,16 +574,21 @@ export class SchedulerLoop {
     return booked;
   }
 
-  start(tickMs = 60_000): void {
+  start(tickMs?: number): void {
     this.stop();
     this.stopped = false;
+    this.ticking = true;
     this.backoffMs = this.d.reconnectBaseMs ?? 1000;
     this.connectWs();
-    this.timer = setInterval(() => { this.pumpGantt(); this.push("tick"); }, tickMs);
-    this.timer.unref();
+    if (tickMs !== undefined) this.tickMsNow = tickMs > 0 ? Math.floor(tickMs) : 0; // explicit override (cfg.tickMs) wins at boot
+    if (this.tickMsNow > 0) {
+      this.timer = setInterval(() => { this.pumpGantt(); this.push("tick"); }, this.tickMsNow);
+      this.timer.unref();
+    }
   }
   stop(): void {
     this.stopped = true; // first: late socket events must not reschedule anything
+    this.ticking = false;
     clearInterval(this.timer);
     this.timer = undefined;
     clearTimeout(this.reconnectTimer);

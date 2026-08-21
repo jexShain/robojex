@@ -12,7 +12,7 @@ test("seedRuntimeFiles writes seed docs, runs dir, and the runtime .gitignore; n
   const dir = mkdtempSync(join(tmpdir(), "robojex-index-"));
   writeFileSync(join(dir, "MEMORY.md"), "custom memory\n"); // pre-existing content must survive
   seedRuntimeFiles(dir);
-  expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe("config.json\nboard.sqlite*\ntraces.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\nTENTACLES.md\ntentacles/\ntentacle-manuals/\n");
+  expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe("config.json\nboard.sqlite*\ntraces.sqlite*\nchat.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\nTENTACLES.md\ntentacles/\ntentacle-manuals/\n");
   expect(readFileSync(join(dir, "MISSION.md"), "utf8")).toContain("# MISSION");
   expect(readFileSync(join(dir, "RUBRIC.md"), "utf8")).toContain("# RUBRIC");
   expect(readFileSync(join(dir, "MEMORY.md"), "utf8")).toBe("custom memory\n");

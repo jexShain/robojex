@@ -15,11 +15,14 @@ import { SchedulerLoop, DEFAULT_SKILLS_DIR, type LoopDeps } from "./loop.js";
 import { ToolScout } from "./toolscout.js";
 import { TentacleManager } from "./tentacles.js";
 import { ApiServer } from "./api.js";
+import { ChatStore } from "./chat-store.js";
+import { ChatService } from "./chat-service.js";
+import { GearController, getGearDef } from "./gears.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { ToolManager, P1_TOOLS } from "./tools/manager.js";
 
 // runtime state that must never enter git history (config.json holds the API key)
-export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\nTENTACLES.md\ntentacles/\ntentacle-manuals/\n";
+export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\nchat.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\nTENTACLES.md\ntentacles/\ntentacle-manuals/\n";
 const SEED_DOCS = ["MISSION.md", "RUBRIC.md", "MEMORY.md"] as const;
 
 export function seedRuntimeFiles(runtimeDir: string): void {
@@ -92,6 +95,7 @@ interface Config {
   baseUrl?: string; apiKey?: string; patrolModel?: string; decideModel?: string;
   budgetMode?: "burn" | "budgeted"; dailyTokens?: number; tickMs?: number; takeoverUrl?: string;
   webhookPort?: number; apiPort?: number; apiHost?: string;
+  autonomyGear?: string; // dormant|eco|balanced|focused|turbo (GearController validates)
 }
 
 // The loop surface main() needs; SchedulerLoop satisfies it structurally and
@@ -135,6 +139,18 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
   }
   const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
   const auditor = new Auditor({ runtimeDir });
+  // direct-chat surface + autonomy gears: one gear active process-wide; every
+  // switch persists to config.json, retimes the loop and broadcasts on the WS
+  const chatStore = new ChatStore(join(runtimeDir, "chat.sqlite"));
+  const gearController = new GearController({
+    runtimeDir,
+    initial: cfg.autonomyGear,
+    onApply: (g) => { loopRef?.setGear(g.id); }, // WS broadcast is the api layer's job (ApiServer.gearSwitch)
+  });
+  const chatService = new ChatService({
+    store: chatStore, llm, gear: gearController, budget, runtimeDir,
+    onAgentEvent: (text) => { loop.push(text); }, // mode:'agent' chats also reach the orchestration loop
+  });
   // builtin capability layer: hermes-core tools bridged onto jex subsystems.
   // takeoverSend/chatOut need the loop/api objects while both of those need
   // this manager — mutable refs close the cycle, filled once they exist.
@@ -168,9 +184,10 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
   const api = new ApiServer({
     port: cfg.apiPort ?? 7620, host: cfg.apiHost, board, budget, runtimeDir, loop,
     snapshotRuntime: () => auditor.snapshotRuntime(),
+    chat: chatService, gear: gearController, llm,
     ...(existsSync(webDir) ? { webDir } : {}),
   });
-  if (loop instanceof SchedulerLoop) { loopRef = loop; loop.setOutlet(api); } // jex replies + cycle/tasks/mode frames ride the api broadcast
+  if (loop instanceof SchedulerLoop) { loopRef = loop; loop.setOutlet(api); loop.setGear(gearController.current()); } // jex replies + cycle/tasks/mode frames ride the api broadcast; gear retimes the tick
   apiRef = api;
   const apiHostLog = cfg.apiHost ?? "127.0.0.1";
   void api.start()
@@ -193,7 +210,11 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
       if (srv) console.log(`[ceo] tentacle webhook server on port ${srv.port}`);
     }
   })().catch((e: unknown) => console.error(`[ceo] tentacles failed: ${e instanceof Error ? e.message : String(e)}`));
-  loop.start(Number(cfg.tickMs) || 60_000); // jex must schedule: without this it never ticks
+  // jex must schedule: without this it never ticks. An explicit cfg.tickMs
+  // wins at boot (operator override); otherwise the gear defines the cadence
+  // (dormant = 0 = no interval, chat still answers).
+  const gearTick = getGearDef(gearController.current())?.tickMs ?? 60_000;
+  loop.start(Number(cfg.tickMs) > 0 ? Number(cfg.tickMs) : gearTick);
   return { loop, api, stop: makeShutdownHandler(loop, orchestrator, deps.exit, api) };
 }
 
