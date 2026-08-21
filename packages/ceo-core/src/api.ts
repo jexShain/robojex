@@ -23,6 +23,7 @@ export interface ApiLoopHandle {
   push(event: string): void;
   sendCtrl?(frame: Record<string, unknown>): boolean; // false/absent: takeover link down
   mode?(): string;
+  resolveToolApproval?(id: string, ok: boolean): Promise<string | null>; // settles a pending assist-mode tool write
 }
 
 export interface ApiDeps {
@@ -253,6 +254,15 @@ export class ApiServer implements LoopOutlet {
     let body: Record<string, unknown>;
     try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
     if (!this.validText(body.text)) { json(res, 400, { error: "text must be a non-empty string of at most 16KB" }); return; }
+    // approval shorthand: "approve <id>" / "deny <id>" resolves a pending
+    // assist-mode write-class tool call instead of queueing as chat
+    const m = /^(approve|deny)\s+([0-9a-f]{8})\b/i.exec(body.text.trim());
+    if (m && this.d.loop.resolveToolApproval) {
+      await this.d.loop.resolveToolApproval(m[2], m[1].toLowerCase() === "approve");
+      this.chatOut("system", `approval ${m[1].toLowerCase()}d: ${m[2]}`);
+      json(res, 202, { ok: true });
+      return;
+    }
     this.handleChat(body.text);
     json(res, 202, { ok: true });
   }

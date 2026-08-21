@@ -11,10 +11,12 @@ import { AgentOrchestrator } from "./orchestrator.js";
 import { AgentRegistry, BUILTIN_AGENTS } from "./agent-registry.js";
 import { Auditor } from "./auditor.js";
 import { BudgetGovernor, type BudgetMode } from "./budget.js";
-import { SchedulerLoop, type LoopDeps } from "./loop.js";
+import { SchedulerLoop, DEFAULT_SKILLS_DIR, type LoopDeps } from "./loop.js";
 import { ToolScout } from "./toolscout.js";
 import { TentacleManager } from "./tentacles.js";
 import { ApiServer } from "./api.js";
+import { ToolRegistry } from "./tools/registry.js";
+import { ToolManager, P1_TOOLS } from "./tools/manager.js";
 
 // runtime state that must never enter git history (config.json holds the API key)
 export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\nTENTACLES.md\ntentacles/\ntentacle-manuals/\n";
@@ -133,6 +135,23 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
   }
   const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
   const auditor = new Auditor({ runtimeDir });
+  // builtin capability layer: hermes-core tools bridged onto jex subsystems.
+  // takeoverSend/chatOut need the loop/api objects while both of those need
+  // this manager — mutable refs close the cycle, filled once they exist.
+  let loopRef: SchedulerLoop | undefined;
+  let apiRef: ApiServer | undefined;
+  const toolRegistry = new ToolRegistry();
+  for (const e of P1_TOOLS()) toolRegistry.register(e);
+  const builtinTools = new ToolManager({
+    registry: toolRegistry,
+    ctx: {
+      runtimeDir, board,
+      spawn: (framework, prompt) => orchestrator.spawn(framework, prompt),
+      skillsDir: DEFAULT_SKILLS_DIR,
+      takeoverSend: (frame) => { loopRef?.sendCtrl(frame); },
+      chatOut: (from, text) => { apiRef?.chatOut(from, text); },
+    },
+  });
   const loopDeps: LoopDeps = {
     llm, board, ctx: new ContextAssembler(),
     orchestrator, auditor,
@@ -140,6 +159,7 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
     takeoverUrl: cfg.takeoverUrl ?? "ws://127.0.0.1:7600",
     scout,
     tentacles,
+    builtinTools,
   };
   const loop = deps.loopFactory ? deps.loopFactory(loopDeps) : new SchedulerLoop(loopDeps);
   // operator surface: HTTP+WS api (default :7620); the web bundle is served
@@ -150,7 +170,8 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
     snapshotRuntime: () => auditor.snapshotRuntime(),
     ...(existsSync(webDir) ? { webDir } : {}),
   });
-  if (loop instanceof SchedulerLoop) loop.setOutlet(api); // jex replies + cycle/tasks/mode frames ride the api broadcast
+  if (loop instanceof SchedulerLoop) { loopRef = loop; loop.setOutlet(api); } // jex replies + cycle/tasks/mode frames ride the api broadcast
+  apiRef = api;
   const apiHostLog = cfg.apiHost ?? "127.0.0.1";
   void api.start()
     .then(() => console.log(`[ceo] api on http://${apiHostLog}:${api.port}`))

@@ -13,6 +13,7 @@ import { manualsBlock } from "./skills.js";
 import { taskView, type ChatFrom } from "./api.js";
 import type { ToolScout } from "./toolscout.js";
 import type { TentacleManager } from "./tentacles.js";
+import type { ToolManager } from "./tools/manager.js";
 import WebSocket from "ws";
 
 // Minimal socket surface the loop needs; ws's WebSocket satisfies it structurally.
@@ -43,13 +44,14 @@ export interface LoopDeps {
   skillsDir?: string;                   // repo-root skills/ by default
   scout?: ToolScout | null;             // autonomous tool inventory; absent = wiring off
   tentacles?: TentacleManager | null;   // external connector system; absent = wiring off
+  builtinTools?: ToolManager | null;    // direct-capability layer: tool_call actions
   wsFactory?: (url: string) => WsLike;   // test seam: substitute sockets
   outlet?: LoopOutlet | null;               // api broadcast; absent = headless (frames dropped)
   reconnectBaseMs?: number;              // test seam: first reconnect delay
 }
 
 // packages/ceo-core/{src,dist} -> repo root -> skills/; under a pkg binary
-const DEFAULT_SKILLS_DIR = process.env.ROBOJEX_SKILLS_DIR
+export const DEFAULT_SKILLS_DIR = process.env.ROBOJEX_SKILLS_DIR
   ?? (import.meta.url ? join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "skills") : join(dirname(process.execPath), "skills"));
 
 // Verified tool names that are also everyday English words: attaching their
@@ -81,6 +83,17 @@ export class SchedulerLoop {
     if (!this.ws || this.ws.readyState !== WS_OPEN) return false;
     this.ws.send(JSON.stringify(frame));
     return true;
+  }
+
+  // chat-driven approval resolution: "approve <id>" / "deny <id>" from the
+  // human settles a pending assist-mode write-class tool call. The current
+  // gate rides along: a mode drop to observe since the call was queued must
+  // refuse the write even after a yes (Task 6 semantics).
+  async resolveToolApproval(id: string, ok: boolean): Promise<string | null> {
+    if (!this.d.builtinTools) return null;
+    const r = await this.d.builtinTools.resolveApproval(id, ok, this.modeNow);
+    if (r !== null) this.push(`tool approval ${id} ${ok ? "approved" : "denied"}: ${r}`);
+    return r;
   }
 
   // wire the api broadcast after construction (the api itself needs this loop)
@@ -152,10 +165,11 @@ export class SchedulerLoop {
       const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
       const tools = this.d.scout?.readToolsBlock() ?? ""; // inventory tail: only the decide pass pays for it
       const tentacles = this.d.tentacles?.listBlock() ?? ""; // connector inventory rides the same tail
+      const builtin = this.d.builtinTools?.schemasBlock() ?? ""; // builtin tool schemas ride it too
       const agentsBlock = this.d.orchestrator.getRegistry()?.toPromptBlock() ?? "";
       const decideMessages = [
-        { role: "system", content: `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
-        { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") },
+        { role: "system", content: `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tool_call","tool":"<name from BUILTIN TOOLS>","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. tool_call runs one builtin tool directly (see # BUILTIN TOOLS in the context): small file, terminal, memory, or board work needs no sub-agent, and the result arrives as an event on the next wake. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
+        { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") + (builtin ? `\n\n${builtin}` : "") },
       ] satisfies ChatMsg[];
       let dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: 8192 }); // big contexts (tools+tentacles inventories) starve reasoning models below this
       // reasoning models can burn the whole completion budget on reasoning and
@@ -291,6 +305,20 @@ export class SchedulerLoop {
             // runtime/tentacles/ while this cycle ran — pick them up now
             // instead of waiting for the next boot's loadAll
             await this.d.tentacles.reload();
+          } else if (a.type === "tool_call") {
+            if (typeof a.tool !== "string" || a.tool.length === 0) throw new Error("invalid tool_call action: tool must be a non-empty string");
+            if (!this.d.builtinTools) throw new Error("tool_call action: no builtin tool manager wired");
+            const args = (a.args && typeof a.args === "object" && !Array.isArray(a.args)) ? a.args as Record<string, unknown> : {};
+            const name = a.tool;
+            // fire-and-forget like tentacle_call: the result rides the log +
+            // the next wake's event queue; observe mode is refused inside the
+            // manager, and assist-mode writes land in the approval queue
+            void this.d.builtinTools.call(name, args, this.modeNow).then((r) => {
+              console.log(`[ceo] tool ${name} -> ${r.slice(0, 200)}`);
+              this.push(`tool ${name} -> ${r}`);
+            }).catch((err: unknown) => {
+              console.error(`[ceo] tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`);
+            });
           }
         } catch (e) {
           // one bad action must not kill the rest of the wake: block its task (if any) and move on
