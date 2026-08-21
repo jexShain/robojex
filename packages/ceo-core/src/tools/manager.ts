@@ -14,13 +14,13 @@ import { boardTools, miscBridges } from "./bridges.js";
 
 export const OUT_LIMIT = 8192;
 
-// hermes file_safety list + jex's own secret store
+// hermes file_safety list + jex's own secret store. The runtime config is
+// matched by exact equality against <runtimeDir>/config.json below — a bare
+// config.json$ regex would refuse every project's own config file.
 const SENSITIVE = [
   /(^|[\\/])\.git-credentials$/i,
   /(^|[\\/])\.aws[\\/]credentials$/i,
   /(^|[\\/])\.ssh[\\/]/i,
-  /(^|[\\/])runtime[\\/]config\.json$/i,
-  /(^|[\\/])config\.json$/i,
   /(^|[\\/])\.env[^\\/]*$/i,
 ];
 
@@ -73,12 +73,15 @@ export class ToolManager {
 
   // sensitive-path scan: any string arg that names a forbidden file is refused
   private guardPaths(name: string, args: Record<string, unknown>): string | null {
+    const runtimeCfg = resolve(this.opts.ctx.runtimeDir, "config.json");
     for (const v of Object.values(args)) {
       if (typeof v !== "string") continue;
       // Check both original and normalized forms against sensitive patterns
       const normalized = this.normalizePath(v);
       for (const check of [v, normalized]) {
-        if (SENSITIVE.some((rx) => rx.test(check))) return `blocked sensitive path: ${v} (tool ${name} refused; secrets are off-limits)`;
+        if (SENSITIVE.some((rx) => rx.test(check)) || check === runtimeCfg) {
+          return `blocked sensitive path: ${v} (tool ${name} refused; secrets are off-limits)`;
+        }
       }
     }
     return null;
