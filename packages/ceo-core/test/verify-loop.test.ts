@@ -111,3 +111,16 @@ describe("verify_due pump", () => {
     expect(events.filter((e) => e.startsWith("verify_due:"))).toHaveLength(0);
   });
 });
+
+describe("scheduled spawn deferral", () => {
+  it("a future scheduledAt spawn stays todo — the pump owns its launch", async () => {
+    const later = Date.now() + 120_000;
+    const { loop } = rig(() => JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "later job", prompt: "placeholder", scheduledAt: new Date(later).toISOString() }] }));
+    await loop.runOnce("chat: schedule it");
+    await new Promise((r) => setTimeout(r, 400));
+    const t = board.list().find((x) => x.title === "later job");
+    expect(t).toBeTruthy();
+    expect(t!.status).toBe("todo"); // NOT running: deferred to the gantt pump
+    expect(events.some((e) => e.startsWith("spawn_deferred:"))).toBe(true);
+  });
+});

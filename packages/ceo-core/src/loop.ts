@@ -261,6 +261,12 @@ export class SchedulerLoop {
               if (!promptOk) problems.push("prompt must be a non-empty string");
               throw new Error(`invalid spawn action: ${problems.join("; ")}`);
             }
+            // minute-Gantt: a future-scheduled spawn only lands on the board;
+            // the pump's due_spawn event re-wakes jex to launch it on time
+            if ((scheduledAt ?? 0) > Date.now()) {
+              console.log(`[ceo] spawn deferred to ${new Date(scheduledAt as number).toISOString()}: ${t.title}`);
+              this.push(`spawn_deferred: ${t.title} until ${new Date(scheduledAt as number).toISOString()}`);
+            } else {
             this.d.board.update(t.id, { status: "running" });
             this.emitTasks();
             // background: the cycle moves on to the next action; the card settles
@@ -289,6 +295,7 @@ export class SchedulerLoop {
               // not escape as an unhandled rejection and take the process down
               console.error(`[ceo] spawn handler crashed: ${err instanceof Error ? err.message : String(err)}`);
             });
+            }
           } else if (a.type === "mission_update") {
             if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid mission_update action: text must be a non-empty string");
             // snapshot the pre-edit docs first: git history keeps the old
@@ -437,7 +444,7 @@ export class SchedulerLoop {
   // instant (naive ISO parses as local per spec).
   private spawnTime(v: unknown, field: "scheduledAt" | "dueAt"): number | undefined {
     if (v === undefined || v === null || v === "") return undefined;
-    const ms = typeof v === "string" ? Date.parse(v.endsWith("Z") ? v.slice(0, -1) : v) : Number.NaN;
+    const ms = typeof v === "string" ? Date.parse(v) : Number.NaN; // Z-suffixed parses as UTC, bare as local — never strip Z (that shifted UTC into local, 8h off)
     if (!Number.isFinite(ms)) {
       console.warn(`[loop] spawn ${field} ignored: not an ISO 8601 timestamp (${JSON.stringify(v)})`);
       return undefined;

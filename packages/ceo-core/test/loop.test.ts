@@ -923,17 +923,23 @@ test("spawn parent/schedule parsing: valid fields reach the board; bad ISO or un
   });
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   try {
+    const startMs = Date.now();
     await loop.runOnce("tick");
     await until(() => board.list().length === 4); // epic + three spawned cards
     loop.stop();
 
     const byTitle = Object.fromEntries(board.list().map((t) => [t.title, t]));
-    expect(byTitle.good).toMatchObject({ parentId: epic.id, scheduledAt: Date.parse("2026-08-21T09:30:00"), dueAt: Date.parse("2026-08-21T12:00:00") }); // trailing Z stripped: naive ISO parses as local
+    expect(byTitle.good).toMatchObject({ parentId: epic.id, scheduledAt: Date.parse("2026-08-21T09:30:00Z"), dueAt: Date.parse("2026-08-21T12:00:00Z") }); // Z-suffixed parses as UTC (Z is never stripped)
     expect(byTitle["bad time"].scheduledAt).toBe(null);   // unparseable time: dropped, spawn alive
     expect(byTitle["bad time"].status).not.toBe("blocked");
     expect(byTitle["bad parent"].parentId).toBe(null);    // unknown parent: dropped, spawn alive
     expect(byTitle["bad parent"].status).not.toBe("blocked");
-    expect(spawnFn).toHaveBeenCalledTimes(3);              // nothing blocked the spawns
+    // the good spawn's scheduledAt may sit in the future or past depending on
+    // the test machine's timezone: future defers to the gantt pump (stays
+    // todo, only 2 immediate launches), past launches now (3)
+    const goodFuture = Date.parse("2026-08-21T09:30:00Z") > startMs;
+    expect(spawnFn).toHaveBeenCalledTimes(goodFuture ? 2 : 3);
+    if (goodFuture) expect(byTitle.good.status).toBe("todo");
     expect(warn).toHaveBeenCalledTimes(2);                 // exactly one line per dropped field
     expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(/scheduledAt[\s\S]*parent/);
   } finally {
