@@ -13,12 +13,6 @@ import { Auditor } from "../src/auditor.js";
 import { BudgetGovernor } from "../src/budget.js";
 import { ContextAssembler } from "../src/context.js";
 import { vi } from "vitest";
-import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { TaskBoard } from "../src/board.js";
-import { DatabaseSync } from "node:sqlite";
 
 let dir: string; let b: TaskBoard;
 const NOW = 1_700_000_000_000;
@@ -126,6 +120,20 @@ describe("pumpGantt", () => {
     expect(spawns).toHaveLength(1);
     expect(spawns[0]).toContain(t.id.slice(0, 8));
     expect(spawns[0]).toContain("scan disk");
+  });
+
+  it("a task that leaves todo and returns (kanban_unblock) re-earns due_spawn", () => {
+    const events: string[] = [];
+    const b2 = new TaskBoard(join(dir, "p5.sqlite"));
+    const t = b2.add({ title: "flaky job", scheduledAt: NOW - 1000 });
+    const { loop } = ganttRig(b2, dir, events);
+    loop.pumpGantt(NOW); // emits once
+    b2.update(t.id, { status: "running" });
+    loop.pumpGantt(NOW + 60_000); // leaves todo: dispatch state reset
+    b2.update(t.id, { status: "blocked" });
+    b2.update(t.id, { status: "todo" }); // unblocked back to todo
+    loop.pumpGantt(NOW + 120_000); // must emit again
+    expect(events.filter((e) => e.startsWith("due_spawn:")).length).toBe(2);
   });
 
   it("emits overdue with 30-minute throttle and stamps overdueNaggedAt", () => {

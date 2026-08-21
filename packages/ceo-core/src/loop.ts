@@ -115,9 +115,12 @@ export class SchedulerLoop {
     for (const t of this.d.board.overdueTasks(now)) {
       if (t.overdueNaggedAt !== null && now - t.overdueNaggedAt < NAG_MS) continue;
       this.d.board.update(t.id, { overdueNaggedAt: now });
-      this.push(`overdue: ${t.id.slice(0, 8)} ${t.title} [due ${fmtClock(t.dueAt ?? now)}]`);
+      this.push(`overdue: ${t.id.slice(0, 8)} ${t.title} [due ${fmtClock(t.dueAt!)}]`);
     }
+    // a dispatched task that left todo (spawned/blocked/done) re-earns its
+    // gantt events if it returns to todo (e.g. kanban_unblock): reset then
     const byId = new Map(this.d.board.list().map((t) => [t.id, t] as const));
+    for (const [id, t] of byId) if (t.status !== "todo") this.ganttDispatched.delete(id);
     for (const t of byId.values()) {
       if (t.status !== "todo" || !t.parentId) continue;
       const p = byId.get(t.parentId);
