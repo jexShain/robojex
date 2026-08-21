@@ -380,8 +380,13 @@ export class SchedulerLoop {
             if (!card) throw new Error(`invalid verify action: no task ${a.task_id} on the board`);
             const note = typeof a.note === "string" ? a.note : "";
             this.d.board.update(card.id, { progress, verdict, resultSummary: [card.resultSummary, note].filter(Boolean).join(" | ") });
+            // acceptance loop closes here: a pass on a task that finished
+            // cleanly but was held blocked pending acceptance promotes it
+            if (verdict === "pass" && card.status === "blocked" && card.resultSummary.includes("[awaiting acceptance")) {
+              this.d.board.update(card.id, { status: "done" });
+            }
             this.emitTasks();
-            console.log(`[ceo] verify ${card.id.slice(0, 8)} -> ${verdict} ${progress}% ${note.slice(0, 80)}`);
+            console.log(`[ceo] verify ${card.id.slice(0, 8)} -> ${verdict} ${progress}%${verdict === "pass" && card.status === "blocked" ? " -> done" : ""} ${note.slice(0, 80)}`);
           }
         } catch (e) {
           // one bad action must not kill the rest of the wake: block its task (if any) and move on

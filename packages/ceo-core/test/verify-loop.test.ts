@@ -49,6 +49,16 @@ describe("verify action", () => {
     expect(row.verdict).toBe("partial");
     expect(row.resultSummary).toContain("2/3 suites pass");
   });
+
+  it("a pass on a blocked-awaiting-acceptance task promotes it to done", async () => {
+    const t = board.add({ title: "held job", acceptance: "tests green" });
+    board.update(t.id, { status: "blocked", resultSummary: "ran ok [awaiting acceptance: verify with tools]" });
+    const { loop } = rig(() => JSON.stringify({ actions: [{ type: "verify", task_id: t.id, progress: 100, verdict: "pass", note: "all green" }] }));
+    await loop.runOnce("verify_due: test");
+    const row = board.list()[0];
+    expect(row.status).toBe("done");
+    expect(row.verdict).toBe("pass");
+  });
   it("invalid verdict or unknown task surfaces an error, not a crash", async () => {
     const { loop } = rig(() => JSON.stringify({ actions: [
       { type: "verify", task_id: "nope", progress: 10, verdict: "pass", note: "x" },
