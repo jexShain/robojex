@@ -26,6 +26,30 @@ function makeRuntime() {
   return dir;
 }
 
+test("triage prompt mandates acting on tool result events (back-fill reaches decide)", async () => {
+  const runtimeDir = makeRuntime();
+  let patrolSystem = "";
+  const chat = vi.fn(async (slot: string, msgs: Array<{ role: string; content: string }>) => {
+    if (slot === "patrol") {
+      patrolSystem = String(msgs[0].content);
+      // a compliant triage model must answer act for tool events per the rule
+      return { content: /tool <name> ->/.test(patrolSystem) ? '{"action":"act"}' : '{"action":"none"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    }
+    return { content: JSON.stringify({ actions: [{ type: "reply", text: "done" }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const llm = { chat } as unknown as LLMClient;
+  const loop = new SchedulerLoop({
+    llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: new AgentOrchestrator({ llm, runtimeDir, cmds: {} }), auditor: new Auditor({ runtimeDir, reviewEvery: 99 }),
+    budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  await loop.runOnce("tool read_file -> 1|xzx-PC");
+  // the rule text is the contract: without it a patrol model buries tool results
+  // and decide never wakes to continue the flow (found in live-model smoke)
+  expect(patrolSystem).toContain("'tool <name> -> ...' event");
+  // and with the rule, this wake reached the decide layer (reply action ran)
+  expect(chat).toHaveBeenCalledWith("decide", expect.anything(), expect.anything());
+});
 test("end to end: mission -> decide -> spawn -> audit -> rubric evolves", async () => {
   const runtimeDir = makeRuntime();
   execSync("git init -q", { cwd: runtimeDir });
