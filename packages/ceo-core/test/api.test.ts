@@ -32,6 +32,7 @@ async function until(cond: () => boolean, ms = 4000): Promise<void> {
 interface Frame {
   t: string; from?: unknown; text?: unknown; ts?: unknown; state?: unknown;
   wake?: unknown; cost?: unknown; actions?: unknown[]; tasks?: unknown[]; mode?: unknown; line?: unknown; budget?: unknown;
+  kind?: unknown; taskId?: unknown;
 }
 
 // The GET /api/state payload as the tests read it (loose: all fields optional).
@@ -43,6 +44,7 @@ interface StateFrame {
   chat?: unknown[];
   version?: string;
   now?: number;
+  tickN?: number;
 }
 
 const servers: ApiServer[] = [];
@@ -65,7 +67,7 @@ function mkRig(budget: { mode?: "burn" | "budgeted"; dailyTokens?: number } = {}
 }
 
 // ApiServer on an ephemeral port; every instance is closed in afterEach.
-function makeApi(rig: Rig, loop: { push: (e: string) => void; sendCtrl?: (f: Record<string, unknown>) => boolean; mode?: () => string }, extra: { webDir?: string } = {}): ApiServer {
+function makeApi(rig: Rig, loop: { push: (e: string) => void; sendCtrl?: (f: Record<string, unknown>) => boolean; mode?: () => string; tickN?: () => number }, extra: { webDir?: string } = {}): ApiServer {
   const api = new ApiServer({
     port: 0, board: rig.board, budget: rig.budget, runtimeDir: rig.runtimeDir, loop,
     ...(extra.webDir ? { webDir: extra.webDir } : {}),
@@ -598,4 +600,25 @@ test("assembleAndStart wires the api server on cfg.apiPort (0 = ephemeral) and s
 
   assembled.stop();
   await expect(fetch(`http://127.0.0.1:${assembled.api.port}/api/state`)).rejects.toThrow();
+});
+
+test("hello carries tickN; hud frames broadcast to ws clients", async () => {
+  const rig = mkRig();
+  const api = makeApi(rig, { push: vi.fn(), tickN: () => 7 });
+  await api.start();
+
+  // hello.state mirrors GET /api/state: the loop stub's tick count rides both
+  const c = wsCollect(api);
+  await c.opened;
+  await until(() => c.frames.some((f) => f.t === "hello"));
+  expect(c.frames.find((f) => f.t === "hello")!.state).toMatchObject({ tickN: 7 });
+  const s = await (await fetch(`http://127.0.0.1:${api.port}/api/state`)).json() as StateFrame;
+  expect(s.tickN).toBe(7);
+
+  // hud(): one broadcast frame per gantt event, kind+taskId+ts, to every ws client
+  api.hud("due_spawn", "x");
+  await until(() => c.frames.some((f) => f.t === "hud"));
+  const hud = c.frames.find((f) => f.t === "hud")!;
+  expect(hud).toMatchObject({ t: "hud", kind: "due_spawn", taskId: "x" });
+  expect(typeof hud.ts).toBe("number");
 });

@@ -23,6 +23,7 @@ export interface ApiLoopHandle {
   push(event: string): void;
   sendCtrl?(frame: Record<string, unknown>): boolean; // false/absent: takeover link down
   mode?(): string;
+  tickN?(): number;                     // decision-cycle count for HUD lag detection; absent = 0
   resolveToolApproval?(id: string, ok: boolean): Promise<string | null>; // settles a pending assist-mode tool write
 }
 
@@ -177,6 +178,10 @@ export class ApiServer implements LoopOutlet {
 
   frame(f: Record<string, unknown>): void { this.broadcast(f); }
 
+  // HUD notice: one gantt event (due_spawn/overdue/unlocked/verify_due) just
+  // hit a task — widgets flash the card. LoopOutlet.hud routes here.
+  hud(kind: string, taskId: string): void { this.broadcast({ t: "hud", kind, taskId, ts: Date.now() }); }
+
   // -- internals ------------------------------------------------------------
   private broadcast(f: Record<string, unknown>): void {
     const s = JSON.stringify(f);
@@ -225,6 +230,7 @@ export class ApiServer implements LoopOutlet {
       tasks: this.d.board.list().map(taskView),
       budget: this.d.budget.snapshot(),
       mode: this.d.loop.mode?.() ?? "observe",
+      tickN: this.d.loop.tickN?.() ?? 0,
       mission: read("MISSION.md"), rubric: read("RUBRIC.md"), memory: read("MEMORY.md"),
       chat: this.ring.slice(),
       version: this.d.version ?? VERSION,

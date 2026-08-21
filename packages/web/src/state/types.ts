@@ -15,6 +15,12 @@ export interface Task {
   scheduledAt?: number | null
   /** board v2: deadline, epoch ms. */
   dueAt?: number | null
+  /** HUD: 0..100 completion estimate (shipped by core since taskView). */
+  progress?: number
+  /** HUD: verify verdict against the acceptance standard. */
+  verdict?: string
+  /** HUD: acceptance standard the verify loop checks. */
+  acceptance?: string
 }
 
 export interface Budget {
@@ -41,6 +47,8 @@ export interface StateSnapshot {
   version: string
   /** board v2: server epoch ms — clock alignment for sched/due rendering. */
   now?: number
+  /** HUD: decision-cycle count; compare with cycle frames' tickN to detect a stalled core. */
+  tickN?: number
 }
 
 /** One decided action inside a cycle frame; shape is open-ended. */
@@ -51,11 +59,19 @@ export interface CycleAction {
   [key: string]: unknown
 }
 
+/** One gantt event that just hit a task; HUD widgets flash the card. */
+export interface HudNotice {
+  kind: 'due_spawn' | 'overdue' | 'unlocked' | 'verify_due'
+  taskId: string
+  ts: number
+}
+
 export type ServerFrame =
   | { t: 'hello'; state: StateSnapshot }
   | { t: 'chat_out'; from: 'user' | 'jex' | 'system'; text: string; ts: number }
   | { t: 'tasks'; tasks: Task[] }
-  | { t: 'cycle'; wake: number; cost: number; actions: CycleAction[] }
+  | { t: 'cycle'; wake: number; tickN?: number; cost: number; actions: CycleAction[] }
+  | ({ t: 'hud' } & HudNotice)
   | { t: 'mode'; mode: Mode }
   | { t: 'budget'; line: string; budget?: Budget }
 

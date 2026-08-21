@@ -16,7 +16,7 @@ import {
 import type { ReactNode } from 'react'
 import { connectEvents, eventsUrl } from './connection'
 import type { ConnectionHandle } from './connection'
-import type { Budget, ChatMsg, Mode, ServerFrame, Task, TranscriptItem } from './types'
+import type { Budget, ChatMsg, HudNotice, Mode, ServerFrame, Task, TranscriptItem } from './types'
 import { ingestFrame } from '../views/activityModel'
 import type { ActivityItem } from './types'
 
@@ -36,6 +36,8 @@ export interface WebState {
   /** Server clock skew from the last hello (serverNow − localNow); Agenda
    * renders sched/due on the aligned clock per the board-v2 contract. */
   clockOffset: number
+  /** Latest hud notice (gantt event); null before the first one. HUD widgets flash the task. */
+  lastHud: HudNotice | null
 }
 
 type Action =
@@ -59,6 +61,7 @@ const initialState: WebState = {
   transcript: [],
   waiting: false,
   clockOffset: 0,
+  lastHud: null,
 }
 
 // Transcript ids only need uniqueness within a session; StrictMode's double
@@ -186,6 +189,8 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
           },
         ],
       }
+    case 'hud':
+      return { ...state, lastHud: { kind: frame.kind, taskId: frame.taskId, ts: frame.ts } }
     case 'mode':
       return state.mode === frame.mode ? state : { ...state, mode: frame.mode }
     case 'budget': {

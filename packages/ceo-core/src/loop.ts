@@ -31,10 +31,11 @@ const WS_OPEN = 1;
 const RECONNECT_MAX_MS = 60_000;
 
 // Outlet into the operator-facing api surface: jex chat replies and lifecycle
-// frames (cycle/tasks/mode/budget) ride one WS broadcast; ApiServer implements it.
+// frames (cycle/tasks/mode/budget + hud notices) ride one WS broadcast; ApiServer implements it.
 export interface LoopOutlet {
   chatOut(from: ChatFrom, text: string): void;
   frame(f: Record<string, unknown>): void;
+  hud?(kind: string, taskId: string): void; // one gantt event hit a task; absent = no HUD wiring
 }
 
 export interface LoopDeps {
@@ -63,6 +64,7 @@ export class SchedulerLoop {
   private timer: NodeJS.Timeout | undefined;
   private debounce: NodeJS.Timeout | undefined;
   private wakeN = 0;
+  private tickCount = 0; // decision-cycle counter shipped on the wire as tickN (hello.state + cycle frames)
   private ws: WsLike | null = null;
   private reconnectTimer: NodeJS.Timeout | undefined;
   private backoffMs = 1000;
@@ -72,6 +74,10 @@ export class SchedulerLoop {
   constructor(private d: LoopDeps) {}
 
   wakeCount(): number { return this.wakeN; }
+
+  /** ApiLoopHandle seam: the tickN the wire ships — HUD clients compare it
+   *  across hello.state and cycle frames to detect a stalled loop. */
+  tickN(): number { return this.tickCount; }
 
   // takeover mode as last reported by takeoverd; observe is the safe default
   private modeNow: "observe" | "assist" | "full" = "observe";
@@ -104,6 +110,7 @@ export class SchedulerLoop {
   // Minute-Gantt pump: runs at every tick BEFORE the "tick" event is queued
   // so due/overdue/unlocked ride the same wake. Emits are event back-fill —
   // decide responds by spawning or steering, never by doing the work itself.
+  // Each emit also fires outlet.hud so HUD widgets can flash the card.
   pumpGantt(now = Date.now()): void {
     const fmtClock = (ts: number): string => {
       const d = new Date(ts);
@@ -113,12 +120,14 @@ export class SchedulerLoop {
       if (this.ganttDispatched.has(t.id)) continue;
       this.ganttDispatched.add(t.id);
       this.push(`due_spawn: ${t.id.slice(0, 8)} ${t.title}${t.dueAt ? ` [due ${fmtClock(t.dueAt)}]` : ""}`);
+      this.d.outlet?.hud?.("due_spawn", t.id);
     }
     const NAG_MS = 30 * 60_000;
     for (const t of this.d.board.overdueTasks(now)) {
       if (t.overdueNaggedAt !== null && now - t.overdueNaggedAt < NAG_MS) continue;
       this.d.board.update(t.id, { overdueNaggedAt: now });
       this.push(`overdue: ${t.id.slice(0, 8)} ${t.title} [due ${fmtClock(t.dueAt!)}]`);
+      this.d.outlet?.hud?.("overdue", t.id);
     }
     // a dispatched task that left todo (spawned/blocked/done) re-earns its
     // gantt events if it returns to todo (e.g. kanban_unblock): reset then
@@ -132,6 +141,7 @@ export class SchedulerLoop {
       if (this.ganttDispatched.has(t.id)) continue;
       this.ganttDispatched.add(t.id);
       this.push(`unlocked: ${t.id.slice(0, 8)} ${t.title}`);
+      this.d.outlet?.hud?.("unlocked", t.id);
     }
     // acceptance loop: running tasks with a standard get a verify_due nudge,
     // 5-minute throttle (in-memory; a restart simply re-nudges — idempotent)
@@ -141,6 +151,7 @@ export class SchedulerLoop {
       if (now - last < 5 * 60_000) continue;
       this.verifyNudgedAt.set(t.id, now);
       this.push(`verify_due: ${t.id.slice(0, 8)} ${t.title} accept: ${t.acceptance.slice(0, 120)}`);
+      this.d.outlet?.hud?.("verify_due", t.id);
     }
   }
 
@@ -188,6 +199,7 @@ export class SchedulerLoop {
 
   private async cycle(eventSummary: string): Promise<void> {
     this.wakeN++;
+    this.tickCount++;
     // the cycle frame reports whatever this wake cost and decided, even on the
     // cheap early exits — the operator sees every heartbeat
     let cost = 0;
@@ -409,7 +421,7 @@ export class SchedulerLoop {
       cost = await this.maybeAudit({ promptTokens: p.usage.promptTokens + dec.usage.promptTokens, completionTokens: p.usage.completionTokens + dec.usage.completionTokens }, parsed.actions ?? []);
     } finally {
       // every cycle ends on the wire: the heartbeat frame plus the fresh budget line
-      this.d.outlet?.frame({ t: "cycle", wake: this.wakeN, cost, actions });
+      this.d.outlet?.frame({ t: "cycle", wake: this.wakeN, tickN: this.tickCount, cost, actions });
       // full snapshot (not just the line) so clients' progress bars advance
       // live; the line stays for one-line CLI summaries
       this.d.outlet?.frame({ t: "budget", line: this.d.budget.line(), budget: this.d.budget.snapshot() });
