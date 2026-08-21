@@ -193,13 +193,32 @@ export class ApiServer implements LoopOutlet {
     ws.on("message", (raw: unknown) => {
       let m: Record<string, unknown>;
       try { m = JSON.parse(String(raw)) as Record<string, unknown>; } catch { return; }
-      if (m.t === "chat" && this.validText(m.text)) this.handleChat(m.text); // ≡ POST /api/chat: same non-empty ≤16KB rule
+      if (m.t === "chat" && this.validText(m.text)) void this.routeChat(m.text, () => {}); // ≡ POST /api/chat: same non-empty ≤16KB rule
     });
   }
 
   private handleChat(text: string): void {
+    void this.routeChat(text, () => {}); // fire-and-forget for WS
+  }
+
+  // Shared shortcut resolver: returns true if text was consumed as approval.
+  private async routeChat(text: string, syncOk: (ok: boolean) => void): Promise<boolean> {
+    const m = /^(approve|deny)\s+([0-9a-f]{8})\b/i.exec(text.trim());
+    if (m && this.d.loop.resolveToolApproval) {
+      const id = m[2].toLowerCase();
+      const approved = m[1].toLowerCase() === "approve";
+      const result = await this.d.loop.resolveToolApproval(id, approved);
+      if (result === null) {
+        this.chatOut("system", `no pending approval ${id} — it may be expired or already resolved`);
+      } else {
+        this.chatOut("system", `approval ${m[1].toLowerCase()}d: ${id}`);
+      }
+      return true;
+    }
+    // Not a shortcut: queue as normal chat
     this.d.loop.push(`chat: ${text}`);
     this.chatOut("user", text);
+    return false;
   }
 
   private state(): Record<string, unknown> {
@@ -254,16 +273,8 @@ export class ApiServer implements LoopOutlet {
     let body: Record<string, unknown>;
     try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
     if (!this.validText(body.text)) { json(res, 400, { error: "text must be a non-empty string of at most 16KB" }); return; }
-    // approval shorthand: "approve <id>" / "deny <id>" resolves a pending
-    // assist-mode write-class tool call instead of queueing as chat
-    const m = /^(approve|deny)\s+([0-9a-f]{8})\b/i.exec(body.text.trim());
-    if (m && this.d.loop.resolveToolApproval) {
-      await this.d.loop.resolveToolApproval(m[2], m[1].toLowerCase() === "approve");
-      this.chatOut("system", `approval ${m[1].toLowerCase()}d: ${m[2]}`);
-      json(res, 202, { ok: true });
-      return;
-    }
-    this.handleChat(body.text);
+    // ≡ POST /api/chat: same tokenization and shortcut routing as WS {t:"chat"}
+    const consumed = await this.routeChat(body.text, () => {});
     json(res, 202, { ok: true });
   }
 

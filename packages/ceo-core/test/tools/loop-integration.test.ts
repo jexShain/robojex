@@ -42,6 +42,7 @@ interface Rig {
   events: string[];
   ws: FakeWs | null;
   decideUser: string[]; // user-side content of every decide pass
+  patrolUser: string[]; // user-side content of every patrol pass
 }
 
 // Full-chain rig: real board/auditor/budget/context assembler + real
@@ -60,8 +61,12 @@ function makeRig(decide: unknown, opts: { ws?: boolean } = {}): Rig {
     },
   });
   const decideUser: string[] = [];
+  const patrolUser: string[] = [];
   const chat = vi.fn(async (slot: string, msgs: Array<{ role: string; content: string }>) => {
-    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 1, completionTokens: 1 } };
+    if (slot === "patrol") {
+      if (msgs[1]) patrolUser.push(String(msgs[1].content));
+      return { content: '{"action":"act"}', usage: { promptTokens: 1, completionTokens: 1 } };
+    }
     if (msgs[1]) decideUser.push(String(msgs[1].content));
     return { content: JSON.stringify(decide), usage: { promptTokens: 1, completionTokens: 1 } };
   });
@@ -76,7 +81,7 @@ function makeRig(decide: unknown, opts: { ws?: boolean } = {}): Rig {
   const events: string[] = [];
   const origPush = loop.push.bind(loop);
   loop.push = (e: string) => { events.push(e); origPush(e); };
-  return { loop, mgr, dir, events, ws, decideUser };
+  return { loop, mgr, dir, events, ws, decideUser, patrolUser };
 }
 
 const mode = (rig: Rig, m: "observe" | "assist" | "full"): void => {
@@ -92,6 +97,11 @@ describe("decide prompt", () => {
     const decide = rig.decideUser[0]!;
     expect(decide).toContain("# BUILTIN TOOLS");
     expect(decide).toContain("memory(action:string"); // schema line from P1_TOOLS
+
+    // Patrol pass should not include the BUILTIN TOOLS block (stays lean)
+    expect(rig.patrolUser.length).toBeGreaterThan(0);
+    const patrol = rig.patrolUser[0]!;
+    expect(patrol).not.toContain("# BUILTIN TOOLS");
   });
 });
 
