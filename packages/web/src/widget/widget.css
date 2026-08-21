@@ -1,0 +1,231 @@
+/* packages/web/src/widget/widget.css — /widget desktop-widget mode.
+ * Low-density 12px baseline; motion limited to the heartbeat lamp and the
+ * gantt now-line. Reuses hud.css .hud-heart + .ring-* token vocabulary. */
+
+/* Fixed 400x600 widget viewport centered on the page. */
+.widget-root {
+  width: 400px;
+  height: 600px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+
+/* ---- header: heart + tab nav + pin + expand ---- */
+.widget-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* Reuse the .hud-heart lamp from hud.css (pulse animation lives there). */
+.widget-head .hud-heart {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--dsw-alias-label-tertiary, #999);
+}
+
+.widget-head .hud-heart.alive {
+  background: var(--hud-pulse, var(--dsw-alias-state-success-primary, #34d399));
+  animation: hud-heartbeat 60s steps(1, end) infinite;
+}
+
+.widget-head nav {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.widget-head nav button {
+  font: 12px/1 var(--ds-font-family-code, monospace);
+  color: var(--dsw-alias-label-secondary);
+  padding: 4px 10px;
+  border-radius: 6px;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.widget-head nav button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.widget-head nav button.on {
+  background: var(--dsw-alias-button-ghost-active-fill);
+  color: var(--dsw-alias-label-primary);
+}
+
+.widget-pin,
+.widget-expand {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  flex: none;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.widget-pin:hover,
+.widget-expand:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ============================================================
+   Tab 1: gantt — ±2h horizontal time band
+   ============================================================ */
+.widget-gantt {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 0;
+}
+
+/* A single horizontal track; each task is a pill anchored by `left:%`. */
+.wband {
+  position: relative;
+  left: 0; /* overridden inline */
+  margin: 4px 8px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font: 12px/1.5 var(--ds-font-family-code, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #fff;
+  transform: translateX(-50%); /* center the pill on its time anchor */
+  width: max-content;
+  max-width: 60%;
+}
+
+/* Status tones: todo=gray, running=blue, done=green, blocked=red. */
+.wband.st-todo {
+  background: var(--dsw-alias-label-tertiary, #999);
+  color: #fff;
+}
+.wband.st-running {
+  background: var(--dsw-alias-state-business-primary, #5686fe);
+}
+.wband.st-done {
+  background: var(--dsw-alias-state-success-primary, #22c55e);
+}
+.wband.st-blocked {
+  background: var(--dsw-alias-state-error-primary, #dc2626);
+}
+
+/* Now line — vertical, centered at 50%; 60s transition smooths drift. */
+.wnow {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  left: 50%;
+  background: var(--hud-glow, var(--dsw-alias-state-business-primary, #5686fe));
+  box-shadow: 0 0 6px var(--hud-glow, var(--dsw-alias-state-business-primary, #5686fe));
+  transition: left 60s linear;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ============================================================
+   Tab 2: rings — progress-ring wall for running tasks
+   ============================================================ */
+.widget-rings {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.widle {
+  margin: auto;
+  color: var(--dsw-alias-label-tertiary);
+  font: 12px/1.5 var(--ds-font-family-code, monospace);
+  text-align: center;
+  padding: 40px 0;
+}
+
+.wring {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* .ring / .ring-bg / .ring-fg come from hud.css; the verdict color
+ * modifier .v-pass|.v-partial|.v-fail|.v-unchecked is reused verbatim. */
+.wring-label {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ============================================================
+   Tab 3: feed — last 20 transcript entries (newest first)
+   ============================================================ */
+.widget-feed {
+  flex: 1;
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  overflow-y: auto;
+  font: 12px/1.5 var(--ds-font-family-code, monospace);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.widget-feed li {
+  padding: 3px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.widget-feed .wf-msg {
+  color: var(--dsw-alias-label-primary);
+}
+.widget-feed .wf-cycle {
+  color: var(--dsw-alias-state-business-primary, #5686fe);
+}
+.widget-feed .wf-toast {
+  color: var(--dsw-alias-state-warn-primary, #f59e0b);
+}
+
+/* Respect reduced-motion: freeze the heartbeat and the now-line drift. */
+@media (prefers-reduced-motion: reduce) {
+  .widget-head .hud-heart.alive {
+    animation: none;
+  }
+  .wnow {
+    transition: none;
+  }
+}

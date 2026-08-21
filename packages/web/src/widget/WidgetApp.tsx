@@ -1,0 +1,157 @@
+// packages/web/src/widget/WidgetApp.tsx — /widget desktop-widget mode.
+// 400x600 fixed-viewport mini console: three tabs (minute gantt band,
+// progress-ring wall, event feed) auto-rotating every 8s unless pinned.
+// Shares the store + theme with the main console via <Providers>.
+
+import { useEffect, useState } from 'react'
+import type { ReactElement } from 'react'
+import { useStore } from '../state/store'
+import { Providers } from '../Providers'
+import type { TranscriptItem } from '../state/types'
+
+// Three rotating tabs. Pinned stops the 8s auto-advance.
+type Tab = 'gantt' | 'rings' | 'feed'
+
+const TABS: Tab[] = ['gantt', 'rings', 'feed']
+const ROTATE_MS = 8000
+// ±2h horizontal time band: a task's scheduledAt/dueAt maps onto a 4h span
+// centered on the server-aligned now (now-line sits at 50%).
+const WINDOW_MS = 2 * 3_600_000
+
+/** Summarize one transcript entry into a single short line for the feed. */
+function feedLine(it: TranscriptItem): string {
+  if (it.kind === 'msg') return `${it.from}: ${it.text.slice(0, 60)}`
+  if (it.kind === 'cycle') return `cycle: ${(it.actions ?? []).length} actions`
+  return it.text.slice(0, 60) // toast
+}
+
+export function WidgetApp(): ReactElement {
+  const { state: s } = useStore()
+  const [tab, setTab] = useState<Tab>('gantt')
+  const [pinned, setPinned] = useState(false)
+
+  // Auto-rotate gantt→rings→feed→gantt every 8s, halted while pinned.
+  useEffect(() => {
+    if (pinned) return
+    const id = setInterval(
+      () => setTab((t) => (t === 'gantt' ? 'rings' : t === 'rings' ? 'feed' : 'gantt')),
+      ROTATE_MS,
+    )
+    return () => clearInterval(id)
+  }, [pinned])
+
+  const serverNow = Date.now() + (s.clockOffset ?? 0)
+  const running = s.tasks.filter((t) => t.status === 'running')
+
+  // Clicking a tab both selects it and pins the view (manual intent).
+  const pick = (t: Tab): void => {
+    setTab(t)
+    setPinned(true)
+  }
+
+  return (
+    <div className="widget-root">
+      <header className="widget-head">
+        <span className={`hud-heart${s.lastHud ? ' alive' : ''}`} title="jex heartbeat" />
+        <nav>
+          {TABS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={t === tab ? 'on' : ''}
+              onClick={() => pick(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </nav>
+        <button
+          type="button"
+          className="widget-pin"
+          onClick={() => setPinned((p) => !p)}
+          title={pinned ? 'unpin — resume auto-rotate' : 'pin — hold this tab'}
+          aria-pressed={pinned}
+        >
+          {pinned ? '📌' : '○'}
+        </button>
+        <button
+          type="button"
+          className="widget-expand"
+          onClick={() => location.assign('/')}
+          title="expand to console"
+          aria-label="expand to console"
+        >
+          ⤢
+        </button>
+      </header>
+
+      {tab === 'gantt' && (
+        <div className="widget-gantt">
+          {s.tasks
+            .filter((t) => t.scheduledAt || t.dueAt)
+            .map((t) => {
+              const start = t.scheduledAt ?? t.dueAt!
+              const pct = Math.max(
+                0,
+                Math.min(100, ((start - (serverNow - WINDOW_MS / 2)) / WINDOW_MS) * 100),
+              )
+              return (
+                <div
+                  key={t.id}
+                  className={`wband st-${t.status}`}
+                  style={{ left: `${pct}%` }}
+                  title={t.title}
+                >
+                  {t.title.slice(0, 18)}
+                </div>
+              )
+            })}
+          <div className="wnow" style={{ left: '50%' }} />
+        </div>
+      )}
+
+      {tab === 'rings' && (
+        <div className="widget-rings">
+          {running.length === 0 ? (
+            <p className="widle">idle — jex is alive</p>
+          ) : (
+            running.map((t) => (
+              <div key={t.id} className="wring">
+                <svg viewBox="0 0 36 36" width="48" height="48" className="ring">
+                  <circle cx="18" cy="18" r="15.9" className="ring-bg" />
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="15.9"
+                    className={`ring-fg v-${t.verdict ?? 'unchecked'}`}
+                    strokeDasharray={`${t.progress ?? 0} 100`}
+                    pathLength={100}
+                  />
+                </svg>
+                <span className="wring-label">{t.title.slice(0, 20)}</span>
+              </div>
+            )))}
+        </div>
+      )}
+
+      {tab === 'feed' && (
+        <ul className="widget-feed">
+          {s.transcript.slice(-20).reverse().map((it) => (
+            <li key={it.id} className={`wf-${it.kind}`}>
+              {feedLine(it)}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** Wrapped widget entry point: same provider stack as the main console. */
+export function WidgetAppRoot(): ReactElement {
+  return (
+    <Providers>
+      {() => <WidgetApp />}
+    </Providers>
+  )
+}

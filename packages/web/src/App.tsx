@@ -2,14 +2,12 @@
 // then the three-column AppFrame.
 
 import { AppFrame } from './frame/AppFrame'
-import { StoreProvider } from './state/store'
-import { useTheme } from './state/theme'
+import { Providers } from './Providers'
 
 export default function App() {
-  const theme = useTheme()
   return (
-    <StoreProvider>
-      <AppFrame theme={theme} />
-    </StoreProvider>
+    <Providers>
+      {(theme) => <AppFrame theme={theme} />}
+    </Providers>
   )
 }
