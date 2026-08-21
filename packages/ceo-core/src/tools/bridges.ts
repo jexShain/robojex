@@ -107,3 +107,63 @@ export function boardTools(): ToolEntry[] {
     boardSchema("kanban_attachments", "List a card's attachments.", { card_id: { type: "string", description: "Card id" } }, ["card_id"]),
   ];
 }
+
+// ---- misc bridges: memory / skills / delegate / computer_use ----
+
+async function memory(args: Record<string, unknown>, ctx: ToolCtx): Promise<string> {
+  const action = String(args.action ?? "read");
+  const p = join(ctx.runtimeDir, "MEMORY.md");
+  if (action === "read") return existsSync(p) ? readFileSync(p, "utf8") : "(memory empty)";
+  if (action === "append") {
+    const content = String(args.content ?? "");
+    if (!content) return "error: content required";
+    appendFileSync(p, `${content}\n`);
+    return `remembered: ${content.slice(0, 80)}`;
+  }
+  return `error: invalid action '${action}' — supported: append, read`;
+}
+
+async function skillView(args: Record<string, unknown>, ctx: ToolCtx): Promise<string> {
+  const name = String(args.name ?? "");
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(name)) return `error: invalid name '${name}' — letters/digits/dashes only`;
+  const p = join(ctx.skillsDir, `${name}.md`);
+  if (!existsSync(p)) {
+    const have = readdirSync(ctx.skillsDir).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3));
+    return `error: no skill '${name}' — available: ${have.join(", ") || "(none)"}`;
+  }
+  return readFileSync(p, "utf8");
+}
+
+export function miscBridges(): ToolEntry[] {
+  return [
+    { name: "memory", toolset: "memory", writes: true, handler: memory,
+      schema: { name: "memory", description: "Long-lived memory: append durable facts (read by every future decision cycle) or read them back.", parameters: { type: "object", properties: { action: { type: "string", description: "append or read", enum: ["append", "read"] }, content: { type: "string", description: "The fact to remember (action='append')" } }, required: ["action"] } } },
+    { name: "skills_list", toolset: "skills", writes: false, handler: async (_a, ctx) => readdirSync(ctx.skillsDir).filter((f) => f.endsWith(".md")).map((f) => `- ${f.slice(0, -3)}`).join("\n") || "(no skills)",
+      schema: { name: "skills_list", description: "List the agent framework manuals available to delegate to.", parameters: { type: "object", properties: {} } } },
+    { name: "skill_view", toolset: "skills", writes: false, handler: skillView,
+      schema: { name: "skill_view", description: "Read one framework manual (how to invoke, strengths, failure modes).", parameters: { type: "object", properties: { name: { type: "string", description: "Skill name from skills_list" } }, required: ["name"] } } },
+    { name: "skill_manage", toolset: "skills", writes: true, handler: async () => "error: skill_manage is not available in jex — register agents via the agent registry instead",
+      schema: { name: "skill_manage", description: "Reserved: jex manages frameworks through the agent registry, not skill files. Always returns guidance.", parameters: { type: "object", properties: {} } } },
+    { name: "delegate_task", toolset: "delegation", writes: true, handler: async (args, ctx) => {
+      const framework = String(args.framework ?? "hermes");
+      const prompt = String(args.prompt ?? "");
+      if (!prompt) return "error: prompt required";
+      const r = await ctx.spawn(framework, prompt);
+      return `delegated to ${framework}: exit=${r.exitCode} ${r.summary}`;
+    },
+      schema: { name: "delegate_task", description: "Hand a task to a sub-agent framework (hermes/claude-code) and wait for its summary. For long or heavy jobs; small file/terminal work needs no delegation.", parameters: { type: "object", properties: { framework: { type: "string", description: "Agent name (hermes, claude-code)" }, prompt: { type: "string", description: "Full task prompt for the sub-agent" } }, required: ["framework", "prompt"] } } },
+    { name: "computer_use", toolset: "computer_use", writes: true, handler: async (args, ctx) => {
+      const action = String(args.action ?? "");
+      const send = (a: Record<string, unknown>) => ctx.takeoverSend({ t: "ctrl", op: "input", id: randomUUID(), action: a });
+      switch (action) {
+        case "screenshot": ctx.takeoverSend({ t: "ctrl", op: "screenshot", id: randomUUID() }); return "screenshot requested — the screen stream carries the frame";
+        case "key": if (!args.key) return "error: key required (e.g. 'Return', 'ctrl shift t')"; send({ kind: "key", key: String(args.key) }); return `sent key ${args.key}`;
+        case "type": if (!args.text) return "error: text required"; send({ kind: "type", text: String(args.text) }); return `typed ${String(args.text).length} chars`;
+        case "click": { const x = Number(args.x), y = Number(args.y); if (!Number.isFinite(x) || !Number.isFinite(y)) return "error: x and y required"; send({ kind: "click", x, y, button: String(args.button ?? "left") }); return `clicked ${x},${y}`; }
+        case "move": { const x = Number(args.x), y = Number(args.y); if (!Number.isFinite(x) || !Number.isFinite(y)) return "error: x and y required"; send({ kind: "move", x, y }); return `moved to ${x},${y}`; }
+        default: return `error: invalid action '${action}' — supported: screenshot, key, type, click, move`;
+      }
+    },
+      schema: { name: "computer_use", description: "Desktop control through takeoverd: screenshot, key presses, typing, mouse move/click. Gated by takeover availability and mode.", parameters: { type: "object", properties: { action: { type: "string", description: "What to do", enum: ["screenshot", "key", "type", "click", "move"] }, key: { type: "string", description: "Key name (action='key')" }, text: { type: "string", description: "Text to type (action='type')" }, x: { type: "integer", description: "Target x (click/move)" }, y: { type: "integer", description: "Target y (click/move)" }, button: { type: "string", description: "Mouse button (click)", enum: ["left", "right", "middle"] } }, required: ["action"] } } },
+  ];
+}
