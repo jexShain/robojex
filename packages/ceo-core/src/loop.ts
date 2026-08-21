@@ -78,6 +78,9 @@ export class SchedulerLoop {
   // gantt pump idempotence: tasks already surfaced by due_spawn/unlocked stay
   // quiet until their status changes; lost on restart, re-emit is idempotent
   private ganttDispatched = new Set<string>();
+  // verify pump idempotence: tasks already nudged for acceptance stay quiet
+  // for 5 minutes; lost on restart, re-nudge is idempotent
+  private verifyNudgedAt = new Map<string, number>();
 
   mode(): "observe" | "assist" | "full" { return this.modeNow; }
 
@@ -129,6 +132,15 @@ export class SchedulerLoop {
       if (this.ganttDispatched.has(t.id)) continue;
       this.ganttDispatched.add(t.id);
       this.push(`unlocked: ${t.id.slice(0, 8)} ${t.title}`);
+    }
+    // acceptance loop: running tasks with a standard get a verify_due nudge,
+    // 5-minute throttle (in-memory; a restart simply re-nudges — idempotent)
+    for (const t of this.d.board.list()) {
+      if (t.status !== "running" || !t.acceptance) continue;
+      const last = this.verifyNudgedAt.get(t.id) ?? 0;
+      if (now - last < 5 * 60_000) continue;
+      this.verifyNudgedAt.set(t.id, now);
+      this.push(`verify_due: ${t.id.slice(0, 8)} ${t.title} accept: ${t.acceptance.slice(0, 120)}`);
     }
   }
 
@@ -190,7 +202,7 @@ export class SchedulerLoop {
       });
       // layer 1: cheap patrol triage
       const p = await this.d.llm.chat("patrol", [
-        { role: "system", content: "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: always act on it. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:' and 'unlocked:' events (minute-Gantt: something is due now, late, or freed by its parent — always act)." },
+        { role: "system", content: "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: always act on it. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, or needs its acceptance checked — always act)." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
       let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
@@ -204,7 +216,7 @@ export class SchedulerLoop {
       const builtin = this.d.builtinTools?.schemasBlock() ?? ""; // builtin tool schemas ride it too
       const agentsBlock = this.d.orchestrator.getRegistry()?.toPromptBlock() ?? "";
       const decideMessages = [
-        { role: "system", content: `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tool_call","tool":"<name from BUILTIN TOOLS>","args":{}} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. tool_call runs one builtin tool directly (see # BUILTIN TOOLS in the context): small file, terminal, memory, or board work needs no sub-agent, and the result arrives as an event on the next wake. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself.` },
+        { role: "system", content: `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)","accept":"acceptance criteria (optional)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tool_call","tool":"<name from BUILTIN TOOLS>","args":{}} | {"type":"verify","task_id":"...","progress":0-100,"verdict":"pass|partial|fail","note":"one-line evidence"} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. tool_call runs one builtin tool directly (see # BUILTIN TOOLS in the context): small file, terminal, memory, or board work needs no sub-agent, and the result arrives as an event on the next wake. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself. You are an orchestrator and acceptance judge, never a worker: ALL productive work goes to coding agents via spawn; builtin tools are for LOOKING (verifying outputs, checking state), never for building.` },
         { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") + (builtin ? `\n\n${builtin}` : "") },
       ] satisfies ChatMsg[];
       let dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: 8192 }); // big contexts (tools+tentacles inventories) starve reasoning models below this
@@ -233,11 +245,11 @@ export class SchedulerLoop {
             const parentId = this.spawnParent(a.parent);
             const scheduledAt = this.spawnTime(a.scheduledAt, "scheduledAt");
             const dueAt = this.spawnTime(a.dueAt, "dueAt");
-            // create the task first so even an invalid action stays visible on the board
             const t = this.d.board.add({
               title: a.title ?? (promptOk ? a.prompt.slice(0, 60) : "(spawn without prompt)"),
               assignee: fwOk ? a.framework : String(a.framework),
               parentId, scheduledAt, dueAt,
+              ...(typeof a.accept === "string" && a.accept ? { acceptance: a.accept } : {}),
             });
             taskId = t.id;
             if (!fwOk || !promptOk) {
@@ -257,9 +269,13 @@ export class SchedulerLoop {
             const prompt = this.withToolManuals(a.prompt);
             void this.d.orchestrator.spawn(a.framework, prompt).then((r) => {
               if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
+              const card = this.d.board.list().find((x) => x.id === t.id);
+              const hasAccept = (card?.acceptance ?? "") !== "";
+              const verdictOk = !hasAccept || (card?.verdict === "pass");
               this.d.board.update(t.id, {
-                status: r.exitCode === 0 && !r.summary.startsWith("FAIL") ? "done" : "blocked",
-                resultSummary: r.summary, attempts: 1,
+                status: r.exitCode === 0 && !r.summary.startsWith("FAIL") && verdictOk ? "done" : "blocked",
+                resultSummary: r.exitCode === 0 && !verdictOk ? `${r.summary} [awaiting acceptance: verify with tools, then {"type":"verify","task_id":"...","verdict":"pass",...}]` : r.summary,
+                attempts: 1,
               });
               this.emitTasks();
               this.push(`agent_done: ${title} -> ${r.summary}`);
@@ -355,11 +371,26 @@ export class SchedulerLoop {
             }).catch((err: unknown) => {
               console.error(`[ceo] tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`);
             });
+          } else if (a.type === "verify") {
+            if (typeof a.task_id !== "string" || a.task_id.length === 0) throw new Error("invalid verify action: task_id required");
+            const progress = Math.max(0, Math.min(100, Number(a.progress ?? 0)));
+            const verdict = a.verdict;
+            if (verdict !== "pass" && verdict !== "partial" && verdict !== "fail") throw new Error(`invalid verify action: verdict must be pass|partial|fail (got ${JSON.stringify(verdict)})`);
+            const card = this.d.board.list().find((x) => x.id === a.task_id || x.id.startsWith(a.task_id));
+            if (!card) throw new Error(`invalid verify action: no task ${a.task_id} on the board`);
+            const note = typeof a.note === "string" ? a.note : "";
+            this.d.board.update(card.id, { progress, verdict, resultSummary: [card.resultSummary, note].filter(Boolean).join(" | ") });
+            this.emitTasks();
+            console.log(`[ceo] verify ${card.id.slice(0, 8)} -> ${verdict} ${progress}% ${note.slice(0, 80)}`);
           }
         } catch (e) {
           // one bad action must not kill the rest of the wake: block its task (if any) and move on
           const reason = e instanceof Error ? e.message : String(e);
           console.error(`[ceo] action failed: ${reason}`);
+          this.push(`action failed: ${reason}`);
+          if (reason.includes("verify action")) {
+            this.push(`verify failed: ${reason}`);
+          }
           if (taskId) { this.d.board.update(taskId, { status: "blocked", resultSummary: `action failed: ${reason}`, attempts: 1 }); this.emitTasks(); }
         }
       }

@@ -43,8 +43,8 @@ export interface ApiDeps {
 // Trimmed card shape the protocol ships, both in state and in tasks frames.
 // parentId/scheduledAt/dueAt are board-v2 fields (epoch ms numbers); the ?? null
 // keeps hand-built Task fixtures (tests) shipping an explicit null, not undefined.
-export function taskView(t: Task): { id: string; title: string; status: string; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null } {
-  return { id: t.id, title: t.title, status: t.status, resultSummary: t.resultSummary, createdAt: t.createdAt, parentId: t.parentId ?? null, scheduledAt: t.scheduledAt ?? null, dueAt: t.dueAt ?? null };
+export function taskView(t: Task): { id: string; title: string; status: string; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null; acceptance: string; progress: number; verdict: string } {
+  return { id: t.id, title: t.title, status: t.status, resultSummary: t.resultSummary, createdAt: t.createdAt, parentId: t.parentId ?? null, scheduledAt: t.scheduledAt ?? null, dueAt: t.dueAt ?? null, acceptance: t.acceptance, progress: t.progress, verdict: t.verdict };
 }
 
 const RING_MAX = 100;               // chat history: last 100 messages, in memory

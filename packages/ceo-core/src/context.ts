@@ -44,8 +44,10 @@ export class ContextAssembler {
     const walk = (n: TaskNode, depth: number): void => {
       const sched = n.scheduledAt != null ? ` [sched ${clock(n.scheduledAt, now)}]` : "";
       const due = n.dueAt != null ? ` [due ${clock(n.dueAt, now)}]` : "";
+      // acceptance verdict rides the board line so overdue re-decisions see it
+      const vf = n.verdict && n.verdict !== "unchecked" ? ` [${n.verdict}${n.progress ? ` ${n.progress}%` : ""}]` : "";
       const lead = depth === 0 ? "- " : `${"  ".repeat(Math.min(depth, 2))}↳ `;
-      lines.push(`${lead}[${n.id.slice(0, 8)}] p${n.priority} ${n.status} (${n.assignee || "unassigned"}) ${n.title}${sched}${due} :: ${n.resultSummary || "no result yet"}`);
+      lines.push(`${lead}[${n.id.slice(0, 8)}] p${n.priority} ${n.status} (${n.assignee || "unassigned"}) ${n.title}${sched}${due}${vf} :: ${n.resultSummary || "no result yet"}`);
       for (const c of n.children) walk(c, depth + 1);
     };
     for (const root of nestTasks(board)) walk(root, 0);
