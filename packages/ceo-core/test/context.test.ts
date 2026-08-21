@@ -25,7 +25,7 @@ test("board block renders an indented tree (indent capped at 2) with human-reada
   try {
     const mk = (id: string, title: string, extra: Partial<Task> = {}): Task => ({
       id, title, status: "todo", priority: 1, assignee: "hermes", attempts: 0, resultSummary: "", createdAt: 0,
-      parentId: null, scheduledAt: null, dueAt: null, ...extra,
+      parentId: null, scheduledAt: null, dueAt: null, overdueNaggedAt: null, acceptance: "", progress: 0, verdict: "unchecked", ...extra,
     });
     const today930 = new Date(2026, 7, 20, 9, 30).getTime();      // same day -> HH:MM
     const later = new Date(2026, 8, 4, 8, 5).getTime();           // another day -> MM-DD HH:MM
