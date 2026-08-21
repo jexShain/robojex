@@ -20,12 +20,10 @@ import {
   snapTo,
   yToTime,
 } from './agendaModel'
-import { DAY_MS, dayColHead, dayStartOf, fmtClock, fmtDayLabel, fmtStamp } from './timefmt'
+import { dayColHead, dayStartOf, fmtClock, fmtDayLabel, fmtStamp } from './timefmt'
 import { addDaysLocal } from './agendaModel'
 
 /** Day-mode default hour row height. */
-const BASE_HOUR_H = 56
-/** Days-mode compressed track. */
 const DAYS_HOUR_H = 32
 /** Max tree indentation in px. */
 const TREE_INDENT = 20

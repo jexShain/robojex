@@ -30,10 +30,15 @@ const ICONS: Record<ViewId, JSX.Element> = {
       <path d="M3.5 14c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5" />
     </svg>
   ),
+  activity: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M1.5 8.5h3l2-5 3 9 2-4h3" />
+    </svg>
+  ),
 }
 
-const LABELS: Record<ViewId, string> = { chat: 'Chat', board: 'Board', agenda: 'Agenda', thinking: 'Thinking' }
 
+const LABELS: Record<ViewId, string> = { chat: 'Chat', board: 'Board', agenda: 'Agenda', thinking: 'Thinking', activity: 'Activity' }
 export function ViewSwitcher({
   view,
   onChange,

@@ -2,7 +2,6 @@
 // (Vercel-style log). Subscribes to activityItems from the store.
 
 import { useEffect, useRef } from 'react'
-import { activityItems } from '../state/store'
 import { useStore } from '../state/store'
 import { formatTime } from './activityModel'
 import type { ActivityItem } from '../state/types'

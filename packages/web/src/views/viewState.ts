@@ -2,11 +2,11 @@
 // Agenda), persisted in localStorage like the theme pref. Pure loaders/savers
 // keep AppFrame free of storage concerns.
 
-export type ViewId = 'chat' | 'board' | 'agenda' | 'thinking'
+export type ViewId = 'chat' | 'board' | 'agenda' | 'thinking' | 'activity'
 
 const KEY = 'robojex-view'
 
-const VALID: Record<ViewId, true> = { chat: true, board: true, agenda: true, thinking: true }
+const VALID: Record<ViewId, true> = { chat: true, board: true, agenda: true, thinking: true, activity: true }
 
 export function loadView(): ViewId {
   try {
