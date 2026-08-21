@@ -5,6 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskBoard } from "../src/board.js";
 import { DatabaseSync } from "node:sqlite";
+// Test helpers for pumpGantt suite (Task 2)
+import { SchedulerLoop } from "../src/loop.js";
+import { LLMClient } from "../src/llm.js";
+import { AgentOrchestrator } from "../src/orchestrator.js";
+import { Auditor } from "../src/auditor.js";
+import { BudgetGovernor } from "../src/budget.js";
+import { ContextAssembler } from "../src/context.js";
+import { vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { TaskBoard } from "../src/board.js";
+import { DatabaseSync } from "node:sqlite";
 
 let dir: string; let b: TaskBoard;
 const NOW = 1_700_000_000_000;
@@ -76,5 +90,82 @@ describe("overdueTasks", () => {
     b.update(ids.find((t) => t.title === "late-done")!.id, { status: "done" });
     const od = b.overdueTasks(NOW);
     expect(od.map((t) => t.title).sort()).toEqual(["late-running", "late-todo"]);
+  });
+});
+
+function ganttRig(board: TaskBoard, runtimeDir: string, events: string[]) {
+  const chat = vi.fn(async (slot: string, msgs: Array<{ role: string; content: string }>) => {
+    if (slot === "patrol") {
+      const sys = String(msgs[0].content);
+      const mustAct = /due_spawn|overdue|unlocked/.test(sys);
+      return { content: mustAct ? '{"action":"act"}' : '{"action":"none"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    }
+    return { content: JSON.stringify({ actions: [] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const llm = { chat } as unknown as LLMClient;
+  const loop = new SchedulerLoop({
+    llm, board, ctx: new ContextAssembler(),
+    orchestrator: new AgentOrchestrator({ llm, runtimeDir, cmds: {} }),
+    auditor: new Auditor({ runtimeDir, reviewEvery: 99 }),
+    budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  const origPush = loop.push.bind(loop);
+  loop.push = (e: string) => { events.push(e); origPush(e); };
+  return { loop, chat };
+}
+
+describe("pumpGantt", () => {
+  it("emits due_spawn for a todo task past its scheduledAt exactly once", () => {
+    const events: string[] = [];
+    const b2 = new TaskBoard(join(dir, "p1.sqlite"));
+    const t = b2.add({ title: "scan disk", scheduledAt: NOW - 1000 });
+    const { loop } = ganttRig(b2, dir, events);
+    loop.pumpGantt(NOW);
+    loop.pumpGantt(NOW + 60_000); // second tick: same task must NOT re-emit
+    const spawns = events.filter((e) => e.startsWith("due_spawn:"));
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0]).toContain(t.id.slice(0, 8));
+    expect(spawns[0]).toContain("scan disk");
+  });
+
+  it("emits overdue with 30-minute throttle and stamps overdueNaggedAt", () => {
+    const events: string[] = [];
+    const b2 = new TaskBoard(join(dir, "p2.sqlite"));
+    const t = b2.add({ title: "late thing", dueAt: NOW - 1000 });
+    const { loop } = ganttRig(b2, dir, events);
+    loop.pumpGantt(NOW);
+    loop.pumpGantt(NOW + 60_000); // inside the 30-min window: throttled
+    expect(events.filter((e) => e.startsWith("overdue:")).length).toBe(1);
+    expect(b2.list()[0].overdueNaggedAt).toBe(NOW);
+    loop.pumpGantt(NOW + 31 * 60_000); // past the window: re-nag
+    expect(events.filter((e) => e.startsWith("overdue:")).length).toBe(2);
+  });
+
+  it("emits unlocked when the parent is done and the child is todo without a future schedule", () => {
+    const events: string[] = [];
+    const b2 = new TaskBoard(join(dir, "p3.sqlite"));
+    const parent = b2.add({ title: "parent" });
+    b2.update(parent.id, { status: "done" });
+    const child = b2.add({ title: "child step", parentId: parent.id });
+    b2.add({ title: "scheduled child", parentId: parent.id, scheduledAt: NOW + 3_600_000 }); // future: stays queued
+    const { loop } = ganttRig(b2, dir, events);
+    loop.pumpGantt(NOW);
+    const unl = events.filter((e) => e.startsWith("unlocked:"));
+    expect(unl).toHaveLength(1);
+    expect(unl[0]).toContain("child step");
+    expect(child.id).toBeTruthy();
+    loop.pumpGantt(NOW); // idempotent
+    expect(events.filter((e) => e.startsWith("unlocked:"))).toHaveLength(1);
+  });
+
+  it("patrol prompt carries the gantt event rules (act mandate)", async () => {
+    const events: string[] = [];
+    const b2 = new TaskBoard(join(dir, "p4.sqlite"));
+    const { loop, chat } = ganttRig(b2, dir, events);
+    b2.add({ title: "x", scheduledAt: NOW - 1 });
+    loop.pumpGantt(NOW); // pushes due_spawn -> debounce fires a cycle 500ms later
+    await new Promise((r) => setTimeout(r, 900));
+    const patrolSys = String((chat.mock.calls.find((c) => c[0] === "patrol")?.[1] as Array<{ role: string; content: string }>)?.[0]?.content ?? "");
+    expect(patrolSys).toContain("due_spawn");
   });
 });

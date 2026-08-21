@@ -75,6 +75,9 @@ export class SchedulerLoop {
 
   // takeover mode as last reported by takeoverd; observe is the safe default
   private modeNow: "observe" | "assist" | "full" = "observe";
+  // gantt pump idempotence: tasks already surfaced by due_spawn/unlocked stay
+  // quiet until their status changes; lost on restart, re-emit is idempotent
+  private ganttDispatched = new Set<string>();
 
   mode(): "observe" | "assist" | "full" { return this.modeNow; }
 
@@ -94,6 +97,36 @@ export class SchedulerLoop {
     const r = await this.d.builtinTools.resolveApproval(id, ok, this.modeNow);
     if (r !== null) this.push(`tool approval ${id} ${ok ? "approved" : "denied"}: ${r}`);
     return r;
+  }
+  // Minute-Gantt pump: runs at every tick BEFORE the "tick" event is queued
+  // so due/overdue/unlocked ride the same wake. Emits are event back-fill —
+  // decide responds by spawning or steering, never by doing the work itself.
+  pumpGantt(now = Date.now()): void {
+    const fmtClock = (ts: number): string => {
+      const d = new Date(ts);
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    };
+    for (const t of this.d.board.dueSpawnTasks(now)) {
+      if (this.ganttDispatched.has(t.id)) continue;
+      this.ganttDispatched.add(t.id);
+      this.push(`due_spawn: ${t.id.slice(0, 8)} ${t.title}${t.dueAt ? ` [due ${fmtClock(t.dueAt)}]` : ""}`);
+    }
+    const NAG_MS = 30 * 60_000;
+    for (const t of this.d.board.overdueTasks(now)) {
+      if (t.overdueNaggedAt !== null && now - t.overdueNaggedAt < NAG_MS) continue;
+      this.d.board.update(t.id, { overdueNaggedAt: now });
+      this.push(`overdue: ${t.id.slice(0, 8)} ${t.title} [due ${fmtClock(t.dueAt ?? now)}]`);
+    }
+    const byId = new Map(this.d.board.list().map((t) => [t.id, t] as const));
+    for (const t of byId.values()) {
+      if (t.status !== "todo" || !t.parentId) continue;
+      const p = byId.get(t.parentId);
+      if (!p || p.status !== "done") continue;
+      if (t.scheduledAt !== null && t.scheduledAt > now) continue; // future-scheduled child waits for its own due_spawn
+      if (this.ganttDispatched.has(t.id)) continue;
+      this.ganttDispatched.add(t.id);
+      this.push(`unlocked: ${t.id.slice(0, 8)} ${t.title}`);
+    }
   }
 
   // wire the api broadcast after construction (the api itself needs this loop)
@@ -154,7 +187,7 @@ export class SchedulerLoop {
       });
       // layer 1: cheap patrol triage
       const p = await this.d.llm.chat("patrol", [
-        { role: "system", content: "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: always act on it. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow." },
+        { role: "system", content: "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: always act on it. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:' and 'unlocked:' events (minute-Gantt: something is due now, late, or freed by its parent — always act)." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
       let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
@@ -443,7 +476,7 @@ export class SchedulerLoop {
     this.stopped = false;
     this.backoffMs = this.d.reconnectBaseMs ?? 1000;
     this.connectWs();
-    this.timer = setInterval(() => this.push("tick"), tickMs);
+    this.timer = setInterval(() => { this.pumpGantt(); this.push("tick"); }, tickMs);
     this.timer.unref();
   }
   stop(): void {
