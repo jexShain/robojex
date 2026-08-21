@@ -74,10 +74,11 @@ processGroupTests("process group", () => {
     cleanup();
     
     try {
-      // Command that will definitely timeout and create child processes
-      // Use a simple foreground sleep that will be killed with process group
+      // Background child + foreground blocker: the background sleep is a
+      // grandchild that only a group kill can reach (killing just the shell
+      // orphans it — that is the discriminator this test exists for)
       const r = await call("terminal", { 
-        command: `sleep ${uniqueSleep}`, 
+        command: `sleep ${uniqueSleep} & sleep 300`, 
         timeout: 2 
       });
       expect(r).toMatch(/timeout|timed out/i);
