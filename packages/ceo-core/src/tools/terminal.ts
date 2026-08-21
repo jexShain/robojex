@@ -16,11 +16,15 @@ function shellWrap(command: string): { file: string; args: string[] } {
 
 function run(file: string, args: string[], opts: { timeoutMs: number; workdir?: string }): Promise<{ out: string; code: number | null; timedOut: boolean }> {
   return new Promise((resolve) => {
-    const child = spawn(file, args, { cwd: opts.workdir, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, { cwd: opts.workdir, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
     let out = ""; let settled = false;
     const timer = setTimeout(() => {
       if (settled) return; settled = true;
-      child.kill("SIGKILL");
+      if (process.platform === "win32") {
+        child.kill("SIGKILL");
+      } else {
+        try { process.kill(-child.pid!, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+      }
       resolve({ out, code: null, timedOut: true });
     }, opts.timeoutMs);
     const feed = (b: Buffer) => { if (out.length < OUT_BUDGET * 2) out += b.toString("utf8"); };
@@ -34,7 +38,7 @@ async function terminal(args: Record<string, unknown>): Promise<string> {
   const command = args.command;
   if (typeof command !== "string" || command.length === 0) return "error: command (string) required";
   const timeout = Number(args.timeout ?? 180);
-  if (!Number.isFinite(timeout) || timeout < 1) return "error: timeout must be a positive integer (seconds)";
+  if (!Number.isFinite(timeout) || !Number.isInteger(timeout) || timeout < 1) return "error: timeout must be a positive integer (seconds)";
   if (timeout > TIMEOUT_CAP) return `error: timeout ${timeout}s exceeds the ${TIMEOUT_CAP}s cap — delegate long jobs to a sub-agent (spawn) instead`;
   const workdir = typeof args.workdir === "string" && args.workdir ? args.workdir : undefined;
   const { file, args: sh } = shellWrap(command);
@@ -49,7 +53,7 @@ async function processTool(args: Record<string, unknown>): Promise<string> {
   if (action === "list") {
     const r = process.platform === "win32"
       ? await run("tasklist", ["/FO", "CSV", "/NH"], { timeoutMs: 10_000 })
-      : await run("ps", ["-eo", "pid,ppid,pcpu,pmem,etime,args", "--sort=-pcpu"], { timeoutMs: 10_000 });
+      : await run("ps", ["-eo", "pid,ppid,pcpu,pmem,etime,args"], { timeoutMs: 10_000 });
     const lines = r.out.split("\n").filter(Boolean).slice(0, 30);
     return lines.join("\n") + `\n[${lines.length} of ${r.out.split("\n").filter(Boolean).length} rows]`;
   }
