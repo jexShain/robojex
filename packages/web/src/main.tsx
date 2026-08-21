@@ -10,6 +10,7 @@ import { WidgetAppRoot } from './widget/WidgetApp'
 import './styles/tokens.css'
 import './styles/app.css'
 import './styles/hud.css'
+import './styles/effects.css'
 import './widget/widget.css'
 
 const container = document.getElementById('root')

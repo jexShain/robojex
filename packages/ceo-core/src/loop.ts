@@ -146,6 +146,8 @@ export class SchedulerLoop {
     // acceptance loop: running tasks with a standard get a verify_due nudge,
     // 5-minute throttle (in-memory; a restart simply re-nudges — idempotent)
     for (const t of this.d.board.list()) {
+      // settled tasks release their nudge slot (the map is bounded by live work)
+      if (t.status !== "running") this.verifyNudgedAt.delete(t.id);
       if (t.status !== "running" || !t.acceptance) continue;
       const last = this.verifyNudgedAt.get(t.id) ?? 0;
       if (now - last < 5 * 60_000) continue;
@@ -402,7 +404,9 @@ export class SchedulerLoop {
             // acceptance loop closes here: a pass on a task that finished
             // cleanly but was held blocked pending acceptance promotes it
             if (verdict === "pass" && card.status === "blocked" && card.resultSummary.includes("[awaiting acceptance")) {
-              this.d.board.update(card.id, { status: "done" });
+              // strip the now-obsolete acceptance instructions from the done card
+              const cleaned = [card.resultSummary, note].filter(Boolean).join(" | ").replace(/\s*\[awaiting acceptance[^\]]*\]/g, "");
+              this.d.board.update(card.id, { status: "done", resultSummary: cleaned });
             }
             this.emitTasks();
             console.log(`[ceo] verify ${card.id.slice(0, 8)} -> ${verdict} ${progress}%${verdict === "pass" && card.status === "blocked" ? " -> done" : ""} ${note.slice(0, 80)}`);

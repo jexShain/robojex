@@ -14,7 +14,7 @@ type Tab = 'gantt' | 'rings' | 'feed'
 
 const TABS: Tab[] = ['gantt', 'rings', 'feed']
 const ROTATE_MS = 8000
-// ±2h horizontal time band: a task's scheduledAt/dueAt maps onto a 4h span
+// ±1h horizontal time band: a task's scheduledAt/dueAt maps onto a 2h span
 // centered on the server-aligned now (now-line sits at 50%).
 const WINDOW_MS = 2 * 3_600_000
 
@@ -40,6 +40,10 @@ export function WidgetApp(): ReactElement {
     return () => clearInterval(id)
   }, [pinned])
 
+
+  // alive = any loop traffic: hud events OR cycle frames in the transcript —
+  // an idle-but-ticking core must still show a beating heart
+  const alive = s.lastHud !== null || s.transcript.some((t) => t.kind === 'cycle')
   const serverNow = Date.now() + (s.clockOffset ?? 0)
   const running = s.tasks.filter((t) => t.status === 'running')
 
@@ -52,7 +56,7 @@ export function WidgetApp(): ReactElement {
   return (
     <div className="widget-root">
       <header className="widget-head">
-        <span className={`hud-heart${s.lastHud ? ' alive' : ''}`} title="jex heartbeat" />
+        <span className={`hud-heart${alive ? ' alive' : ''}`} title="jex heartbeat" />
         <nav>
           {TABS.map((t) => (
             <button
