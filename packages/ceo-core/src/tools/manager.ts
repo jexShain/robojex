@@ -4,6 +4,8 @@
 // checkFn caching, and the assist-mode approval queue (hermes write_approval
 // semantics: writes wait for a human yes/no delivered over chat).
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import type { ToolCtx, ToolEntry } from "./registry.js";
 import { ToolRegistry } from "./registry.js";
 import { fileTools } from "./file.js";
@@ -13,7 +15,14 @@ import { boardTools, miscBridges } from "./bridges.js";
 export const OUT_LIMIT = 8192;
 
 // hermes file_safety list + jex's own secret store
-const SENSITIVE = [/\.git-credentials$/i, /[\\/]\.aws[\\/]credentials$/i, /[\\/]\.ssh[\\/]/i, /[\\/]runtime[\\/]config\.json$/i, /(^|[\\/])\.env(\.|$)/i];
+const SENSITIVE = [
+  /(^|[\\/])\.git-credentials$/i,
+  /(^|[\\/])\.aws[\\/]credentials$/i,
+  /(^|[\\/])\.ssh[\\/]/i,
+  /(^|[\\/])runtime[\\/]config\.json$/i,
+  /(^|[\\/])config\.json$/i,
+  /(^|[\\/])\.env[^\\/]*$/i,
+];
 
 export type Gate = "observe" | "assist" | "full";
 
@@ -36,9 +45,13 @@ export class ToolManager {
     const hit = this.cache.get(e.name);
     const now = Date.now();
     if (hit && now - hit.ts < 30_000) return hit.ok;
-    const ok = e.checkFn();
-    this.cache.set(e.name, { ok, ts: now });
-    return ok;
+    try {
+      const ok = e.checkFn();
+      this.cache.set(e.name, { ok, ts: now });
+      return ok;
+    } catch {
+      return false;
+    }
   }
 
   schemasBlock(): string {
@@ -52,16 +65,21 @@ export class ToolManager {
     return lines.length ? `# BUILTIN TOOLS\ninvoke via {"type":"tool_call","tool":"<name>","args":{...}}\n${lines.join("\n")}` : "";
   }
 
+  // Normalize path for sensitive-path detection
+  private normalizePath(p: string): string {
+    const withHome = p.replace(/^~(?=\/|\\)/, homedir());
+    return resolve(withHome);
+  }
+
   // sensitive-path scan: any string arg that names a forbidden file is refused
   private guardPaths(name: string, args: Record<string, unknown>): string | null {
-    const runtimeDir = this.opts.ctx.runtimeDir;
     for (const v of Object.values(args)) {
       if (typeof v !== "string") continue;
-      // Block runtimeDir/config.json explicitly
-      if (v === runtimeDir + "/config.json" || v === runtimeDir + "\\config.json") {
-        return `blocked sensitive path: ${v} (tool ${name} refused; secrets are off-limits)`;
+      // Check both original and normalized forms against sensitive patterns
+      const normalized = this.normalizePath(v);
+      for (const check of [v, normalized]) {
+        if (SENSITIVE.some((rx) => rx.test(check))) return `blocked sensitive path: ${v} (tool ${name} refused; secrets are off-limits)`;
       }
-      if (SENSITIVE.some((rx) => rx.test(v))) return `blocked sensitive path: ${v} (tool ${name} refused; secrets are off-limits)`;
     }
     return null;
   }
@@ -76,6 +94,11 @@ export class ToolManager {
     if (e.writes && gate === "assist") {
       const id = randomUUID().slice(0, 8);
       this.pending.set(id, { entry: e, args });
+      // Cap pending approvals at 50 entries; evict oldest if exceeded
+      if (this.pending.size > 50) {
+        const firstKey = this.pending.keys().next().value;
+        if (firstKey) this.pending.delete(firstKey);
+      }
       return `needs-approval ${id}: '${name}' is a write-class tool under assist mode — ask the human to reply 'approve ${id}' or 'deny ${id}'`;
     }
     try {
@@ -87,11 +110,21 @@ export class ToolManager {
 
   pendingApprovals(): string[] { return [...this.pending.keys()]; }
 
-  async resolveApproval(id: string, ok: boolean): Promise<string | null> {
+  async resolveApproval(id: string, ok: boolean, gate?: Gate): Promise<string | null> {
     const p = this.pending.get(id);
     if (!p) return null;
     this.pending.delete(id);
     if (!ok) return `denied ${id}: '${p.entry.name}' cancelled by the human`;
+    // Re-check mode gate when gate is explicitly provided
+    if (gate === "observe") return `denied ${id}: observe mode re-checked`;
+    // Verify tool is still available before executing (bypass cache for fresh check)
+    if (p.entry.checkFn) {
+      try {
+        if (!p.entry.checkFn()) return `error: tool no longer available`;
+      } catch {
+        return `error: tool no longer available`;
+      }
+    }
     try {
       return truncate(await p.entry.handler(p.args, this.opts.ctx));
     } catch (err) {

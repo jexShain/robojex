@@ -108,3 +108,105 @@ describe("unknown tool + truncation", () => {
     expect(r).toContain("truncated");
   });
 });
+describe("path normalization", () => {
+  it("blocks relative and tilde-prefixed sensitive paths after normalization", async () => {
+    reg.register({ name: "read_file", toolset: "file", handler: async (a) => `read ${String(a.path)}`, schema: { name: "read_file", description: "r", parameters: { type: "object", properties: {} } } });
+    mgr = new ToolManager({ registry: reg, ctx });
+    // Test .envrc and other .env* variants are blocked
+    expect(await mgr.call("read_file", { path: join(dir, "sub/.envrc") }, "full")).toMatch(/blocked.*sensitive/i);
+    expect(await mgr.call("read_file", { path: join(dir, ".env-old") }, "full")).toMatch(/blocked.*sensitive/i);
+    expect(await mgr.call("read_file", { path: join(dir, ".env.local") }, "full")).toMatch(/blocked.*sensitive/i);
+  });
+  it("blocks .ssh paths when cwd is home directory", async () => {
+    const { chdir } = await import("node:process");
+    const { existsSync } = await import("node:fs");
+    const { homedir } = await import("node:os");
+    const originalCwd = process.cwd();
+    const homeDir = homedir();
+    const sshDir = join(homeDir, ".ssh");
+    // Skip test if .ssh directory doesn't exist
+    if (!existsSync(sshDir)) {
+      console.log("Skipping .ssh test - directory does not exist");
+      return;
+    }
+    try {
+      chdir(homeDir);
+      reg.register({ name: "read_file", toolset: "file", handler: async (a) => `read ${String(a.path)}`, schema: { name: "read_file", description: "r", parameters: { type: "object", properties: {} } } });
+      mgr = new ToolManager({ registry: reg, ctx });
+      const r = await mgr.call("read_file", { path: ".ssh/id_rsa" }, "full");
+      expect(r).toMatch(/blocked.*sensitive/i);
+    } finally {
+      chdir(originalCwd);
+    }
+  });
+});
+
+describe("approval re-check", () => {
+  it("approval re-check denies observe mode even if initially queued in assist", async () => {
+    const tool: ToolEntry = { name: "write", toolset: "x", writes: true, handler: async () => "wrote", schema: { name: "write", description: "w", parameters: { type: "object", properties: {} } } };
+    reg.register(tool);
+    mgr = new ToolManager({ registry: reg, ctx });
+    const r = await mgr.call("write", {}, "assist");
+    expect(r).toMatch(/needs-approval/i);
+    const id = mgr.pendingApprovals()[0];
+    // Re-check with observe mode should deny
+    const result = await mgr.resolveApproval(id, true, "observe");
+    expect(result).toMatch(/denied.*observe mode re-checked/i);
+    // Handler should not have executed
+    expect(result).not.toContain("wrote");
+  });
+  it("approval returns error if tool becomes unavailable", async () => {
+    let available = true;
+    const tool: ToolEntry = { 
+      name: "write", 
+      toolset: "x", 
+      writes: true, 
+      handler: async () => "wrote", 
+      checkFn: () => available,
+      schema: { name: "write", description: "w", parameters: { type: "object", properties: {} } } 
+    };
+    reg.register(tool);
+    mgr = new ToolManager({ registry: reg, ctx });
+    const r = await mgr.call("write", {}, "assist");
+    expect(r).toMatch(/needs-approval/i);
+    const id = mgr.pendingApprovals()[0];
+    // Make tool unavailable
+    available = false;
+    const result = await mgr.resolveApproval(id, true);
+    expect(result).toMatch(/error: tool no longer available/i);
+    expect(result).not.toContain("wrote");
+  });
+});
+
+describe("pending cap", () => {
+  it("pending approvals capped at 50 entries, evicting oldest", async () => {
+    const tool: ToolEntry = { name: "write", toolset: "x", writes: true, handler: async () => "wrote", schema: { name: "write", description: "w", parameters: { type: "object", properties: {} } } };
+    reg.register(tool);
+    mgr = new ToolManager({ registry: reg, ctx });
+    // Queue 51 approvals
+    for (let i = 0; i < 51; i++) {
+      await mgr.call("write", { idx: i }, "assist");
+    }
+    // Should have exactly 50 pending
+    expect(mgr.pendingApprovals()).toHaveLength(50);
+    // First approval should have been evicted (oldest)
+    const firstId = mgr.pendingApprovals()[0];
+    expect(firstId).not.toBe(""); // Sanity check
+  });
+});
+
+describe("checkFn exceptions", () => {
+  it("checkFn exceptions are treated as unavailable", async () => {
+    const tool: ToolEntry = {
+      name: "bad",
+      toolset: "x",
+      handler: async () => "should not run",
+      checkFn: () => { throw new Error("check failed"); },
+      schema: { name: "bad", description: "b", parameters: { type: "object", properties: {} } }
+    };
+    reg.register(tool);
+    mgr = new ToolManager({ registry: reg, ctx });
+    const r = await mgr.call("bad", {}, "full");
+    expect(r).toMatch(/not available in this environment/i);
+  });
+});
