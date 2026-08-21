@@ -45,12 +45,15 @@ function AgendaBlockView({
   block,
   now,
   compact,
+  pending = false,
   onOpen,
   onDragStart,
 }: {
   block: AgendaBlock
   now: number
   compact?: boolean
+  /** locally staged reschedule — core has no task-update endpoint yet */
+  pending?: boolean
   onOpen(id: string): void
   onDragStart?: (e: PointerEvent, block: AgendaBlock) => void
 }) {
@@ -80,6 +83,11 @@ function AgendaBlockView({
     >
       {!compact ? <span className="ab-time">{range}</span> : null}
       <span className="ab-title">{t.title}</span>
+      {pending ? (
+        <span className="ab-pend" title="已暂存（需后端任务更新端点）">
+          ⏳
+        </span>
+      ) : null}
       {block.spansBeyond && d != null ? (
         <span className="ab-more">→ {fmtStamp(d, now)}</span>
       ) : null}
@@ -120,8 +128,23 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
   const now = Date.now() + state.clockOffset
   const today0 = dayStartOf(now)
   const day0 = addDaysLocal(today0, dayOffset)
-  const blocks = useMemo(() => blocksForDay(state.tasks, day0, now), [state.tasks, day0, now])
-  const side = useMemo(() => unscheduledTasks(state.tasks), [state.tasks])
+
+  // Drag-reschedule staging: the core API only has POST /api/task (create);
+  // there is no task-update endpoint, so a drop is staged locally, applied
+  // visually and flagged ⏳ — never silently dropped.
+  // TODO: send PATCH /api/task/:id { scheduledAt } once ceo-core grows one.
+  const [pending, setPending] = useState<Map<string, number>>(() => new Map())
+  const tasks = useMemo(
+    () =>
+      pending.size === 0
+        ? state.tasks
+        : state.tasks.map((t) =>
+            pending.has(t.id) ? { ...t, scheduledAt: pending.get(t.id) ?? null } : t,
+          ),
+    [state.tasks, pending],
+  )
+  const blocks = useMemo(() => blocksForDay(tasks, day0, now), [tasks, day0, now])
+  const side = useMemo(() => unscheduledTasks(tasks), [tasks])
   const isToday = dayOffset === 0
   const line = isToday ? nowPct(day0, now) : null
 
@@ -180,8 +203,9 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
       const y = e.clientY - rect.top + el.scrollTop
       const trackH = 24 * h
       const newTime = snapTo(yToTime(y, trackH, day0, zoom, scrollHours), snapMinutes(zoom))
-      // TODO: emit reschedule via WebSocket — for now update visual only
-      console.log(`[drag-reschedule] ${dragBlock.task.id} → ${new Date(newTime).toISOString()}`)
+      // staged locally (see `pending` above) — flagged in the UI, not lost
+      console.log(`[drag-reschedule] ${dragBlock.task.id} → ${new Date(newTime).toISOString()} (staged; no backend update endpoint)`)
+      setPending((m) => new Map(m).set(dragBlock.task.id, newTime))
     }
     setDragBlock(null)
     isDragging.current = false
@@ -244,6 +268,11 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
           <span className="agenda-date dim">today</span>
         )}
         <span className="agenda-zoom-badge">{zoom}h</span>
+        {pending.size > 0 ? (
+          <span className="agenda-staged" title="拖拽改期已暂存本地，等待后端任务更新端点">
+            ⏳ 已暂存 ×{pending.size}（需后端任务更新端点）
+          </span>
+        ) : null}
       </div>
       <div className="agenda-body">
         <div className="agenda-timeline" ref={scrollRef}>
@@ -263,13 +292,14 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
                 key={b.task.id}
                 block={b}
                 now={now}
+                pending={pending.has(b.task.id)}
                 onOpen={onOpen}
                 onDragStart={onPointerDown}
               />
             ))}
             {/* Child blocks (tree grouping) */}
             {blocks.flatMap((b) => b.childBlocks.map((c) => (
-              <AgendaBlockView key={c.task.id} block={c} now={now} onOpen={onOpen} onDragStart={onPointerDown} />
+              <AgendaBlockView key={c.task.id} block={c} now={now} pending={pending.has(c.task.id)} onOpen={onOpen} onDragStart={onPointerDown} />
             )))}
             {line !== null ? <NowLine pct={line} now={now} /> : null}
           </div>

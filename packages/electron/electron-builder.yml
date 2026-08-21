@@ -1,17 +1,80 @@
+# packages/electron/electron-builder.yml — packaging for the RoboJex desktop app.
+#
+# App layout inside the asar (directories.app = packages/electron):
+#   main.js / preload.js / icon.png / package.json   <- electron shell
+#   web/                 <- packages/web/dist  (vite build, base './')
+#   core/                <- packages/ceo-core/dist + its package.json
+#                          ("type":"module" so ESM dynamic import works from
+#                          the CJS shell), plus node_modules/ws — the only
+#                          runtime dep of ceo-core (everything else is node:)
+#   build/icon.png       <- buildResources (512px png; auto-converted to
+#                          ico/icns for win/mac targets)
 appId: com.robojex.app
 productName: robojex
 electronVersion: 43.4.1
+directories:
+  # relative to the project dir (repo root — where electron-builder runs)
+  app: packages/electron
+  output: dist-electron
+  buildResources: packages/electron/build
 publish:
   provider: generic
   url: ''
-directories:
-  output: ../../dist-electron
+asar: true
 files:
-  - "**/*"
-  - "!node_modules/**/*"
+  # electron shell
+  - main.js
+  - preload.js
+  - package.json
+  - icon.png
+  # workspace traversal hoists the ROOT package.json production deps (react,
+  # fonts, highlight.js — web-only, already bundled by vite) into the asar;
+  # prune the auto-collected node_modules (the mapped ws below is a separate
+  # file set and survives this filter)
+  - '!node_modules/**'
+  # web UI -> app/web (loaded via the embedded ApiServer, file:// as fallback)
+  - from: ../web/dist
+    to: web
+    filter:
+      - '**/*'
+  # embedded ceo-core -> app/core/dist/* + core/package.json. The package
+  # .json must ride along: it carries "type":"module" (the CJS app-root
+  # package.json must not), which makes the ESM dynamic import resolve.
+  - from: ../ceo-core
+    to: core
+    filter:
+      - dist/**/*
+      - package.json
+  # ceo-core's single external dependency (node: builtins need nothing)
+  - from: ../../node_modules/ws
+    to: node_modules/ws
+    filter:
+      - '**/*'
+      - '!node_modules/**' # ws has no transitive runtime deps
+asarUnpack:
+  # ESM dynamic import from the unpacked real filesystem is the most robust
+  # path for the embedded core (in-asar import is the first candidate anyway)
+  - core/**/*
 win:
   target:
     - nsis
+  icon: build/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: RoboJex
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.productivity
+  icon: build/icon.png
 linux:
   target:
     - AppImage
+  category: Development
+  icon: build/icon.png

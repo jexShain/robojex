@@ -1,158 +1,453 @@
-// packages/web/src/sidebar/Sidebar.tsx — task board, budget footer, mode chip,
-// theme triple-cube switcher. DSH visual clone on the token vocabulary.
+// packages/web/src/sidebar/Sidebar.tsx — conversation sidebar: brand row,
+// new-chat, search, grouped list (📌置顶/今天/昨天/近 7 天/更早) with hover +
+// context-menu actions (pin / inline rename / delete-with-confirm), skeleton
+// while loading, and a jex status card (gear-colored breathing dot, connection
+// state, version). Zero required props — <Sidebar /> just works; collapse goes
+// through window.robojex?.collapseSidebar?.() when the shell provides it.
 
-import { statusTone, useStore } from '../state/store'
-import type { ThemeApi, ThemePref } from '../state/theme'
-import type { Task } from '../state/types'
-import { ViewSwitcher } from '../views/ViewSwitcher'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+} from 'react'
+import { useStore } from '../state/store'
+import type { Conversation } from '../state/types'
+import type { ThemeApi } from '../state/theme'
 import type { ViewId } from '../views/viewState'
+import { groupConversations, relTime } from './grouping'
+import './sidebar.css'
 
-const MODE_LABEL: Record<string, string> = {
-  observe: 'observe',
-  assist: 'assist',
-  full: 'full',
+const CONN_LABEL: Record<string, string> = {
+  connecting: '连接中…',
+  live: '已连接',
+  reconnecting: '重连中…',
 }
 
-function TaskItem({ task, active, onSelect }: { task: Task; active: boolean; onSelect(): void }) {
+interface MenuState {
+  id: string
+  x: number
+  y: number
+}
+
+function BoltIcon(): JSX.Element {
   return (
-    <button
-      type="button"
-      className={`task-item${active ? ' active' : ''}`}
-      onClick={onSelect}
-      title={`${task.title} · ${task.status}`}
-    >
-      <span className={`dot ${statusTone(task.status)}`} />
-      <span className="t">{task.title}</span>
-    </button>
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+    </svg>
+  )
+}
+function PinIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 17v5M9 10.8V4h6v6.8l2.7 2.7a1 1 0 0 1-.7 1.7H7a1 1 0 0 1-.7-1.7Z" />
+    </svg>
+  )
+}
+function PencilIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+    </svg>
+  )
+}
+function TrashIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  )
+}
+function SearchIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  )
+}
+function CollapseIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <line x1="9" y1="4" x2="9" y2="20" />
+      <path d="m16.5 9.5-2.5 2.5 2.5 2.5" />
+    </svg>
   )
 }
 
-function ThemeCubes({ theme }: { theme: ThemeApi }) {
-  const cubes: { pref: ThemePref; title: string; icon: JSX.Element }[] = [
-    {
-      pref: 'light',
-      title: 'Light theme',
-      icon: (
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-          <circle cx="8" cy="8" r="3.2" />
-          <path d="M8 1.2v1.6M8 13.2v1.6M1.2 8h1.6M13.2 8h1.6M3.2 3.2l1.1 1.1M11.7 11.7l1.1 1.1M12.8 3.2l-1.1 1.1M4.3 11.7l-1.1 1.1" />
-        </svg>
-      ),
-    },
-    {
-      pref: 'dark',
-      title: 'Dark theme',
-      icon: (
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-          <path d="M13.2 9.9A5.6 5.6 0 0 1 6.1 2.8a5.6 5.6 0 1 0 7.1 7.1Z" />
-        </svg>
-      ),
-    },
-    {
-      pref: 'system',
-      title: 'Follow system theme',
-      icon: (
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-          <rect x="2" y="3" width="12" height="8.5" rx="1.5" />
-          <path d="M5.5 13.5h5" />
-        </svg>
-      ),
-    },
-  ]
+function ConvItem({
+  conv,
+  active,
+  staggerMs,
+  editing,
+  confirming,
+  onOpen,
+  onStartRename,
+  onStartConfirm,
+  onRename,
+  onCancel,
+  onPin,
+  onDelete,
+  onContext,
+}: {
+  conv: Conversation
+  active: boolean
+  staggerMs: number
+  editing: boolean
+  confirming: boolean
+  onOpen(): void
+  onStartRename(): void
+  onStartConfirm(): void
+  onRename(title: string): void
+  onCancel(): void
+  onPin(): void
+  onDelete(): void
+  onContext(e: ReactMouseEvent): void
+}): JSX.Element {
+  const [draft, setDraft] = useState(conv.title)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editing) {
+      setDraft(conv.title)
+      requestAnimationFrame(() => {
+        inputRef.current?.focus()
+        inputRef.current?.select()
+      })
+    }
+  }, [editing, conv.title])
+
+  const renameKey = (e: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Enter') onRename(draft.trim() || conv.title)
+    else if (e.key === 'Escape') onCancel()
+  }
+
   return (
-    <div className="theme-cubes" role="group" aria-label="Theme">
-      {cubes.map((c) => (
-        <button
-          key={c.pref}
-          type="button"
-          className={`cube${theme.pref === c.pref ? ' active' : ''}`}
-          title={c.title}
-          aria-label={c.title}
-          aria-pressed={theme.pref === c.pref}
-          onClick={() => theme.setPref(c.pref)}
-        >
-          {c.icon}
-        </button>
-      ))}
+    <div
+      className={`sb-item${active ? ' active' : ''}`}
+      data-testid="conv-item"
+      data-active={active ? 'true' : 'false'}
+      style={{ animationDelay: `${Math.min(staggerMs, 300)}ms` } as CSSProperties}
+      onClick={onOpen}
+      onContextMenu={onContext}
+      title={conv.title}
+    >
+      {editing ? (
+        <input
+          ref={inputRef}
+          className="sb-rename"
+          value={draft}
+          spellCheck={false}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={renameKey}
+          onBlur={() => onRename(draft.trim() || conv.title)}
+        />
+      ) : (
+        <>
+          <div className="sb-item-top">
+            <span className="sb-title">{conv.title}</span>
+            <span className="sb-time">{relTime(conv.updatedAt)}</span>
+          </div>
+          <div className="sb-preview">
+            {conv.preview || (conv.messageCount > 0 ? `${conv.messageCount} 条消息` : '新对话')}
+          </div>
+          <div className="sb-acts" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="sb-act"
+              data-testid="conv-pin"
+              title={conv.pinned === 1 ? '取消置顶' : '置顶'}
+              aria-label={conv.pinned === 1 ? '取消置顶' : '置顶'}
+              onClick={onPin}
+            >
+              <PinIcon />
+            </button>
+            <button
+              type="button"
+              className="sb-act"
+              data-testid="conv-rename"
+              title="重命名"
+              aria-label="重命名"
+              onClick={onStartRename}
+            >
+              <PencilIcon />
+            </button>
+            <button
+              type="button"
+              className="sb-act danger"
+              data-testid="conv-delete"
+              title="删除"
+              aria-label="删除对话"
+              onClick={onStartConfirm}
+            >
+              <TrashIcon />
+            </button>
+          </div>
+          {confirming ? (
+            <div className="sb-confirm" onClick={(e) => e.stopPropagation()}>
+              <span className="q">删除「{conv.title}」？</span>
+              <button type="button" className="sb-confirm-btn del" onClick={onDelete}>
+                删除
+              </button>
+              <button type="button" className="sb-confirm-btn" onClick={onCancel}>
+                取消
+              </button>
+            </div>
+          ) : null}
+        </>
+      )}
     </div>
   )
 }
 
-export function Sidebar({
-  theme,
-  overlay = false,
-  onCollapse,
-  view,
-  onView,
-}: {
-  theme: ThemeApi
+/**
+ * AppFrame passes its full shell wiring; the sidebar consumes `overlay` and
+ * `onCollapse` only — view switching lives in the top bar by spec. Collapse
+ * prefers the Electron bridge (window.robojex.collapseSidebar) and falls back
+ * to the shell callback.
+ */
+export function Sidebar(props: {
+  theme?: ThemeApi
   overlay?: boolean
-  onCollapse(): void
-  view: ViewId
-  onView(view: ViewId): void
-}) {
-  const { state, selectTask } = useStore()
-  const budget = state.budget
-  const pct =
-    budget && budget.dailyTokens > 0
-      ? Math.min(100, Math.round((budget.spentToday / budget.dailyTokens) * 100))
-      : 0
+  onCollapse?: () => void
+  view?: ViewId
+  onView?: (view: ViewId) => void
+} = {}) {
+  const { overlay = false, onCollapse } = props
+  const {
+    state,
+    newConversation,
+    selectConversation,
+    renameConversation,
+    togglePinConversation,
+    deleteConversationById,
+  } = useStore()
+  const [query, setQuery] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [menu, setMenu] = useState<MenuState | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  const gearLevel = state.gears.find((g) => g.id === state.gear)?.level ?? 2
+  const gearName =
+    state.gears.find((g) => g.id === state.gear)?.name ??
+    ({ dormant: '休眠', eco: '省电', balanced: '均衡', focused: '专注', turbo: '狂暴' } as Record<string, string>)[state.gear] ??
+    state.gear
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return state.conversations
+    return state.conversations.filter(
+      (c) => c.title.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q),
+    )
+  }, [state.conversations, query])
+
+  const groups = useMemo(() => groupConversations(filtered), [filtered])
+  const activeId = state.activeConvId
+
+  /* close the context menu on any outside pointer / scroll / Esc */
+  useEffect(() => {
+    if (!menu) return
+    const close = (e: Event): void => {
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return
+      setMenu(null)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenu(null)
+    }
+    document.addEventListener('pointerdown', close)
+    window.addEventListener('resize', close)
+    document.addEventListener('scroll', close, true)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      window.removeEventListener('resize', close)
+      document.removeEventListener('scroll', close, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
+
+  const menuConv = menu ? state.conversations.find((c) => c.id === menu.id) : undefined
+
+  const clampMenu = (x: number, y: number): { x: number; y: number } => ({
+    x: Math.min(x, window.innerWidth - 170),
+    y: Math.min(y, window.innerHeight - 150),
+  })
+
+  const collapse = (): void => {
+    const w = window as unknown as { robojex?: { collapseSidebar?: () => void } }
+    if (typeof w.robojex?.collapseSidebar === 'function') w.robojex.collapseSidebar()
+    else onCollapse?.()
+  }
+
+  let stagger = 0
 
   return (
-    <aside className={`sidebar${overlay ? ' overlay' : ''}`}>
-      <div className="sidebar-head">
-        <div className="logo">j</div>
-        <span className="sidebar-title">jex</span>
-        <span className={`conn-dot ${state.conn}`} title={`connection: ${state.conn}`} />
+    <aside
+      className={`sb${overlay ? ' overlay' : ''}`}
+      style={{ '--rj-gear-current': `var(--rj-gear-${gearLevel})` } as CSSProperties}
+    >
+      <div className="sb-brand">
+        <div className="sb-orb">
+          <BoltIcon />
+        </div>
+        <div className="sb-brand-text">
+          <div className="sb-brand-name">RoboJex</div>
+          <div className="sb-brand-sub">{gearName}挡 · 常驻 AI</div>
+        </div>
         <button
           type="button"
-          className="icon-btn"
-          title="Collapse sidebar"
-          aria-label="Collapse sidebar"
-          onClick={onCollapse}
+          className="sb-collapse"
+          title="折叠侧栏"
+          aria-label="折叠侧栏"
+          onClick={collapse}
         >
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <rect x="2" y="2.5" width="12" height="11" rx="2" />
-            <line x1="6" y1="2.5" x2="6" y2="13.5" />
-            <path d="M11 6.5 9 8l2 1.5" />
-          </svg>
+          <CollapseIcon />
         </button>
       </div>
 
-      <div className="task-list">
-        <div className="task-group">Tasks · {state.tasks.length}</div>
-        {state.tasks.length === 0 ? (
-          <div className="task-empty">no tasks yet — jex will post its board here</div>
-        ) : (
-          state.tasks.map((t) => (
-            <TaskItem
-              key={t.id}
-              task={t}
-              active={t.id === state.selectedTaskId}
-              onSelect={() => selectTask(t.id === state.selectedTaskId ? null : t.id)}
-            />
-          ))
-        )}
+      <button
+        type="button"
+        className="sb-new"
+        data-testid="sidebar-new-chat"
+        onClick={() => void newConversation()}
+      >
+        <span className="plus" aria-hidden="true">＋</span>新对话
+      </button>
+
+      <div className="sb-search">
+        <SearchIcon />
+        <input
+          type="text"
+          value={query}
+          placeholder="搜索对话"
+          spellCheck={false}
+          aria-label="搜索对话"
+          onChange={(e) => setQuery(e.target.value)}
+        />
       </div>
 
-      <div className="sidebar-foot">
-        <ViewSwitcher view={view} onChange={onView} />
-        <div className="budget-row" title={budget?.line ?? 'budget unknown'}>
-          <span>{budget ? budget.line : 'budget unknown'}</span>
-          {budget && budget.dailyTokens > 0 ? (
-            <div className="budget-bar">
-              <div style={{ width: `${pct}%` }} />
+      <nav className="sb-list" aria-label="会话列表">
+        {state.convsLoading ? (
+          <div className="sb-skel" aria-label="加载中">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="row rj-skeleton" />
+            ))}
+          </div>
+        ) : groups.length === 0 ? (
+          <div className="sb-empty">
+            {query ? '没有匹配的对话' : '还没有对话\n点击「＋ 新对话」开始'}
+          </div>
+        ) : (
+          groups.map((g) => (
+            <div key={g.key} data-group={g.key}>
+              <div className="sb-group-label">{g.label}</div>
+              {g.items.map((c) => (
+                <ConvItem
+                  key={c.id}
+                  conv={c}
+                  active={c.id === activeId}
+                  staggerMs={(stagger += 30)}
+                  editing={editingId === c.id}
+                  confirming={confirmId === c.id}
+                  onOpen={() => {
+                    if (editingId !== c.id) void selectConversation(c.id)
+                  }}
+                  onStartRename={() => {
+                    setConfirmId(null)
+                    setEditingId(c.id)
+                  }}
+                  onStartConfirm={() => {
+                    setEditingId(null)
+                    setConfirmId(c.id)
+                  }}
+                  onRename={(title) => {
+                    setEditingId(null)
+                    if (title !== c.title) void renameConversation(c.id, title)
+                  }}
+                  onCancel={() => {
+                    setEditingId(null)
+                    setConfirmId(null)
+                  }}
+                  onPin={() => void togglePinConversation(c.id, c.pinned !== 1)}
+                  onDelete={() => {
+                    setConfirmId(null)
+                    void deleteConversationById(c.id)
+                  }}
+                  onContext={(e) => {
+                    e.preventDefault()
+                    setMenu({ id: c.id, x: e.clientX, y: e.clientY })
+                  }}
+                />
+              ))}
             </div>
-          ) : null}
-        </div>
-        <div className="foot-line">
-          <span className={`chip ${state.mode}`}>
-            <span className="cdot" />
-            {MODE_LABEL[state.mode] ?? state.mode}
-          </span>
-          <ThemeCubes theme={theme} />
+          ))
+        )}
+      </nav>
+
+      <div className="sb-foot">
+        <div
+          className="sb-status"
+          data-testid="conn-status"
+          title={`jex · ${gearName} · ${CONN_LABEL[state.conn] ?? state.conn}${state.version ? ` · v${state.version}` : ''}`}
+        >
+          <span className="sb-status-dot" />
+          <div className="sb-status-text">
+            <span className="sb-status-name">
+              {gearName}挡
+            </span>
+            <span className={`sb-status-conn ${state.conn}`}>{CONN_LABEL[state.conn] ?? state.conn}</span>
+          </div>
+          {state.version ? <span className="sb-status-ver">v{state.version}</span> : null}
         </div>
       </div>
+
+      {menu && menuConv ? (
+        <div
+          ref={menuRef}
+          className="sb-menu"
+          style={clampMenu(menu.x, menu.y)}
+          role="menu"
+          aria-label="会话操作"
+        >
+          <button
+            type="button"
+            className="sb-menu-item"
+            role="menuitem"
+            onClick={() => {
+              void togglePinConversation(menuConv.id, menuConv.pinned !== 1)
+              setMenu(null)
+            }}
+          >
+            <span className="mi">📌</span>
+            {menuConv.pinned === 1 ? '取消置顶' : '置顶'}
+          </button>
+          <button
+            type="button"
+            className="sb-menu-item"
+            role="menuitem"
+            onClick={() => {
+              setEditingId(menuConv.id)
+              setMenu(null)
+            }}
+          >
+            <span className="mi">✏️</span>重命名
+          </button>
+          <button
+            type="button"
+            className="sb-menu-item danger"
+            role="menuitem"
+            onClick={() => {
+              setConfirmId(menuConv.id)
+              setMenu(null)
+            }}
+          >
+            <span className="mi">🗑️</span>删除
+          </button>
+        </div>
+      ) : null}
     </aside>
   )
 }

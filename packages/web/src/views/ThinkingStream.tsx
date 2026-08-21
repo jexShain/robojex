@@ -1,10 +1,19 @@
 // packages/web/src/views/ThinkingStream.tsx — live reasoning timeline.
 // Shows patrol → decide → spawn/reply chain with animations.
+//
+// Ingest is INCREMENTAL: each transcript change appends steps only for the
+// newly arrived items (frame-driven append, not a full rescan). When the
+// boundary id no longer matches — e.g. the hello frame rebuilt the transcript
+// after a reconnect — the whole timeline is rebuilt from scratch, which also
+// lets it shrink (fixes the append-only desync of the old full-rescan code).
 
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
+import type { ServerFrame, TranscriptItem } from '../state/types'
 import type { ThinkingStep } from './thinkingModel'
 import { frameToThinkingSteps } from './thinkingModel'
+
+const MAX_STEPS = 400
 
 const ICONS: Record<ThinkingStep['kind'], string> = {
   patrol: '🔍',
@@ -12,6 +21,26 @@ const ICONS: Record<ThinkingStep['kind'], string> = {
   decision: '✅',
   spawn: '⚡',
   reply: '💬',
+}
+
+function stepsForItem(item: TranscriptItem): ThinkingStep[] {
+  if (item.kind === 'cycle') {
+    return frameToThinkingSteps({
+      t: 'cycle',
+      wake: item.wake,
+      cost: item.cost,
+      actions: item.actions,
+    } as ServerFrame)
+  }
+  if (item.kind === 'msg' && item.from === 'jex') {
+    return frameToThinkingSteps({
+      t: 'chat_out',
+      from: 'jex',
+      text: item.text,
+      ts: item.ts,
+    } as ServerFrame)
+  }
+  return []
 }
 
 function ThinkingEntry({
@@ -41,27 +70,35 @@ function ThinkingEntry({
   )
 }
 
-export function ThinkingStream() {
+export function ThinkingStream({ embedded = false }: { embedded?: boolean }) {
   const { state } = useStore()
   const [steps, setSteps] = useState<ThinkingStep[]>([])
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const scrollRef = useRef<HTMLDivElement>(null)
+  // ingest cursor: how many transcript items are already in `steps`, and the
+  // id of the last one consumed (mismatch ⇒ transcript was rebuilt ⇒ rebuild)
+  const consumed = useRef(0)
+  const lastId = useRef(-1)
+  const mountedFor = useRef(state.transcript)
 
-  // Process transcript into thinking steps
   useEffect(() => {
-    const newSteps: ThinkingStep[] = []
-    for (const item of state.transcript) {
-      if (item.kind === 'cycle') {
-        // Show 'deciding' skeleton before decision arrives
-        newSteps.push(...frameToThinkingSteps({ t: 'cycle', wake: item.wake, cost: item.cost, actions: item.actions }))
-      } else if (item.kind === 'msg' && item.from === 'jex') {
-        newSteps.push(...frameToThinkingSteps({ t: 'chat_out', from: 'jex', text: item.text, ts: item.ts }))
-      }
+    const t = state.transcript
+    if (t === mountedFor.current) return
+    mountedFor.current = t
+    let start = consumed.current
+    if (start > t.length || (start > 0 && t[start - 1].id !== lastId.current)) {
+      start = 0 // hello rebuilt the ring — start over
     }
-    if (newSteps.length > steps.length) {
-      setSteps(newSteps)
+    const added: ThinkingStep[] = []
+    for (let i = start; i < t.length; i++) added.push(...stepsForItem(t[i]))
+    consumed.current = t.length
+    lastId.current = t.length > 0 ? t[t.length - 1].id : -1
+    if (start === 0) {
+      setSteps(added.slice(-MAX_STEPS))
+    } else if (added.length > 0) {
+      setSteps((prev) => [...prev, ...added].slice(-MAX_STEPS))
     }
-  }, [state.transcript]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.transcript])
 
   // Auto-scroll to latest
   useEffect(() => {
@@ -69,7 +106,7 @@ export function ThinkingStream() {
     if (el) el.scrollTop = el.scrollHeight
   }, [steps.length])
 
-  const toggleExpand = (id: number) => {
+  const toggleExpand = (id: number): void => {
     setExpanded((s) => {
       const next = new Set(s)
       if (next.has(id)) next.delete(id)
@@ -78,33 +115,34 @@ export function ThinkingStream() {
     })
   }
 
-  if (steps.length === 0) {
-    return (
-      <div className="thinking-stream">
+  return (
+    <div className={`thinking-stream${embedded ? ' embedded' : ''}`}>
+      {!embedded ? (
+        <div className="ts-header">
+          <span className="ts-title">Thinking Stream</span>
+          <span className="ts-count">{steps.length} steps</span>
+        </div>
+      ) : null}
+      {steps.length === 0 ? (
         <div className="ts-empty">
           <div className="ts-empty-icon">🧠</div>
           <p>waiting for jex's first cycle…</p>
         </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="thinking-stream">
-      <div className="ts-header">
-        <span className="ts-title">Thinking Stream</span>
-        <span className="ts-count">{steps.length} steps</span>
-      </div>
-      <div className="ts-list" ref={scrollRef}>
-        {steps.map((s) => (
-          <ThinkingEntry
-            key={s.id}
-            step={s}
-            expanded={expanded.has(s.id)}
-            onToggle={() => toggleExpand(s.id)}
-          />
-        ))}
-      </div>
+      ) : (
+        <div className="ts-list" ref={scrollRef}>
+          {steps.map((s) => (
+            <ThinkingEntry
+              key={s.id}
+              step={s}
+              expanded={expanded.has(s.id)}
+              onToggle={() => toggleExpand(s.id)}
+            />
+          ))}
+          {!embedded ? null : (
+            <div className="ts-embedded-count">{steps.length} steps</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

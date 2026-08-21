@@ -1,26 +1,14 @@
-/* packages/web/src/styles/hud.css — HudBar status strip.
- * Real semantic tokens (border/bg/label) from tokens.css; the brief's
- * --hud-glow/-warn/-pulse are introduced here as the required HUD tokens. */
+/* packages/web/src/styles/hud.css — board rings, agenda ticks and the
+ * thinking/activity stream surfaces. The old top-strip HudBar styles
+ * (.hud-bar/.hud-mode/.hud-fuel*/.hud-clock/.hud-settings/.hud-collapse)
+ * moved to frame/frame.css with the new top bar; .hud-heart stays because
+ * /widget reuses it (as does the top bar, restyled under .rj-hud). */
 
 :root {
   /* Heartbeat / fuel glow colors — status-semantic, not decorative. */
   --hud-pulse: var(--dsw-alias-state-success-primary, #34d399);
   --hud-glow: var(--dsw-alias-state-business-primary, #5686fe);
   --hud-warn: var(--dsw-alias-state-warn-primary, #f59e0b);
-}
-
-.hud-bar {
-  flex: none; /* never stretch; the chat pane below takes flex:1 */
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 36px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--dsw-alias-border-l2, #333);
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  font: 12px/1 var(--ds-font-family-code, monospace);
-  overflow: hidden;
 }
 
 .hud-heart {
@@ -42,64 +30,6 @@
   1% { box-shadow: 0 0 8px 2px rgba(52, 211, 153, 0.7); }
   3% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
   100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
-}
-
-.hud-mode {
-  flex: none;
-  color: #fff;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  line-height: 1.2;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.hud-fuel {
-  flex: 0 1 160px;
-  min-width: 48px;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--dsw-alias-bg-layer-2, #222);
-  overflow: hidden;
-}
-
-.hud-fuel-fill {
-  height: 100%;
-  background: var(--hud-glow);
-  transition: width 0.6s var(--ds-ease-in-out, ease);
-}
-
-.hud-fuel-fill.warn {
-  background: var(--hud-warn);
-  animation: hud-pulse-warn 1.6s infinite;
-}
-
-@keyframes hud-pulse-warn {
-  50% { opacity: 0.55; }
-}
-
-.hud-clock {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.hud-collapse {
-  flex: none;
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 2px 4px;
-  border-radius: 4px;
-  transition: background var(--ds-transition-duration-fast, 0.1s) var(--ds-ease-in-out, ease);
-}
-
-.hud-collapse:hover {
-  background: var(--dsw-alias-button-ghost-active-hover, rgba(0, 0, 0, 0.06));
 }
 
 /* ============================================================

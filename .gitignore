@@ -7,7 +7,9 @@ docs/superpowers/
 build/
 runtime/config.json
 dist-electron/
-e2e-*.mjs
+e2e-v3.mjs
 e2e-screenshots/
 TODO.md
 test-results/
+playwright-report/
+.webpack/

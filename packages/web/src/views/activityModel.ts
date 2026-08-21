@@ -96,7 +96,7 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
       type: 'cycle',
       icon: '●',
       title: `Wake #${wake}`,
-      detail: cost > 0 ? `$${(cost / 1_000_000).toFixed(2)}` : undefined,
+      detail: cost > 0 ? `${Math.round(cost)} tok` : undefined,
       color: 'blue',
     })
 

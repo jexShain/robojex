@@ -1,10 +1,16 @@
 {
   "name": "robojex-electron",
+  "productName": "RoboJex",
   "version": "0.1.0",
-  "main": "main.js",
-  "description": "robojex desktop client",
+  "description": "robojex desktop client (Electron shell + embedded ceo-core)",
   "author": "jex",
   "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node ../../scripts/dev-electron.mjs",
+    "start": "electron .",
+    "build": "electron-builder --config electron-builder.yml --publish never"
+  },
   "devDependencies": {
     "electron": "43.4.1",
     "electron-builder": "^26.15.3"

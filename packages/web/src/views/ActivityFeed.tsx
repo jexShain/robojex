@@ -60,7 +60,14 @@ export function ActivityFeed() {
      </div>
      <div className="activity-list" ref={listRef}>
        {items.length === 0 ? (
-         <div className="activity-empty">Waiting for activity...</div>
+         <div className="activity-empty">
+           <div className="activity-skeleton" aria-hidden="true">
+             {[0, 1, 2, 3, 4].map((i) => (
+               <div key={i} className="rj-skeleton" style={{ animationDelay: `${i * 0.15}s` }} />
+             ))}
+           </div>
+           <p>waiting for activity…</p>
+         </div>
        ) : (
          items.map((item) => <ItemRow key={item.id} item={item} />)
        )}

@@ -1,69 +1,82 @@
-// packages/web/src/frame/HudBar.tsx — top status strip: heartbeat lamp, mode
-// pill, budget fuel gauge, server-aligned clock, collapse-to-widget button.
-// Reads store state (mode/budget/lastHud/clockOffset/transcript) only.
+// packages/web/src/frame/HudBar.tsx — jex status cluster embedded in the top
+// bar's right side: heartbeat lamp (breathing green while the WS is live),
+// mode pill (click cycles observe → assist → full), budget fuel gauge
+// (burn shows ∞ + today's spend), and a server-aligned HH:MM clock.
+// Reads the store only; no props.
 
+import { useEffect, useState } from 'react'
 import { useStore } from '../state/store'
+import type { Mode } from '../state/types'
 
-// Mode → status-lamp color. Mapped onto real semantic state tokens (the brief's
-// --dsw-alias-accent-* names do not exist in tokens.css), with the brief's hex
-// values retained as last-resort fallbacks per the task's allowance.
-const MODE_COLOR: Record<string, string> = {
-  observe: 'var(--dsw-alias-state-warn-primary, #d97706)',
-  assist: 'var(--dsw-alias-state-business-primary, #5686fe)',
-  full: 'var(--dsw-alias-state-error-primary, #dc2626)',
-}
+const MODE_CYCLE: Mode[] = ['observe', 'assist', 'full']
 
-// One extra second on the minute so the display never appears frozen between
-// ticks; updated each render which is fine — store updates drive renders.
 function fmtClock(now: number): string {
-  return new Date(now).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
+  const d = new Date(now)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-export function HudBar({ onCollapse }: { onCollapse(): void }) {
-  const { state: s } = useStore()
-  const serverNow = Date.now() + (s.clockOffset ?? 0)
-  // No `s.cycles` field exists; any hud notice or cycle transcript entry means
-  // the core loop has produced traffic and is therefore alive.
-  const alive = s.lastHud !== null || s.transcript.some((t) => t.kind === 'cycle')
-  // budget is Budget | null; before the first hello it is null.
-  const b = s.budget
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(n)
+}
+
+export function HudBar() {
+  const { state, setMode } = useStore()
+  const [, setTick] = useState(0)
+
+  // The clock advances on its own 30s heartbeat; store frames also re-render.
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((x) => x + 1), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const live = state.conn === 'live'
+  const serverNow = Date.now() + (state.clockOffset ?? 0)
+  const b = state.budget
+  const burn = b?.mode === 'burn'
   const dailyTokens = b?.dailyTokens ?? 0
   const spentToday = b?.spentToday ?? 0
-  const pct = dailyTokens > 0 ? Math.min(100, Math.round((spentToday / dailyTokens) * 100)) : 0
-  const budgetLabel = b ? `${spentToday}/${dailyTokens}` : '—/—'
-  const mode = s.mode
+  const pct = !burn && dailyTokens > 0 ? Math.min(100, Math.round((spentToday / dailyTokens) * 100)) : 0
+
+  const cycleMode = (): void => {
+    const idx = MODE_CYCLE.indexOf(state.mode)
+    setMode(MODE_CYCLE[(idx + 1) % MODE_CYCLE.length] ?? 'observe')
+  }
+
   return (
-    <header className="hud-bar" role="status" aria-label="jex status">
+    <div className="rj-hud" role="status" aria-label="jex status">
       <span
-        className={`hud-heart${alive ? ' alive' : ''}`}
-        title={alive ? 'jex heartbeat — loop live' : 'jex heartbeat — idle'}
+        className={`hud-heart${live ? ' alive' : ''}`}
+        data-testid="hud-heart"
+        title={live ? 'jex 心跳 — WS live' : `connection: ${state.conn}`}
       />
-      <span
-        className="hud-mode"
-        style={{ background: MODE_COLOR[mode] ?? 'var(--dsw-alias-label-tertiary, #666)' }}
-        title={`mode: ${mode}`}
+      <button
+        type="button"
+        className={`hud-mode ${state.mode}`}
+        onClick={cycleMode}
+        title={`mode: ${state.mode} — 点击切换 observe → assist → full`}
       >
-        {mode}
+        {state.mode}
+      </button>
+      <span data-testid="hud-budget" title={b ? `${b.line} · today ${spentToday} / ${dailyTokens} tok` : 'budget unknown'}>
+        {b && burn ? (
+          <span className="hud-burn">
+            <span className="infty">∞</span>
+            <span>{fmtTokens(spentToday)} tok</span>
+          </span>
+        ) : (
+          <span className="hud-fuel">
+            <span
+              className={`hud-fuel-fill${pct >= 80 ? ' warn' : ''}`}
+              style={{ width: `${pct}%`, display: 'block' }}
+            />
+          </span>
+        )}
       </span>
-      <div className="hud-fuel" title={`budget ${budgetLabel} (${pct}%)`}>
-        <div className={`hud-fuel-fill${pct >= 80 ? ' warn' : ''}`} style={{ width: `${pct}%` }} />
-      </div>
       <time className="hud-clock" dateTime={new Date(serverNow).toISOString()}>
         {fmtClock(serverNow)}
       </time>
-      <button
-        type="button"
-        className="hud-collapse"
-        onClick={onCollapse}
-        title="collapse to widget"
-        aria-label="collapse to widget"
-      >
-        ▁
-      </button>
-    </header>
+    </div>
   )
 }

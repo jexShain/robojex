@@ -1,3 +1,126 @@
+/* ════════════════════════════════════════════════════════════════════
+   RoboJex Desktop design system (2026-08 rewrite)
+   ─ append-only patch layer over the DSH sheets above ─
+   1. missing legacy aliases actually referenced by component CSS
+   2. the --rj-* system: brand, gear accents, radii, spacing, shadows,
+      chat surfaces — defined for BOTH themes (drift is a bug).
+   ════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* missing upstream motion/font aliases */
+  --ds-transition-duration-normal: 0.2s;
+  --dsw-alias-font-mono: var(--ds-font-family-code);
+  --dsw-alias-accent-default: var(--dsw-static-deepseek-500);
+  --dsw-alias-surface-primary: var(--dsw-static-neutral-bluish-00);
+  --dsw-alias-surface-secondary: var(--dsw-static-neutral-bluish-50);
+  --dsw-alias-overlay: rgba(0, 0, 0, 0.32);
+  --rj-glow-sm: 0 0 10px rgba(103, 158, 254, 0.22);
+
+  /* animation tokens — light theme previously fell back to literals */
+  --rj-duration-instant: 80ms;
+  --rj-duration-fast: 150ms;
+  --rj-duration-normal: 250ms;
+  --rj-duration-slow: 400ms;
+  --rj-duration-slower: 600ms;
+  --rj-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --rj-ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --rj-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --rj-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --rj-glow-primary: 0 0 20px rgba(103, 158, 254, 0.22);
+  --rj-glow-success: 0 0 20px rgba(34, 197, 94, 0.22);
+  --rj-glow-error: 0 0 20px rgba(239, 68, 68, 0.22);
+  --rj-glow-warn: 0 0 20px rgba(245, 158, 11, 0.22);
+
+  /* ── brand ── */
+  --rj-brand-violet: rgb(139, 92, 246);
+  --rj-brand-cyan: rgb(34, 211, 238);
+  --rj-brand-gradient: linear-gradient(135deg, rgb(139, 92, 246) 0%, rgb(103, 158, 254) 55%, rgb(34, 211, 238) 100%);
+  --rj-brand-gradient-soft: linear-gradient(135deg, rgba(139, 92, 246, 0.14), rgba(34, 211, 238, 0.10));
+
+  /* ── gear accents (dormant→turbo) ── */
+  --rj-gear-0: rgb(120, 124, 138);   /* dormant · slate */
+  --rj-gear-1: rgb(78, 209, 126);    /* eco · green */
+  --rj-gear-2: rgb(96, 165, 250);    /* balanced · blue */
+  --rj-gear-3: rgb(167, 139, 250);   /* focused · violet */
+  --rj-gear-4: rgb(251, 146, 60);    /* turbo · orange */
+  --rj-gear-current: var(--rj-gear-2);
+
+  /* ── radii / spacing / typography ── */
+  --rj-radius-xs: 6px;
+  --rj-radius-sm: 8px;
+  --rj-radius-md: 12px;
+  --rj-radius-lg: 16px;
+  --rj-radius-xl: 22px;
+  --rj-radius-full: 999px;
+  --rj-space-1: 4px;
+  --rj-space-2: 8px;
+  --rj-space-3: 12px;
+  --rj-space-4: 16px;
+  --rj-space-5: 20px;
+  --rj-space-6: 24px;
+  --rj-space-7: 32px;
+  --rj-space-8: 40px;
+  --rj-font-ui: var(--dsw-font-family);
+  --rj-font-mono: var(--ds-font-family-code);
+  --rj-font-size-xs: 11px;
+  --rj-font-size-sm: 12px;
+  --rj-font-size-md: 13.5px;
+  --rj-font-size-lg: 15px;
+  --rj-font-size-xl: 18px;
+  --rj-font-size-hero: 26px;
+
+  /* ── elevation ── */
+  --rj-shadow-1: 0 1px 2px rgba(15, 17, 21, 0.06), 0 1px 3px rgba(15, 17, 21, 0.05);
+  --rj-shadow-2: 0 2px 8px rgba(15, 17, 21, 0.08), 0 1px 4px rgba(15, 17, 21, 0.06);
+  --rj-shadow-3: 0 8px 28px rgba(15, 17, 21, 0.14), 0 2px 8px rgba(15, 17, 21, 0.08);
+  --rj-shadow-focus: 0 0 0 3px rgba(103, 158, 254, 0.28);
+
+  /* ── chat surfaces ── */
+  --rj-chat-user-bubble: var(--dsw-static-deepseek-50);
+  --rj-chat-user-text: var(--dsw-alias-label-primary);
+  --rj-chat-bg: var(--dsw-alias-bg-base);
+  --rj-thinking-bg: var(--dsw-static-neutral-bluish-50);
+  --rj-thinking-text: var(--dsw-alias-label-tertiary);
+  --rj-code-head-bg: var(--dsw-alias-markdown-code-block-banner);
+  --rj-sidebar-bg: var(--dsw-specific-sidebar-fill);
+  --rj-topbar-bg: var(--dsw-alias-bg-base);
+  --rj-input-bg: var(--dsw-alias-bg-base);
+  --rj-input-border: var(--dsw-alias-border-l2);
+
+  /* ── misc legacy hud aliases (referenced by hud.css) ── */
+  --hud-glow: 0 0 12px rgba(103, 158, 254, 0.35);
+  --hud-pulse: rgba(103, 158, 254, 0.9);
+  --hud-warn: rgba(247, 173, 49, 0.9);
+}
+
+body[data-ds-dark-theme] {
+  --dsw-alias-accent-default: var(--dsw-static-deepseek-400);
+  --dsw-alias-surface-primary: var(--dsw-static-neutral-bluish-900);
+  --dsw-alias-surface-secondary: var(--dsw-static-neutral-bluish-850);
+  --dsw-alias-overlay: rgba(0, 0, 0, 0.56);
+  --rj-glow-sm: 0 0 10px rgba(103, 158, 254, 0.28);
+
+  --rj-gear-current: var(--rj-gear-2);
+
+  --rj-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --rj-shadow-2: 0 2px 10px rgba(0, 0, 0, 0.45), 0 1px 4px rgba(0, 0, 0, 0.35);
+  --rj-shadow-3: 0 10px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --rj-shadow-focus: 0 0 0 3px rgba(103, 158, 254, 0.35);
+
+  --rj-chat-user-bubble: var(--dsw-static-deepseek-900);
+  --rj-chat-user-text: var(--dsw-alias-label-primary);
+  --rj-chat-bg: var(--dsw-static-neutral-bluish-950);
+  --rj-thinking-bg: var(--dsw-static-neutral-bluish-900);
+  --rj-thinking-text: var(--dsw-alias-label-tertiary);
+  --rj-code-head-bg: var(--dsw-static-neutral-bluish-850);
+  --rj-sidebar-bg: var(--dsw-static-neutral-bluish-900);
+  --rj-topbar-bg: var(--dsw-static-neutral-bluish-950);
+  --rj-input-bg: var(--dsw-static-neutral-bluish-900);
+  --rj-input-border: rgba(255, 255, 255, 0.1);
+}
+
+/* ══ end RoboJex design system ══ */
+
 /* Adapted from DeepSeek Harness, MIT License, © 2026 DeepSeek.
  * Source: packages/client/ui-theme/src/styles/design-platform.css (token sheets)
  *         packages/client/ui-theme/src/styles/base.css (font / motion variables)

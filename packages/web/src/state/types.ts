@@ -1,7 +1,33 @@
-// packages/web/src/state/types.ts — frozen wire contract from dsh-plan.md.
-// Mirrors the core API on :7620 (GET /api/state, WS /api/events).
+// packages/web/src/state/types.ts — wire contract for the desktop app.
+// Mirrors the core API on :7620 (REST + WS /api/events + SSE /api/chat/stream).
+// This file is the frozen contract between ceo-core and the web UI;
+// change both sides together (see docs/SPEC-DESKTOP.md).
 
 export type Mode = 'observe' | 'assist' | 'full'
+
+/* ─────────────────────────── gears (自主挡位) ─────────────────────────── */
+
+export type GearId = 'dormant' | 'eco' | 'balanced' | 'focused' | 'turbo'
+
+/** Gear definition as shipped by GET /api/gear (list) and mirrored in ceo-core gears.ts. */
+export interface GearDef {
+  id: GearId
+  level: number // 0..4
+  name: string // 中文显示名
+  emoji: string
+  /** 0 = loop stopped (dormant). */
+  tickMs: number
+  decideMaxTokens: number
+  /** patrol runs every N ticks (0 = never). */
+  patrolEvery: number
+  desc: string
+  /** one-line cost hint shown in the switcher */
+  cost: string
+}
+
+export const GEAR_LEVELS: GearId[] = ['dormant', 'eco', 'balanced', 'focused', 'turbo']
+
+/* ─────────────────────────── tasks / budget (board v2) ─────────────────── */
 
 export interface Task {
   id: string
@@ -9,22 +35,16 @@ export interface Task {
   status: string
   resultSummary?: string
   createdAt: number
-  /** board v2: parent task id (null = root); absent on pre-v2 cores. */
   parentId?: string | null
-  /** board v2: planned start, epoch ms. */
   scheduledAt?: number | null
-  /** board v2: deadline, epoch ms. */
   dueAt?: number | null
-  /** HUD: 0..100 completion estimate (shipped by core since taskView). */
   progress?: number
-  /** HUD: verify verdict against the acceptance standard. */
   verdict?: string
-  /** HUD: acceptance standard the verify loop checks. */
   acceptance?: string
 }
 
 export interface Budget {
-  mode: 'burn' | 'budgeted' // core BudgetGovernor mode, not the takeover mode
+  mode: 'burn' | 'budgeted'
   dailyTokens: number
   spentToday: number
   line: string
@@ -45,13 +65,11 @@ export interface StateSnapshot {
   memory: string
   chat: ChatMsg[]
   version: string
-  /** board v2: server epoch ms — clock alignment for sched/due rendering. */
   now?: number
-  /** HUD: decision-cycle count; compare with cycle frames' tickN to detect a stalled core. */
   tickN?: number
+  gear?: GearId
 }
 
-/** One decided action inside a cycle frame; shape is open-ended. */
 export interface CycleAction {
   type: string
   text?: string
@@ -59,12 +77,89 @@ export interface CycleAction {
   [key: string]: unknown
 }
 
-/** One gantt event that just hit a task; HUD widgets flash the card. */
 export interface HudNotice {
   kind: 'due_spawn' | 'overdue' | 'unlocked' | 'verify_due'
   taskId: string
   ts: number
 }
+
+/* ─────────────────────────── conversations ─────────────────────────── */
+
+export interface Conversation {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  pinned: 0 | 1
+  gear: string
+  model: string
+  archived: 0 | 1
+  messageCount: number
+  /** server-computed preview of the latest message (≤80 chars). */
+  preview: string
+}
+
+export type MessageRole = 'user' | 'assistant' | 'system' | 'notice'
+
+export interface Message {
+  id: string
+  convId: string
+  role: MessageRole
+  content: string
+  reasoning?: string
+  model?: string
+  tokensIn?: number
+  tokensOut?: number
+  createdAt: number
+  error?: string
+  /** client-only: message is currently streaming (deltas append). */
+  streaming?: boolean
+  /** client-only: elapsed stream seconds, for the “已思考 Xs” badge. */
+  thinkSecs?: number
+}
+
+/** SSE frames on POST /api/chat/stream (each `data: {json}`). */
+export type ChatStreamEvent =
+  | { type: 'meta'; conversationId: string; userMsgId: string; assistantMsgId: string; model: string }
+  | { type: 'reasoning'; delta: string }
+  | { type: 'content'; delta: string }
+  | { type: 'usage'; tokensIn: number; tokensOut: number }
+  | { type: 'title'; title: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string }
+
+export type StreamStatus = 'idle' | 'streaming' | 'stopping' | 'error'
+
+export interface StreamState {
+  status: StreamStatus
+  convId: string | null
+  startedAt: number
+  error?: string
+}
+
+export interface DayUsage {
+  day: string // YYYY-MM-DD
+  tokensIn: number
+  tokensOut: number
+  calls: number
+}
+
+/* ─────────────────────────── settings ─────────────────────────── */
+
+export interface Settings {
+  baseUrl: string
+  apiKey: string // masked by server (abcd***wxyz)
+  patrolModel: string
+  decideModel: string
+  budgetMode: 'burn' | 'budgeted'
+  dailyTokens: number
+  tickMs: number
+  takeoverUrl: string
+  apiPort: number
+  apiHost: string
+}
+
+/* ─────────────────────────── WS frames ─────────────────────────── */
 
 export type ServerFrame =
   | { t: 'hello'; state: StateSnapshot }
@@ -74,8 +169,10 @@ export type ServerFrame =
   | ({ t: 'hud' } & HudNotice)
   | { t: 'mode'; mode: Mode }
   | { t: 'budget'; line: string; budget?: Budget }
+  | { t: 'gear'; gear: GearId }
 
-/** Unified chat transcript entry rendered by ChatStream. */
+/** Unified agent-transcript entry (legacy ring + synthesized), for the
+ * Activity view and inline jex notices inside chat conversations. */
 export type TranscriptItem =
   | { kind: 'msg'; id: number; from: 'user' | 'jex' | 'system'; text: string; ts: number }
   | {

@@ -157,6 +157,34 @@ export function BoardView() {
   const { state, selectTask } = useStore()
   const [filter, setFilter] = useState<BoardFilter>('all')
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
+  // + new-task inline entry (POST /api/task; the tasks broadcast updates the
+  // store, so no local list patching is needed)
+  const [newTitle, setNewTitle] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createErr, setCreateErr] = useState<string | null>(null)
+
+  const createTask = async (): Promise<void> => {
+    const title = newTitle.trim()
+    if (!title || creating) return
+    setCreating(true)
+    setCreateErr(null)
+    try {
+      const res = await fetch('/api/task', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title }),
+      })
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(d.error || `HTTP ${res.status}`)
+      }
+      setNewTitle('')
+    } catch (err) {
+      setCreateErr(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCreating(false)
+    }
+  }
 
   // Aligned clock for badge formatting (hello.now absorbs server skew).
   const now = Date.now() + state.clockOffset
@@ -192,28 +220,33 @@ export function BoardView() {
       return next
     })
 
-  if (state.tasks.length === 0) {
-    return (
-      <div className="board-view">
-        <div className="board-empty">
-          <div className="be-mark">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="1.5" y="3" width="5" height="4.4" rx="1.2" />
-              <rect x="9" y="1.5" width="5.5" height="4.4" rx="1.2" />
-              <path d="M4 7.4v2.5a1.6 1.6 0 0 0 1.6 1.6H9" />
-            </svg>
-          </div>
-          <p>no tasks yet — jex will post its board here</p>
-        </div>
-      </div>
-    )
-  }
+  const emptyBoard = state.tasks.length === 0
 
-  const degenerate = layout.nodes.length <= 1
-  return (
-    <div className="board-view">
-      <div className="board-toolbar">
-        <div className="seg" role="group" aria-label="Filter">
+  const toolbar = (
+    <div className="board-toolbar">
+      <div className="board-new" data-testid="board-new-task">
+        <input
+          className="bn-input"
+          value={newTitle}
+          placeholder="＋ 新任务，回车创建"
+          disabled={creating}
+          onChange={(e) => setNewTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void createTask()
+          }}
+        />
+        <button
+          type="button"
+          className="bn-btn"
+          title="创建任务"
+          disabled={!newTitle.trim() || creating}
+          onClick={() => void createTask()}
+        >
+          {creating ? '…' : '＋'}
+        </button>
+      </div>
+      {createErr ? <span className="bn-err" title={createErr}>⚠ {createErr}</span> : null}
+      <div className="seg" role="group" aria-label="Filter">
           {FILTERS.map((f) => (
             <button
               key={f.id}
@@ -238,7 +271,24 @@ export function BoardView() {
           </button>
         </div>
       </div>
+  )
 
+  const degenerate = layout.nodes.length <= 1
+  return (
+    <div className="board-view">
+      {toolbar}
+      {emptyBoard ? (
+        <div className="board-empty">
+          <div className="be-mark">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="1.5" y="3" width="5" height="4.4" rx="1.2" />
+              <rect x="9" y="1.5" width="5.5" height="4.4" rx="1.2" />
+              <path d="M4 7.4v2.5a1.6 1.6 0 0 0 1.6 1.6H9" />
+            </svg>
+          </div>
+          <p>no tasks yet — create one above, or jex will post its board here</p>
+        </div>
+      ) : (
       <div className="board-scroller">
         {layout.nodes.length === 0 ? (
           <div className="board-empty">
@@ -294,6 +344,7 @@ export function BoardView() {
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }
