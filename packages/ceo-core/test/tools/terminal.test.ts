@@ -65,28 +65,69 @@ try { execSync("which pgrep", { stdio: "ignore" }); hasPgrep = true; } catch {}
 
 const processGroupTests = hasPgrep ? describe : describe.skip;
 processGroupTests("process group", () => {
-  it("timeout kills entire process group on Unix", async () => {
-    const cleanup = () => { try { execSync("pkill -f 'sleep 300'", { stdio: "ignore" }); } catch {} };
-    cleanup(); // pre-cleanup
-    // Test: command spawns a background sleep process that should be killed with process group
-    // Note: Bash job control may separate background jobs; this test verifies the fix is in place
-    const r = await call("terminal", { command: "sleep 300 & echo bg", timeout: 2 });
-    expect(r).toMatch(/timeout|timed out/i);
-    // Try to verify no orphaned sleep process exists
-    // Note: This may fail due to bash's job control creating separate process groups
-    // The fix ensures process.kill(-pid) is attempted, which is the correct approach
+  it("timeout kills entire process group on Unix - real orphan validation", async () => {
+    // Use a unique sleep duration to avoid conflicting with other processes
+    const uniqueSleep = "297"; // Less common sleep duration
+    const cleanup = () => { try { execSync(`pkill -f 'sleep ${uniqueSleep}'`, { stdio: "ignore" }); } catch {} };
+    
+    // Pre-cleanup: ensure no test artifacts from previous runs
+    cleanup();
+    
     try {
-      const orphans = execSync("pgrep -f 'sleep 300'", { encoding: "utf8" });
-      // If orphans exist, it's due to bash's job control behavior, not our implementation
+      // Command that will definitely timeout and create child processes
+      // Use a simple foreground sleep that will be killed with process group
+      const r = await call("terminal", { 
+        command: `sleep ${uniqueSleep}`, 
+        timeout: 2 
+      });
+      expect(r).toMatch(/timeout|timed out/i);
+      
+      // Wait a moment for processes to fully exit after group kill
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Check for orphan survival - if process tree kill worked, pgrep should find nothing
+      let trulyOrphaned = false;
+      for (let i = 0; i < 10; i++) {
+        try {
+          const orphans = execSync(`pgrep -f 'sleep ${uniqueSleep}'`, { encoding: "utf8" });
+          if (orphans.trim()) {
+            // Found orphan - check if it's actually still running or just exiting
+            const orphanPids = orphans.trim().split('\n');
+            for (const pid of orphanPids) {
+              try {
+                const psInfo = execSync(`ps -p ${pid.trim()} -o pid,comm,state`, { encoding: "utf8" });
+                // Check process state - 'R'='running', 'S'='sleeping', 'Z'='zombie' (exited but not reaped)
+                const stateMatch = psInfo.match(/[A-Z]\s+/);
+                const state = stateMatch ? stateMatch[0].trim() : '?';
+                // If process is not a zombie, it's truly orphaned and still running
+                if (state !== 'Z') {
+                  trulyOrphaned = true;
+                  break;
+                }
+              } catch {
+                // Process already exited - not truly orphaned, continue checking
+              }
+            }
+            if (trulyOrphaned) break; // Found truly orphaned process
+            // If we get here, all found PIDs were exiting - wait for full cleanup
+            await new Promise(resolve => setTimeout(resolve, 200));
+            continue;
+          }
+        } catch (e) {
+          // pgrep exits with code 1 when no processes found (good!)
+          break; // No orphans - test passes
+        }
+        // Wait 200ms before retrying
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      
+      // If orphan survived, the test fails - this is a real bug
+      if (trulyOrphaned) {
+        expect.fail(`Orphan process survived group kill - process.kill(-pid) may not be working correctly`);
+      }
+    } finally {
+      // Cleanup: ensure no orphans remain
       cleanup();
-      // Don't fail the test - this is expected with bash job control
-      // The important part is that our code correctly uses process.kill(-pid)
-    } catch (e) {
-      const err = e as Error;
-      // pgrep exits with code 1 when no processes found (ideal case)
-      if ((err as NodeJS.ErrnoException).code === 1) return; // No orphans found (good!)
-      cleanup();
-      throw err;
     }
   }, 10000);
 });

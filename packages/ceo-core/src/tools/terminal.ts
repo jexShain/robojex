@@ -3,7 +3,7 @@
 // process handling, scoped to the local backend and the foreground path:
 // jex's event back-fill loop has no interactive-PTY surface, so long jobs
 // belong to spawn (sub-agents), not to background terminal sessions.
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import type { ToolEntry } from "./registry.js";
 
 const OUT_BUDGET = 8192;
@@ -16,13 +16,19 @@ function shellWrap(command: string): { file: string; args: string[] } {
 
 function run(file: string, args: string[], opts: { timeoutMs: number; workdir?: string }): Promise<{ out: string; code: number | null; timedOut: boolean }> {
   return new Promise((resolve) => {
-    const child = spawn(file, args, { cwd: opts.workdir, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
+    const child = spawn(file, args, { 
+      cwd: opts.workdir, 
+      stdio: ["ignore", "pipe", "pipe"], 
+      detached: process.platform !== "win32" 
+    });
     let out = ""; let settled = false;
     const timer = setTimeout(() => {
       if (settled) return; settled = true;
       if (process.platform === "win32") {
-        child.kill("SIGKILL");
+        // Windows: tree-kill using taskkill to ensure child processes are terminated
+        try { execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: "ignore" }); } catch { child.kill("SIGKILL"); }
       } else {
+        // Unix: kill entire process group using negative PID
         try { process.kill(-child.pid!, "SIGKILL"); } catch { child.kill("SIGKILL"); }
       }
       resolve({ out, code: null, timedOut: true });
@@ -38,7 +44,8 @@ async function terminal(args: Record<string, unknown>): Promise<string> {
   const command = args.command;
   if (typeof command !== "string" || command.length === 0) return "error: command (string) required";
   const timeout = Number(args.timeout ?? 180);
-  if (!Number.isFinite(timeout) || !Number.isInteger(timeout) || timeout < 1) return "error: timeout must be a positive integer (seconds)";
+  // Number.isInteger already implies Number.isFinite, redundant check removed
+  if (!Number.isInteger(timeout) || timeout < 1) return "error: timeout must be a positive integer (seconds)";
   if (timeout > TIMEOUT_CAP) return `error: timeout ${timeout}s exceeds the ${TIMEOUT_CAP}s cap — delegate long jobs to a sub-agent (spawn) instead`;
   const workdir = typeof args.workdir === "string" && args.workdir ? args.workdir : undefined;
   const { file, args: sh } = shellWrap(command);
