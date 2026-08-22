@@ -10,6 +10,15 @@ async function shot(page, name) {
   await page.screenshot({ path: `${SHOT_DIR}/${name}.png`, fullPage: false })
 }
 
+
+// The app now boots into the command center (gantt board + think log); most
+// scenarios exercise the chat surface, so they opt into the chat tab first.
+async function openChat(page) {
+  await page.goto('/')
+  await page.getByTestId('conn-status').waitFor()
+  await page.locator('[data-testid="view-tab"][data-view="chat"]').click()
+}
+
 test.beforeEach(async ({ page }) => {
   page.on('console', (msg) => {
     if (msg.type() === 'error') consoleErrors.push(msg.text())
@@ -27,20 +36,23 @@ test.describe('RoboJex desktop', () => {
     await expect(page.getByTestId('conv-item').first()).toBeVisible({ timeout: 10_000 })
     const count = await page.getByTestId('conv-item').count()
     expect(count).toBeGreaterThanOrEqual(4)
+    await expect(page.getByTestId('cmd-center')).toBeVisible()
+    await expect(page.getByTestId('gantt-board')).toBeVisible()
+    await expect(page.getByTestId('think-log')).toBeVisible()
     await shot(page, '01-load')
   })
 
   test('02 empty state hero with prompt cards', async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('conn-status').waitFor({ state: 'visible' })
+    await page.locator('[data-testid="view-tab"][data-view="chat"]').click()
     // no conversation selected → hero
     await expect(page.getByTestId('empty-prompt').first()).toBeVisible({ timeout: 10_000 })
     await shot(page, '02-empty-state')
   })
 
   test('03 send message: stream reasoning + markdown content', async ({ page }) => {
-    await page.goto('/')
-    await page.getByTestId('conn-status').waitFor()
+    await openChat(page)
     await page.getByTestId('chat-input').click()
     await page.getByTestId('chat-input').fill('你好，给我一个表格和代码')
     await page.getByTestId('chat-send').click()
@@ -55,8 +67,7 @@ test.describe('RoboJex desktop', () => {
   })
 
   test('04 thinking accordion toggles', async ({ page }) => {
-    await page.goto('/')
-    await page.getByTestId('conn-status').waitFor()
+    await openChat(page)
     await page.getByTestId('chat-input').fill('测试思考')
     await page.getByTestId('chat-send').click()
     await expect(page.getByTestId('think-toggle')).toBeVisible({ timeout: 10_000 })
@@ -69,8 +80,7 @@ test.describe('RoboJex desktop', () => {
   })
 
   test('05 conversation title auto-generated + listed', async ({ page }) => {
-    await page.goto('/')
-    await page.getByTestId('conn-status').waitFor()
+    await openChat(page)
     await page.getByTestId('chat-input').fill('会话标题测试')
     await page.getByTestId('chat-send').click()
     await expect(page.getByTestId('conv-item').filter({ hasText: '会话·会话标题' })).toBeVisible({ timeout: 20_000 })
@@ -80,6 +90,7 @@ test.describe('RoboJex desktop', () => {
   test('06 switch / rename / pin / delete conversation', async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('conv-item').first().waitFor()
+    await page.locator('[data-testid="view-tab"][data-view="chat"]').click()
     // switch
     await page.getByTestId('conv-item').nth(1).click()
     await expect(page.locator('[data-testid="msg-row"][data-role="assistant"]')).toBeVisible({ timeout: 5_000 })
@@ -109,6 +120,8 @@ test.describe('RoboJex desktop', () => {
 
   test('08 gear switch via chip popover', async ({ page }) => {
     await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.locator('[data-testid="view-tab"][data-view="chat"]').click()
     await page.getByTestId('gear-chip').waitFor()
     await page.getByTestId('gear-chip').click()
     await expect(page.getByTestId('gear-popover')).toBeVisible()
@@ -119,8 +132,7 @@ test.describe('RoboJex desktop', () => {
   })
 
   test('09 gear switch via slash command', async ({ page }) => {
-    await page.goto('/')
-    await page.getByTestId('chat-input').waitFor()
+    await openChat(page)
     await page.getByTestId('chat-input').fill('/gear eco')
     await page.getByTestId('chat-input').press('Enter')
     await expect(page.getByTestId('gear-chip')).toContainText('省电', { timeout: 5_000 })
@@ -128,6 +140,8 @@ test.describe('RoboJex desktop', () => {
 
   test('10 model picker', async ({ page }) => {
     await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.locator('[data-testid="view-tab"][data-view="chat"]').click()
     await page.getByTestId('model-chip').waitFor()
     await page.getByTestId('model-chip').click()
     await page.getByTestId('model-opt').filter({ hasText: 'deepseek-v4-pro' }).click()
@@ -135,8 +149,7 @@ test.describe('RoboJex desktop', () => {
   })
 
   test('11 stop button aborts stream', async ({ page }) => {
-    await page.goto('/')
-    await page.getByTestId('conn-status').waitFor()
+    await openChat(page)
     await page.request.post('/mock/slow', { data: { delay: 400 } })
     await page.getByTestId('chat-input').fill('慢慢说')
     await page.getByTestId('chat-send').click()
@@ -149,7 +162,7 @@ test.describe('RoboJex desktop', () => {
   test('12 view tabs switch', async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('view-tab').first().waitFor()
-    for (const view of ['board', 'agenda', 'activity', 'cockpit']) {
+    for (const view of ['command', 'board', 'agenda', 'activity', 'cockpit']) {
       await page.locator(`[data-testid="view-tab"][data-view="${view}"]`).click()
       await expect(page.locator(`[data-testid="view-tab"][data-view="${view}"]`)).toHaveAttribute('data-active', 'true')
     }
@@ -191,8 +204,7 @@ test.describe('RoboJex desktop', () => {
   })
 
   test('16 regenerate last answer', async ({ page }) => {
-    await page.goto('/')
-    await page.getByTestId('conn-status').waitFor()
+    await openChat(page)
     await page.getByTestId('chat-input').fill('第一次回答')
     await page.getByTestId('chat-send').click()
     await expect(page.locator('[data-testid="msg-row"][data-role="assistant"]')).toBeVisible({ timeout: 20_000 })
@@ -217,8 +229,7 @@ test.describe('RoboJex desktop', () => {
   })
 
   test('19 jex agent chat via /jex command shows timeline cards', async ({ page }) => {
-    await page.goto('/')
-    await page.getByTestId('chat-input').waitFor()
+    await openChat(page)
     await page.getByTestId('chat-input').fill('/jex 去巡逻一下')
     await page.getByTestId('chat-input').press('Enter')
     // dispatch renders immediately as an agent-send timeline card…
@@ -227,3 +238,16 @@ test.describe('RoboJex desktop', () => {
     await expect(page.locator('[data-testid="agent-card"][data-kind="notice"]')).toBeVisible({ timeout: 8_000 })
   })
 })
+
+  test('20 command center: gantt board + think log render', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await expect(page.getByTestId('cmd-center')).toBeVisible()
+    await expect(page.getByTestId('gantt-board')).toBeVisible()
+    await expect(page.getByTestId('gantt-band')).toBeVisible()
+    await expect(page.getByTestId('think-log')).toBeVisible()
+    // policy badge from mock settings (absent policy => hidden, so assert either way)
+    const badge = page.getByTestId('policy-badge')
+    if (await badge.count()) await expect(badge).toBeVisible()
+    await shot(page, '20-command-center')
+  })

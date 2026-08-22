@@ -37,6 +37,13 @@ async function open(page, path = '/') {
   await page.getByTestId('conn-status').waitFor({ state: 'attached', timeout: 15000 })
 }
 
+/** The app boots into the command center; chat-surface scenarios opt into
+ *  the chat tab first. */
+async function openChat(page) {
+  await open(page)
+  await page.locator('[data-testid="view-tab"][data-view="chat"]').click()
+}
+
 /* ───────────────────────── scenarios ───────────────────────── */
 
 const scenarios = {}
@@ -56,7 +63,7 @@ scenarios.load = async ({ page }) => {
 }
 
 scenarios['chat-real'] = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   await page.getByTestId('sidebar-new-chat').click()
   const q = '用 markdown 表格对比 Python 和 Rust 的三点差异，然后给一段 Python 快速排序代码'
   await page.getByTestId('chat-input').fill(q)
@@ -91,7 +98,7 @@ scenarios['chat-real'] = async ({ page }) => {
 }
 
 scenarios['msg-ops'] = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   const hasConvs = await page.getByTestId('conv-item').first()
     .waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false)
   if (!hasConvs) { ok('needs a conversation', false); return }
@@ -119,7 +126,7 @@ scenarios['msg-ops'] = async ({ page }) => {
 }
 
 scenarios['conv-mgmt'] = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   const c1 = await api('POST', '/api/conversations', { title: '探针A-置顶' })
   const c2 = await api('POST', '/api/conversations', { title: '探针B-普通' })
   ok('seed convs via API', c1.status < 300 && c2.status < 300)
@@ -159,7 +166,7 @@ scenarios['conv-mgmt'] = async ({ page }) => {
 }
 
 scenarios.gears = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   await page.getByTestId('gear-chip').click()
   await page.getByTestId('gear-popover').waitFor({ timeout: 5000 })
   const n = await page.getByTestId('gear-opt').count()
@@ -187,6 +194,7 @@ scenarios.gears = async ({ page }) => {
 scenarios.views = async ({ page }) => {
   await open(page)
   const targets = [
+    ['command', 'gantt-board'],
     ['board', 'board-new-task'],
     ['activity', null],
     ['cockpit', 'gear-dial'],
@@ -238,7 +246,7 @@ scenarios.cmdk = async ({ page }) => {
 }
 
 scenarios.slash = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   await page.getByTestId('chat-input').click()
   await page.getByTestId('chat-input').fill('/')
   await page.waitForTimeout(500)
@@ -256,7 +264,7 @@ scenarios.slash = async ({ page }) => {
 }
 
 scenarios.model = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   await page.getByTestId('model-chip').click()
   await page.getByTestId('model-opt').first().waitFor({ timeout: 5000 })
   const opts = await page.getByTestId('model-opt').allInnerTexts()
@@ -316,7 +324,7 @@ scenarios['ws-live'] = async ({ page }) => {
 }
 
 scenarios.agentmode = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   // observe mode blocks tool execution by design (safety default); switch to
   // assist so the loop may actually act
   const sw = await api('POST', '/api/mode', { mode: 'assist' })
@@ -341,7 +349,7 @@ scenarios.agentmode = async ({ page }) => {
 }
 
 scenarios.stopstream = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   await page.getByTestId('sidebar-new-chat').click()
   await page.getByTestId('chat-input').fill('写一篇 800 字关于海洋的散文')
   await page.getByTestId('chat-send').click()
@@ -370,7 +378,7 @@ scenarios.stopstream = async ({ page }) => {
 }
 
 scenarios['board-new'] = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   await page.locator('[data-testid="view-tab"][data-view="board"]').click()
   await page.getByTestId('board-new-task').waitFor({ timeout: 5000 })
   await page.getByTestId('board-new-task').click()
@@ -386,7 +394,7 @@ scenarios['board-new'] = async ({ page }) => {
 }
 
 scenarios.fepanel = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   // 1) char/token counter appears while typing
   await page.getByTestId('chat-input').click()
   await page.getByTestId('chat-input').fill('你好世界')
@@ -426,7 +434,7 @@ scenarios.fepanel = async ({ page }) => {
 }
 
 scenarios.jexcard = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   await page.getByTestId('sidebar-new-chat').click()
   await page.getByTestId('chat-input').fill('/jex 汇报一下当前任务板状态')
   await page.getByTestId('chat-send').click()
@@ -446,7 +454,7 @@ scenarios.jexcard = async ({ page }) => {
 }
 
 scenarios.direct = async ({ page }) => {
-  await open(page)
+  await openChat(page)
   // the settings API masks the key — read it from the server-side config file
   let key = process.env.PROBE_KEY || ''
   if (!key) {
@@ -484,6 +492,23 @@ scenarios.direct = async ({ page }) => {
   await page.waitForTimeout(500)
   await page.keyboard.press('Escape')
   ok('restored gateway mode', true)
+}
+
+
+scenarios.cmdcenter = async ({ page }) => {
+  await open(page)
+  ok('command center is the default view', await page.getByTestId('cmd-center').count() > 0)
+  ok('gantt board renders', await page.getByTestId('gantt-board').count() > 0)
+  ok('gantt band renders', await page.getByTestId('gantt-band').count() > 0)
+  ok('think log renders', await page.getByTestId('think-log').count() > 0)
+  // cycle entries are session-local (no replay), so a fresh page shows the
+  // waiting placeholder until the next tick — either is a pass
+  const items = await page.getByTestId('think-item').count()
+  const waiting = await page.locator('.cc-log-empty').count()
+  ok('think log has entries or waiting placeholder', items > 0 || waiting > 0, `items=${items} waiting=${waiting}`)
+  const badge = await page.getByTestId('policy-badge').innerText().catch(() => '')
+  ok('policy badge shows butler', /管家/.test(badge), badge.trim())
+  await page.screenshot({ path: `${SHOTS}/cmdcenter-01.png` })
 }
 
 /* ───────────────────────── driver ───────────────────────── */
