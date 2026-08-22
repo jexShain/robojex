@@ -76,6 +76,23 @@ test("chatPrompt: five distinct butler personas, low gears terse / high gears pr
   expect(chatPrompt("turbo")).not.toContain("/jex"); // the butler takes the errand, never coaches syntax
 });
 
+test("chatPrompt: every gear opens with the butler positioning — no command prefix, auto delegation, language follows the user", () => {
+  for (const g of GEAR_IDS) {
+    const p = chatPrompt(g);
+    expect(p, `${g} no-prefix promise`).toContain("无需任何命令前缀");
+    expect(p, `${g} auto-delegation promise`).toContain("自动建任务派发");
+    expect(p, `${g} language follows the user`).toContain("回复语言跟随用户");
+  }
+});
+
+test("loopPrompt: every live gear prioritizes chat errands — take, delegate, brief", () => {
+  expect(loopPrompt("dormant")).not.toContain("chat: 委托"); // asleep: no doctrine at all
+  for (const g of ["eco", "balanced", "focused", "turbo"] as GearId[]) {
+    expect(loopPrompt(g), `${g} chat-errand priority`).toContain("chat: 委托事件优先处理");
+    expect(loopPrompt(g), `${g} brief mandate`).toContain("简报");
+  }
+});
+
 /* ───────────────── controller ───────────────── */
 
 test("GearController: default balanced, load() honors valid input, invalid falls back with warn", () => {

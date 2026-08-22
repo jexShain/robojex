@@ -75,6 +75,18 @@ export const DEFAULT_SKILLS_DIR = process.env.ROBOJEX_SKILLS_DIR
 // manuals on a bare word-boundary hit would fire on half of all prompts.
 const GENERIC_NAMES = ["go", "make", "file", "http", "convert", "identify", "just", "delta"];
 
+// One-line relative time for butler briefs ("3分钟后" / "2小时前"): coarse
+// buckets keep the line short — precision is what the gantt band is for.
+function relTime(ts: number, now = Date.now()): string {
+  const diff = ts - now;
+  const abs = Math.abs(diff);
+  const [unitMs, unit] = abs < 60_000 ? [1_000, "秒"] as const
+    : abs < 3_600_000 ? [60_000, "分钟"] as const
+    : abs < 86_400_000 ? [3_600_000, "小时"] as const
+    : [86_400_000, "天"] as const;
+  return `${Math.max(1, Math.round(abs / unitMs))}${unit}${diff >= 0 ? "后" : "前"}`;
+}
+
 export class SchedulerLoop {
   private queue: string[] = [];
   private timer: NodeJS.Timeout | undefined;
@@ -265,6 +277,8 @@ export class SchedulerLoop {
       if (now - last < dueDebounce) continue;
       this.taskDueNudgedAt.set(t.id, now);
       this.push(`task due: ${t.title} — 检查进度，催办或重派`);
+      // butler briefing rides the existing debounce: one chat line per chase
+      this.d.outlet?.chatOut("jex", `提醒：「${t.title}」已到检查时间，我去核验进度`);
       this.d.outlet?.hud?.("task_due", t.id);
     }
   }
@@ -336,7 +350,7 @@ export class SchedulerLoop {
       });
       // layer 1: cheap patrol triage
       const p = await this.d.llm.chat("patrol", [
-        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: always act on it. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
+        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; a pure greeting or a plain question the direct chat already answered may be 'none'. When unsure, act — the human's words outrank thrift. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
       let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
@@ -411,9 +425,13 @@ export class SchedulerLoop {
             if ((scheduledAt ?? 0) > Date.now()) {
               console.log(`[ceo] spawn deferred to ${new Date(scheduledAt as number).toISOString()}: ${t.title}`);
               this.push(`spawn_deferred: ${t.title} until ${new Date(scheduledAt as number).toISOString()}`);
+              this.d.outlet?.chatOut("jex", `已排程「${t.title}」（${relTime(scheduledAt as number)}开工，验收：${acceptance.slice(0, 40)}${acceptance.length > 40 ? "…" : ""}）`);
             } else {
             this.d.board.update(t.id, { status: "running" });
             this.emitTasks();
+            // butler briefing: the user asked to be kept told — every dispatch
+            // earns one chat line, no conditions (spawn itself is rare)
+            this.d.outlet?.chatOut("jex", `已派发「${t.title}」给 ${a.framework}${dueAt ? `（预计 ${relTime(dueAt)}，` : "（"}验收：${acceptance.slice(0, 40)}${acceptance.length > 40 ? "…" : ""}）`);
             // background: the cycle moves on to the next action; the card settles
             // when the sub-agent exits, and the completion re-wakes jex
             const title = t.title;
@@ -423,18 +441,22 @@ export class SchedulerLoop {
               const card = this.d.board.list().find((x) => x.id === t.id);
               const hasAccept = (card?.acceptance ?? "") !== "";
               const verdictOk = !hasAccept || (card?.verdict === "pass");
+              const ok = r.exitCode === 0 && !r.summary.startsWith("FAIL") && verdictOk;
               this.d.board.update(t.id, {
-                status: r.exitCode === 0 && !r.summary.startsWith("FAIL") && verdictOk ? "done" : "blocked",
+                status: ok ? "done" : "blocked",
                 resultSummary: r.exitCode === 0 && !verdictOk ? `${r.summary} [awaiting acceptance: verify with tools, then {"type":"verify","task_id":"...","verdict":"pass",...}]` : r.summary,
                 attempts: 1,
               });
               this.emitTasks();
+              this.d.outlet?.chatOut("jex", `「${title}」${ok ? "完成" : "阻塞"}：${r.summary.slice(0, 60)}`);
               this.push(`agent_done: ${title} -> ${r.summary}`);
             }).catch((err: unknown) => {
               const reason = err instanceof Error ? err.message : String(err);
               console.error(`[ceo] action failed: ${reason}`);
-              this.d.board.update(t.id, { status: "blocked", resultSummary: `action failed: ${reason}`, attempts: 1 });
+              const summary = `action failed: ${reason}`;
+              this.d.board.update(t.id, { status: "blocked", resultSummary: summary, attempts: 1 });
               this.emitTasks();
+              this.d.outlet?.chatOut("jex", `「${title}」阻塞：${summary.slice(0, 60)}`);
             }).catch((err: unknown) => {
               // terminal guard: a crash inside the settlement handlers above must
               // not escape as an unhandled rejection and take the process down
@@ -460,6 +482,10 @@ export class SchedulerLoop {
             const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
             appendFileSync(p, `\n## ${stamp}\n${a.text.trim()}\n`);
             this.push(`reflected: ${a.text.slice(0, 80)}`);
+            // 管家小结 chat line only when the entry carries a real lesson:
+            // short/no-op entries would chat-spam every idle cycle (double
+            // guard next to the prompt's anti-busywork doctrine)
+            if (a.text.trim().length > 30) this.d.outlet?.chatOut("jex", `管家小结：${a.text.slice(0, 60)}`);
           } else if (a.type === "reply") {
             if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid reply action: text must be a non-empty string");
             this.d.outlet?.chatOut("jex", a.text); // conversational reply: no spawn, no board card
@@ -554,6 +580,12 @@ export class SchedulerLoop {
               this.d.board.update(card.id, { status: "done", resultSummary: cleaned });
             }
             this.emitTasks();
+            // butler briefing: the acceptance verdict is the line the user is
+            // waiting for — one chat line per verdict, never per progress tweak
+            const mark = verdict === "pass" ? "✓ 通过"
+              : verdict === "fail" ? `✗ 未过——${note.slice(0, 40)}`
+              : `◐ 部分通过——${note.slice(0, 40)}`;
+            this.d.outlet?.chatOut("jex", `验收「${card.title}」：${mark}`);
             console.log(`[ceo] verify ${card.id.slice(0, 8)} -> ${verdict} ${progress}%${verdict === "pass" && card.status === "blocked" ? " -> done" : ""} ${note.slice(0, 80)}`);
           }
         } catch (e) {

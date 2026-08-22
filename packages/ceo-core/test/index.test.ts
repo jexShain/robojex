@@ -164,6 +164,10 @@ test("assembleAndStart agent-scout wiring: discovery registers agents, writes AG
   const agents = readFileSync(join(dir, "AGENTS.md"), "utf8");
   expect(agents).toContain("claude-code — ");
   expect(agents).toContain("[verified]");
+  // butler briefing: a non-empty fleet also lands one chat_out line (visible
+  // in the /api/state chat ring the frontend renders)
+  const state = await (await fetch(`http://127.0.0.1:${assembled.api.port}/api/state`)).json() as { chat: Array<{ from: string; text: string }> };
+  expect(state.chat.some((m) => m.from === "jex" && m.text === "收编代理：claude-code、goose 可用")).toBe(true);
   assembled.stop();
 
   const empty = mkFake();
@@ -174,6 +178,9 @@ test("assembleAndStart agent-scout wiring: discovery registers agents, writes AG
   await new Promise((r) => setTimeout(r, 300));
   expect(empty.pushes).toContain("agents discovered: (none)"); // empty fleet: event still fires
   expect(readFileSync(join(dirE, "AGENTS.md"), "utf8")).toBe("\n");
+  // empty fleet stays chat-silent: "no agents found" is not chat news
+  const stateE = await (await fetch(`http://127.0.0.1:${assembledE.api.port}/api/state`)).json() as { chat: Array<{ from: string; text: string }> };
+  expect(stateE.chat.some((m) => m.text.includes("收编代理"))).toBe(false);
   assembledE.stop();
 }, 10_000);
 

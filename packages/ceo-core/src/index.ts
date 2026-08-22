@@ -234,7 +234,12 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
   // Runs on every boot (the installed set changes with the machine); AGENTS.md
   // reflects reality, an empty fleet is a valid finding.
   void agentScout.run()
-    .then((r) => { loop.push(`agents discovered: ${r.discovered.length ? r.discovered.map((d) => d.agent.name).join(", ") : "(none)"}`); })
+    .then((r) => {
+      loop.push(`agents discovered: ${r.discovered.length ? r.discovered.map((d) => d.agent.name).join(", ") : "(none)"}`);
+      // butler briefing: a non-empty fleet earns one chat line (an empty one
+      // stays silent — "no agents found" is activity-stream news, not chat)
+      if (r.discovered.length) apiRef?.chatOut("jex", `收编代理：${r.discovered.map((d) => d.agent.name).join("、")} 可用`);
+    })
     .catch((e: unknown) => console.error(`[ceo] agent-scout failed: ${e instanceof Error ? e.message : String(e)}`));
   // boot recon (SPEC-BUTLER §3): ~3s after start jex surveys the system and
   // its agents instead of waiting for the first full tick — desktop launch to

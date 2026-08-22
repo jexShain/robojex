@@ -22,7 +22,8 @@ export interface ChatServiceDeps {
   gear: GearController;
   budget?: BudgetGovernor | null; // chat burn books into the same daily ledger
   runtimeDir?: string;            // traces.sqlite lives here (loop-cost merge)
-  /** mode:'agent' chats also feed the orchestration loop (loop.push) */
+  /** 对话即委托: every settled chat stream also feeds the orchestration loop
+   *  (loop.push) — an explicit mode:'chat-only' request opts out */
   onAgentEvent?: (text: string) => void;
 }
 
@@ -60,7 +61,10 @@ export class ChatService {
       return;
     }
     const modelOverride = typeof body.model === "string" && body.model.length > 0 ? body.model : undefined;
-    const mode = body.mode === "agent" ? "agent" : "chat";
+    // dual-channel default: a plain chat is also a delegation candidate — only
+    // an explicit 'chat-only' opts out ('agent' stays accepted as an alias of
+    // the now-default behavior)
+    const mode = body.mode === "chat-only" ? "chat-only" : "agent";
     const convIdRaw = typeof body.conversationId === "string" && body.conversationId.length > 0 ? body.conversationId : null;
 
     // resolve conversation: named-but-missing → 404 (stale client id); unnamed → create
@@ -81,7 +85,6 @@ export class ChatService {
       userMsgId = lastUser.id;
     } else {
       userMsgId = this.d.store.appendMessage(convId, { role: "user", content: rawText }).id;
-      if (mode === "agent") this.d.onAgentEvent?.(`chat: ${rawText}`); // orchestration rides along
     }
 
     // history ends at the just-landed user message; failed replies never coach the model
@@ -146,6 +149,16 @@ export class ChatService {
         ...(aborted ? { error: "aborted" } : streamError ? { error: streamError } : {}),
       });
       if (!aborted && !streamError) this.d.budget?.spend(usage);
+      // 对话即委托 (chat-as-errand): once the reply settled (done frame sent,
+      // nothing below blocks the stream), the user's words also reach the butler
+      // loop — greetings and small talk included; patrol triage tells errands
+      // from chatter. Skipped for chat-only opt-outs, regenerations (their turn
+      // was delegated by the original stream) and failed streams (no done —
+      // the user will ask again). The legacy /api/chat route pushes on its own
+      // and never rides this path, so /jex never double-sends.
+      if (!regenerate && mode === "agent" && !streamError) {
+        this.d.onAgentEvent?.(`chat: ${rawText}`);
+      }
     } finally {
       req.off("close", onClose);
       this.active.delete(convId);

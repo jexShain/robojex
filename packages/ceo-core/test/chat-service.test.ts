@@ -281,6 +281,51 @@ test("mode agent: the text also reaches the orchestration loop", async () => {
   expect(res.status).toBe(200); // still a streamed direct reply
 });
 
+/* ───────── chat-as-errand (对话即委托): dual-channel by default ───────── */
+
+test("chat-as-errand: the default stream is dual-channel — no mode field needed", async () => {
+  const rig = mkRig({ content: ["好的，我去安排"] });
+  const conv = rig.store.create();
+  const res = new FakeRes();
+  await rig.svc.handleStream(fakeReq(), res as unknown as ServerResponse, { conversationId: conv.id, text: "帮我整理下载目录" });
+  expect(frames(res).at(-1)).toMatchObject({ type: "done" });
+  expect(rig.agentEvents).toEqual(["chat: 帮我整理下载目录"]); // the default delegates
+});
+
+test("chat-as-errand: delegation lands after the stream settles, not when the user row lands", async () => {
+  const rig = mkRig({ content: ["一", "二"], slowDeltas: true });
+  const conv = rig.store.create();
+  const req = fakeReq();
+  const res = new FakeRes();
+  const p = rig.svc.handleStream(req, res as unknown as ServerResponse, { conversationId: conv.id, text: "帮我查天气" });
+  await new Promise<void>((resolve) => {
+    const t = setInterval(() => { if (res.body.includes("content")) { clearInterval(t); resolve(); } }, 5);
+  });
+  expect(rig.agentEvents).toEqual([]); // mid-stream: the loop has not been woken yet
+  await p;
+  expect(rig.agentEvents).toEqual(["chat: 帮我查天气"]); // one push, after done
+});
+
+test("chat-as-errand: regenerate replays an already-delegated turn — no second push", async () => {
+  const rig = mkRig({ content: ["重新", "答"], title: "标题" });
+  const conv = rig.store.create();
+  await rig.svc.handleStream(fakeReq(), new FakeRes() as unknown as ServerResponse, { conversationId: conv.id, text: "帮我修个 bug" });
+  await rig.svc.handleStream(fakeReq(), new FakeRes() as unknown as ServerResponse, { conversationId: conv.id, text: "" });
+  expect(rig.agentEvents).toEqual(["chat: 帮我修个 bug"]); // regenerate adds nothing
+});
+
+test("chat-as-errand: mode 'chat-only' opts out; a failed stream never delegates", async () => {
+  const rig = mkRig({ content: ["x"] });
+  const conv = rig.store.create();
+  await rig.svc.handleStream(fakeReq(), new FakeRes() as unknown as ServerResponse, { conversationId: conv.id, text: "随便聊聊", mode: "chat-only" });
+  expect(rig.agentEvents).toEqual([]); // the escape hatch works
+
+  const fail = mkRig({ failWith: new Error("upstream boom") });
+  const conv2 = fail.store.create();
+  await fail.svc.handleStream(fakeReq(), new FakeRes() as unknown as ServerResponse, { conversationId: conv2.id, text: "帮个忙" });
+  expect(fail.agentEvents).toEqual([]); // no done frame: the errand is not delegated twice
+});
+
 test("unknown conversationId → 404; absent id auto-creates; empty text → 400", async () => {
   const rig = mkRig({ content: ["x"] });
   const r404 = new FakeRes();
