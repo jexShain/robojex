@@ -834,9 +834,10 @@ export class SchedulerLoop {
     // sub-agent only ever sees the prompt — until now jex graded against a
     // ruler the worker never read. Ship the bar with the work.
     const card = this.d.board.list().find((x) => x.id === taskId);
-    const prompt = card && card.acceptance
+    let prompt = card && card.acceptance
       ? `${prompt0}\n\n# 验收标准（完成后 jex 将按此判定）\n${card.acceptance}`
       : prompt0;
+    prompt = this.withMemory(prompt, title); // R53: related lessons ride along
     void this.d.orchestrator.spawn(framework, prompt).then((r) => {
       if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
       const card = this.d.board.list().find((x) => x.id === taskId);
@@ -909,6 +910,33 @@ export class SchedulerLoop {
   // for names that are everyday English words ("go check the file"), which
   // count only when backticked or heading their own line. Tentacle manuals
   // share the same 2400-char budget as tool manuals.
+  /** R53 institutional memory: scan MEMORY.md for entries whose tokens
+   *  overlap the task title and inject the best few into the dispatch prompt
+   *  — the butler's accumulated lessons reach the workers who can use them.
+   *  Most-recent wins on ties (the ledger is appended chronologically). */
+  private withMemory(prompt: string, title: string): string {
+    try {
+      const raw = readFileSync(join(this.d.runtimeDir, "MEMORY.md"), "utf8");
+      const entries = raw.split(/\n(?=## )/).map((e) => e.trim()).filter((e) => e.startsWith("## "));
+      if (entries.length === 0) return prompt;
+      const tokens = new Set(title.split(/[\s，。：；、！？·（）()\-/\\]+/).filter((t) => t.length >= 2));
+      if (tokens.size === 0) return prompt;
+      let best: Array<{ score: number; text: string }> = [];
+      for (const e of entries) {
+        let score = 0;
+        for (const t of tokens) if (e.includes(t)) score++;
+        if (score > 0) best.push({ score, text: e });
+      }
+      if (best.length === 0) return prompt;
+      best = best.slice(-3); // keep the most recent hits…
+      best.sort((a, b) => b.score - a.score); // …then surface the strongest
+      const block = best.map((b) => b.text.slice(0, 400)).join("\n");
+      return `${prompt}\n\n# 相关经验（jex 过往沉淀，供参考避免重蹈）\n${block}`;
+    } catch {
+      return prompt; // no ledger yet: nothing to recall
+    }
+  }
+
   private withToolManuals(prompt: string): string {
     const parts: string[] = [];
     let total = 0;

@@ -137,3 +137,19 @@ describe("R20: concurrency guard", () => {
     rig.loop.stop();
   }, 30_000);
 });
+
+describe("R53: institutional memory rides with the dispatch", () => {
+  it("MEMORY entries sharing title tokens are injected; unrelated ones are not", async () => {
+    const rig = makeRig();
+    const dir = (rig.loop as unknown as { d: { runtimeDir: string } }).d.runtimeDir;
+    writeFileSync(join(dir, "MEMORY.md"), "# MEMORY\n## 08-22 10:00\n整理下载文件夹要先 du 看大小再动手，按扩展名分桶\n\n## 08-22 11:00\n写周报要用三段结构\n");
+    rig.decideWith([{ type: "spawn", framework: "hermes", title: "整理下载文件夹", prompt: "去整理", accept: "归档完成" }]);
+    await rig.loop.runOnce("dispatch");
+    await until(() => rig.spawns.length >= 1);
+    const p = rig.spawns[0]!.prompt;
+    expect(p).toContain("# 相关经验");
+    expect(p).toContain("按扩展名分桶");
+    expect(p).not.toContain("三段结构"); // unrelated lesson stays out
+    rig.loop.stop();
+  });
+});
