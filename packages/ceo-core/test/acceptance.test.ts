@@ -55,11 +55,16 @@ function makeRig() {
   const events: string[] = [];
   const origPush = loop.push.bind(loop);
   loop.push = (e: string) => { events.push(e); origPush(e); };
-  // decide returns these actions on the next cycle (tests re-arm per cycle)
+  // decide returns these actions ONCE (re-armed per call) — replaying them on
+  // every wake would fan out duplicate cards, which is a test artifact, not
+  // model behavior (a live model sees the board it just built)
   const decideWith = (actions: unknown): void => {
+    let armed = true;
     chat.mockImplementation(async (slot: string) => {
       if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 1, completionTokens: 1 } };
-      return { content: JSON.stringify({ actions }), usage: { promptTokens: 1, completionTokens: 1 } };
+      const out = armed ? actions : [];
+      armed = false;
+      return { content: JSON.stringify({ actions: out }), usage: { promptTokens: 1, completionTokens: 1 } };
     });
   };
   return { loop, board, spawns, outletChat, events, decideWith };
@@ -110,6 +115,22 @@ describe("acceptance evidence chain", () => {
     await rig.loop.runOnce("verify child fail");
     await until(() => rig.outletChat.some((c) => c.includes("验收「写周报（重派#2）」")));
     expect(rig.spawns.length).toBe(1);
+    rig.loop.stop();
+  }, 30_000);
+});
+
+describe("R20: concurrency guard", () => {
+  it("caps live sub-agents at 4 and promotes the queued spawn when a slot frees", async () => {
+    const rig = makeRig();
+    const step = (i: number): Record<string, unknown> => ({ type: "spawn", framework: "hermes", title: `活${i}`, prompt: `干活${i}`, accept: `完成${i}` });
+    rig.decideWith([step(1), step(2), step(3), step(4), step(5)]);
+    await rig.loop.runOnce("fan out");
+    // wave 1 = 4, the fifth queued behind the cap, promoted as the stub
+    // spawns settle (they settle in microtasks, so by the first assertion the
+    // promotion may already have landed — order is what stays provable)
+    await until(() => rig.spawns.length === 5, 50, 60);
+    expect(rig.spawns.map((s) => s.prompt)).toEqual(["干活1", "干活2", "干活3", "干活4", "干活5"]);
+    expect(rig.outletChat.some((c) => c.includes("排队中"))).toBe(true); // it really queued first
     rig.loop.stop();
   }, 30_000);
 });

@@ -166,6 +166,11 @@ export class SchedulerLoop {
   // next decide context) instead of silently re-burning tokens. A different
   // call or a 10-minute gap resets the streak.
   private toolRepeat = { key: "", n: 0, at: 0 };
+  // R20 concurrency queue: spawn actions parked at the 4-agent cap wait here
+  // (prompt in closure — the board never stored it); any settlement drains
+  // the queue. Lost on restart: those cards sit in todo and decide re-derives
+  // them, which is exactly what it would have done anyway.
+  private pendingSpawns = new Map<string, { framework: string; prompt: string; title: string }>();
   // R16 vitals: self-awareness the decide pass reads every cycle — runtime,
   // cycle count, recent failures. A butler that can say "I've been erroring,
   // something is wrong" behaves like a person noticing a headache.
@@ -176,6 +181,9 @@ export class SchedulerLoop {
   // only — a restart on the same morning may re-fire, which is idempotent
   // enough (the digest is a summary, not an action).
   private morningSent = "";
+  // R22 periodic rescan: agents get installed while jex runs — a 6h nudge
+  // keeps the fleet inventory honest without rescanning on every tick
+  private lastScoutNudge = Date.now(); // boot scan just ran: first re-nudge lands 6h in
 
   mode(): Gate { return this.modeNow; }
 
@@ -318,6 +326,12 @@ export class SchedulerLoop {
       this.morningSent = day;
       this.push("morning_briefing: compose today's digest for the human — yesterday's acceptance verdicts (see AGENT STATS deltas), what changed on the board, durable lessons from MEMORY, and today's plan; deliver it with the reply action, concise and warm");
     }
+    // R22: every 6h the boot-time agent inventory may be stale — new CLI
+    // installs deserve a scan before jex decides "no agent can do this"
+    if (now - this.lastScoutNudge > 6 * 3_600_000) {
+      this.lastScoutNudge = now;
+      this.push("agents_rescan: agent CLIs may have been installed or removed since the last scan — run the toolscout action to refresh the fleet inventory");
+    }
   }
 
   // wire the api broadcast after construction (the api itself needs this loop)
@@ -388,7 +402,7 @@ export class SchedulerLoop {
       });
       // layer 1: cheap patrol triage
       const p = await this.d.llm.chat("patrol", [
-        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; act on a chat: event unless it is a pure greeting or social chatter with no ask — a question about this machine or jex's work (hardware, system, files, processes, tasks, progress) ALWAYS acts (the direct-chat reply alone never settles it: it may be ungrounded), and any request or delegation always acts. When unsure, act — the human's words outrank thrift. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). A 'plan_created:' event means a goal was just decomposed into child steps on the board — always act: dispatch the ready steps (in the listed order when they depend on each other, in parallel when independent). A 'morning_briefing:' event is the daily digest mandate — always act: compose it and deliver with the reply action. A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
+        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; act on a chat: event unless it is a pure greeting or social chatter with no ask — a question about this machine or jex's work (hardware, system, files, processes, tasks, progress) ALWAYS acts (the direct-chat reply alone never settles it: it may be ungrounded), and any request or delegation always acts. When unsure, act — the human's words outrank thrift. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). A 'plan_created:' event means a goal was just decomposed into child steps on the board — always act: dispatch the ready steps (in the listed order when they depend on each other, in parallel when independent). A 'morning_briefing:' event is the daily digest mandate — always act: compose it and deliver with the reply action. An 'agents_rescan:' event means the agent inventory may be stale — act by running the toolscout action. A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
       let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
@@ -411,9 +425,15 @@ export class SchedulerLoop {
       // model can act on (mention it, slow down, or ask for help)
       const upH = Math.floor((Date.now() - this.bornAt) / 3_600_000);
       const vitals = `# VITALS（自我状态）: 运行 ${upH} 小时 · 决策周期 ${this.vitals.cycles} · 近期错误 ${this.vitals.errors} 次${this.vitals.lastError ? `（最近：${this.vitals.lastError.slice(0, 60)}）` : ""} — 若错误偏多，向用户说明并在回复中体现克制`;
+      // R19 time sense: the model has no clock of its own — scheduling,
+      // morning briefings and "深夜别吵" judgment all need one line of now.
+      const nd = new Date();
+      const pad = (n: number): string => String(n).padStart(2, "0");
+      const phase = nd.getHours() < 6 ? "凌晨" : nd.getHours() < 12 ? "上午" : nd.getHours() < 18 ? "下午" : "晚上";
+      const timeLine = `# NOW: ${nd.getFullYear()}-${pad(nd.getMonth() + 1)}-${pad(nd.getDate())} ${pad(nd.getHours())}:${pad(nd.getMinutes())}（周${"日一二三四五六"[nd.getDay()]}，${phase}）— 深夜/凌晨时非紧急动作与通知从简，排程类任务移到白天`;
       const decideMessages = [
         { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)","accept":"acceptance criteria: one objectively checkable success line (a fallback line is added when missing)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"plan","goal":"...","steps":[{"title":"...","prompt":"...","framework":"<agent name>","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)","accept":"..."}]} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tool_call","tool":"<name from BUILTIN TOOLS>","args":{}} | {"type":"verify","task_id":"...","progress":0-100,"verdict":"pass|partial|fail","note":"one-line evidence from a real tool check (a pass without an evidence note is refused; a fail triggers one corrective re-dispatch)"} | {"type":"reflect","text":"durable lesson distilled from this cycle, appended to MEMORY with a timestamp (non-empty, <=4KB)"} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. tool_call runs one builtin tool directly (see # BUILTIN TOOLS in the context): small file, terminal, memory, or board work needs no sub-agent, and the result arrives as an event on the next wake. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself. You are an orchestrator and acceptance judge, never a worker: ALL productive work goes to coding agents via spawn; builtin tools are for LOOKING (verifying outputs, checking state), never for building. Questions about THIS machine or jex's fleet (hardware, OS, files, processes, network, installed tools, task progress) are LOOKING: answer them yourself via tool_call (terminal / read_file / process), grounded in the real output, then reply to the human — never state system facts from memory. Spawn sub-agents for work that builds or changes things and for long jobs. A goal needing 3+ ordered steps earns one plan action (epic + child steps with acceptance each) instead of ad-hoc spawns — the plan_created event re-wakes you to staff the steps. reflect banks a durable lesson into MEMORY — the butler's idle-cycle move when no task is ready: reflect, catch up on unverified work, or refine MISSION, instead of inventing busywork.` },
-        { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (agentsDoc ? `\n\n# AGENTS (verified on this system)\n${agentsDoc}` : "") + (stats ? `\n\n${stats}` : "") + (vitals ? `\n\n${vitals}` : "") + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") + (builtin ? `\n\n${builtin}` : "") },
+        { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (agentsDoc ? `\n\n# AGENTS (verified on this system)\n${agentsDoc}` : "") + (stats ? `\n\n${stats}` : "") + (vitals ? `\n\n${vitals}` : "") + `\n\n${timeLine}` + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") + (builtin ? `\n\n${builtin}` : "") },
       ] satisfies ChatMsg[];
       const decideMax = gdef.decideMaxTokens; // the gear buys the decide budget
       let dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: decideMax }); // big contexts (tools+tentacles inventories) starve reasoning models below this
@@ -470,8 +490,19 @@ export class SchedulerLoop {
               this.push(`spawn_deferred: ${t.title} until ${new Date(scheduledAt as number).toISOString()}`);
               this.d.outlet?.chatOut("jex", `已排程「${t.title}」（${relTime(scheduledAt as number)}开工，验收：${acceptance.slice(0, 40)}${acceptance.length > 40 ? "…" : ""}）`);
             } else {
+            // R20 concurrency guard: the machine runs out of agents before
+            // jex runs out of ideas — at 4 live sub-agents new work stays on
+            // the board (todo) and the freed-slot pump re-wakes dispatch
+            const live = this.d.board.list().filter((x) => x.status === "running").length;
+            if (live >= 4) {
+              console.log(`[ceo] spawn queued (${live} live): ${t.title}`);
+              this.pendingSpawns.set(t.id, { framework: a.framework, prompt: a.prompt, title: t.title });
+              this.push(`spawn_queued: ${t.title} (${live} sub-agents already live — dispatch resumes as they settle)`);
+              this.d.outlet?.chatOut("jex", `「${t.title}」排队中（${live} 个子代理在跑，空出即派）`);
+            } else {
             this.launchSpawn(t.id, a.framework, t.title, a.prompt,
               `已派发「${t.title}」给 ${a.framework}${dueAt ? `（预计 ${relTime(dueAt)}，` : "（"}验收：${acceptance.slice(0, 40)}${acceptance.length > 40 ? "…" : ""}）`, 1);
+            }
             }
           } else if (a.type === "mission_update") {
             if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid mission_update action: text must be a non-empty string");
@@ -701,6 +732,23 @@ export class SchedulerLoop {
     }
   }
 
+  /** R20 queue drain: promote the oldest queued spawn once a slot is free.
+   *  Cards that settled some other way while queued are skipped. */
+  private drainPendingSpawns(): void {
+    for (;;) {
+      const entry = this.pendingSpawns.entries().next();
+      if (entry.done) return;
+      const [id, next] = entry.value;
+      const live = this.d.board.list().filter((x) => x.status === "running").length;
+      if (live >= 4) return;
+      this.pendingSpawns.delete(id);
+      const card = this.d.board.list().find((x) => x.id === id);
+      if (!card || card.status !== "todo") continue; // settled otherwise: skip
+      this.launchSpawn(id, next.framework, next.title, next.prompt,
+        `已派发「${next.title}」给 ${next.framework}（排队转正，验收：${card.acceptance.slice(0, 40)}${card.acceptance.length > 40 ? "…" : ""}）`, card.attempts || 1);
+    }
+  }
+
   /** R8 stat ledger: append `framework|verdict|title` to runtime/STATS.md.
    *  Append-only like MEMORY.md — aggregation happens at read time so the
    *  raw history always stays auditable by the human. Best-effort: a stats
@@ -768,6 +816,7 @@ export class SchedulerLoop {
       this.emitTasks();
       this.d.outlet?.chatOut("jex", `「${title}」${ok ? "完成" : "阻塞"}：${r.summary.slice(0, 60)}`);
       this.push(`agent_done: ${title} -> ${r.summary}`);
+      this.drainPendingSpawns(); // R20: a settled slot may promote a queued spawn
     }).catch((err: unknown) => {
       const reason = err instanceof Error ? err.message : String(err);
       console.error(`[ceo] action failed: ${reason}`);
@@ -775,6 +824,7 @@ export class SchedulerLoop {
       this.d.board.update(taskId, { status: "blocked", resultSummary: summary });
       this.emitTasks();
       this.d.outlet?.chatOut("jex", `「${title}」阻塞：${summary.slice(0, 60)}`);
+      this.drainPendingSpawns(); // a failed launch frees a slot too
     }).catch((err: unknown) => {
       // terminal guard: a crash inside the settlement handlers above must
       // not escape as an unhandled rejection and take the process down
