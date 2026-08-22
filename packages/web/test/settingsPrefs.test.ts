@@ -83,13 +83,14 @@ describe('parseEnterSend', () => {
 })
 
 describe('LOCAL_PREF_KEYS', () => {
-  test('covers the four new prefs + legacy theme/model/direct, never lang', () => {
+  test('covers the renderer prefs + legacy theme/model/direct, never lang', () => {
     expect(sv.LOCAL_PREF_KEYS).toEqual(
       expect.arrayContaining([
         'robojex-startview',
         'robojex-density',
         'robojex-fontsize',
         'robojex-enter-send',
+        'robojex-notify-sys',
         'robojex-theme',
         'robojex-model',
         'robojex-direct',

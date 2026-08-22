@@ -112,7 +112,7 @@ export const zh: Record<string, string> = {
   'slash.themeDark': '深色主题',
   'slash.themeSystem': '跟随系统',
   'slash.langSet': '切换界面语言（zh / en / system）',
-  'slash.jexSend': '发给 jex 编排循环（自主任务）',
+  'slash.jexSend': '高级：手动派发给 jex（通常直接说事即可）',
   'slash.modeObserve': '仅观察，不执行',
   'slash.modeAssist': '辅助执行',
   'slash.modeFull': '完全自主',
@@ -132,6 +132,7 @@ export const zh: Record<string, string> = {
   'side.emptySearch': '没有匹配的对话',
   'side.empty': '还没有对话\n点击「＋ 新对话」开始',
   'side.messages': '{n} 条消息',
+  'side.unreadAria': '未读管家简报',
   'side.pin': '置顶',
   'side.unpin': '取消置顶',
   'side.rename': '重命名',
@@ -354,6 +355,8 @@ export const zh: Record<string, string> = {
 
   /* store command echoes + local messages */
   'conv.directTitle': '直连对话',
+  'conv.butlerTitle': '管家报告',
+  'notify.butlerTitle': '管家简报',
   'cmd.unknown': '未知命令 · {text}',
   'cmd.unknownTry': '未知命令 · /{name} — 试试 /help',
   'cmd.modeUsage': '用法：/mode observe|assist|full',

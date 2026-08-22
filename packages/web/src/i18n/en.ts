@@ -112,7 +112,7 @@ export const en: Record<string, string> = {
   'slash.themeDark': 'Dark theme',
   'slash.themeSystem': 'Follow the system',
   'slash.langSet': 'Switch the interface language (zh / en / system)',
-  'slash.jexSend': 'Send to the jex orchestration loop (autonomous tasks)',
+  'slash.jexSend': 'Advanced: dispatch to jex manually (just say what you need)',
   'slash.modeObserve': 'Observe only, nothing executes',
   'slash.modeAssist': 'Assisted execution',
   'slash.modeFull': 'Fully autonomous',
@@ -132,6 +132,7 @@ export const en: Record<string, string> = {
   'side.emptySearch': 'No matching conversations',
   'side.empty': 'No conversations yet\nClick “+ New chat” to start',
   'side.messages': '{n} messages',
+  'side.unreadAria': 'unread butler briefings',
   'side.pin': 'Pin',
   'side.unpin': 'Unpin',
   'side.rename': 'Rename',
@@ -354,6 +355,8 @@ export const en: Record<string, string> = {
 
   /* store command echoes + local messages */
   'conv.directTitle': 'Direct chat',
+  'conv.butlerTitle': 'Butler notes',
+  'notify.butlerTitle': 'Butler briefing',
   'cmd.unknown': 'unknown command · {text}',
   'cmd.unknownTry': 'unknown command · /{name} — try /help',
   'cmd.modeUsage': 'usage: /mode observe|assist|full',

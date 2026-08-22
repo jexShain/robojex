@@ -7,7 +7,10 @@
 //     message with `streaming: true`.
 // /jex round-trips also render into the open conversation as client-only
 // timeline cards (kind 'agent-send' / 'agent-notice') — the backend chat ring
-// keeps its own transcript, so these are session-local by design.
+// keeps its own transcript, so these are session-local by design. Inbound
+// jex briefings (chat_out from:'jex') are routed by routeNotice() into a
+// conversation: live card when open, otherwise parked + an unread badge
+// (state.unread / state.notices, memory-only) replayed on the next open.
 
 import {
   createContext,
@@ -71,6 +74,14 @@ export interface WebState {
   activeConvId: string | null
   /** messages of the ACTIVE conversation only; switched via loadConversation. */
   messages: Message[]
+  /** per-conversation unread jex-briefing counts. Memory-only by design:
+   * nothing persists server-side (briefing cards are session-local), so a
+   * refresh legitimately re-zeros every badge. Keyed by conversation id. */
+  unread: Record<string, number>
+  /** jex briefing cards that arrived while their conversation was closed —
+   * replayed into `messages` on the next open (conv-selected loaded), then
+   * cleared. Same session-local lifetime as the unread counts. */
+  notices: Record<string, Message[]>
   stream: StreamState
   /** preferred chat model (persisted). */
   model: string
@@ -98,11 +109,16 @@ type Action =
   | { type: 'conv-created'; conv: Conversation }
   | { type: 'conv-updated'; conv: Conversation }
   | { type: 'conv-deleted'; id: string }
-  | { type: 'conv-selected'; id: string | null; messages: Message[] }
+  /** `loaded: true` marks the final dispatch after GET /messages resolves —
+   * the point where parked briefing cards splice into the timeline. */
+  | { type: 'conv-selected'; id: string | null; messages: Message[]; loaded?: boolean }
   | { type: 'msg-deleted'; id: string }
   | { type: 'chat-notice'; text: string }
   /* /jex timeline cards — client-only, never sent to the server */
   | { type: 'agent-msg'; convId: string; kind: 'agent-send' | 'agent-notice'; text: string }
+  /** jex briefing (chat_out from:'jex') landing in a routed conversation:
+   * live card when open, parked + unread badge when closed. */
+  | { type: 'agent-notice'; convId: string; text: string }
   /* streaming */
   | { type: 'stream-start'; convId: string }
   | { type: 'stream-meta'; convId: string; userMsgId: string; assistantMsgId: string; model: string }
@@ -147,6 +163,8 @@ export const initialState: WebState = {
   conversations: [],
   activeConvId: null,
   messages: [],
+  unread: {},
+  notices: {},
   stream: { status: 'idle', convId: null, startedAt: 0 },
   model: readModel(),
   models: [],
@@ -242,6 +260,44 @@ function toDirectHistory(messages: Message[]): DirectMessage[] {
     .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 }
 
+/* ───────────────────── jex briefing routing (pure) ───────────────────── */
+
+export type NoticeRoute =
+  /** land the briefing in this existing conversation. */
+  | { convId: string; create: false }
+  /** nothing to land in — caller creates the「管家报告」conversation first. */
+  | { convId: null; create: true }
+
+/**
+ * Where an inbound jex briefing (chat_out from:'jex') lands. Decision table,
+ * first match wins (ids pointing at conversations no longer in the list —
+ * deleted, or refs from a previous session — are treated as absent):
+ *
+ *  1. lastAgentConvId  — the conversation the most recent /jex was sent
+ *     from; replies keep flowing back there (existing routing).
+ *  2. activeConvId     — no /jex context: append into whatever conversation
+ *     is currently open.
+ *  3. butlerConvId     — no open conversation either: reuse the dedicated
+ *     butler-report conversation created by an earlier briefing.
+ *  4. create           — the user never opened a chat: spawn a fresh
+ *     「管家报告」conversation so no briefing is ever lost.
+ *
+ * Pure on the (conversations, activeConvId) slice — reducer-independent and
+ * unit-tested (test/butlerNotice.test.ts).
+ */
+export function routeNotice(
+  state: Pick<WebState, 'conversations' | 'activeConvId'>,
+  lastAgentConvId: string | null,
+  butlerConvId: string | null,
+): NoticeRoute {
+  const alive = (id: string | null): id is string =>
+    id !== null && state.conversations.some((c) => c.id === id)
+  if (alive(lastAgentConvId)) return { convId: lastAgentConvId, create: false }
+  if (alive(state.activeConvId)) return { convId: state.activeConvId, create: false }
+  if (alive(butlerConvId)) return { convId: butlerConvId, create: false }
+  return { convId: null, create: true }
+}
+
 /** Bump a conversation to the top of its sort group (preview + updatedAt). */
 export function reducer(state: WebState, action: Action): WebState {
   switch (action.type) {
@@ -281,15 +337,40 @@ export function reducer(state: WebState, action: Action): WebState {
     case 'conv-deleted': {
       const conversations = state.conversations.filter((c) => c.id !== action.id)
       const activeGone = state.activeConvId === action.id
+      // drop the deleted conversation's bookkeeping too (badge + parked cards)
+      const unread = { ...state.unread }
+      delete unread[action.id]
+      const notices = { ...state.notices }
+      delete notices[action.id]
       return {
         ...state,
         conversations,
         activeConvId: activeGone ? null : state.activeConvId,
         messages: activeGone ? [] : state.messages,
+        unread,
+        notices,
       }
     }
-    case 'conv-selected':
-      return { ...state, activeConvId: action.id, messages: action.messages }
+    case 'conv-selected': {
+      if (action.id === null) return { ...state, activeConvId: null, messages: [] }
+      // opening the conversation clears its badge (spec: 点开清零) — the
+      // parked cards stay buffered until the messages actually load
+      const unread = { ...state.unread }
+      delete unread[action.id]
+      if (!action.loaded) return { ...state, activeConvId: action.id, messages: action.messages, unread }
+      // final load: splice briefings that arrived while the conversation was
+      // closed onto the server history, then retire the buffer
+      const parked = state.notices[action.id] ?? []
+      const notices = { ...state.notices }
+      delete notices[action.id]
+      return {
+        ...state,
+        activeConvId: action.id,
+        messages: parked.length > 0 ? [...action.messages, ...parked] : action.messages,
+        unread,
+        notices,
+      }
+    }
     case 'msg-deleted':
       return { ...state, messages: state.messages.filter((m) => m.id !== action.id) }
     case 'chat-notice': {
@@ -304,9 +385,9 @@ export function reducer(state: WebState, action: Action): WebState {
       return { ...state, messages: [...state.messages, notice] }
     }
     case 'agent-msg': {
-      // /jex timeline card — client-only by design: the server conversation
+      // /jex send card — client-only by design: the server conversation
       // store never sees these, so they live just in the open live view of
-      // the target conversation (switching away drops them, by design).
+      // the target conversation (which the dispatch flow guarantees is open).
       if (state.activeConvId !== action.convId) return state
       const msg: Message = {
         id: nextId(),
@@ -317,6 +398,35 @@ export function reducer(state: WebState, action: Action): WebState {
         createdAt: Date.now(),
       }
       return { ...state, messages: [...state.messages, msg] }
+    }
+    case 'agent-notice': {
+      // jex briefing routed by routeNotice(): live card when the target is
+      // the open conversation, otherwise parked in the per-conv buffer and
+      // counted unread (sidebar badge) for replay on the next open.
+      const msg: Message = {
+        id: nextId(),
+        convId: action.convId,
+        role: 'notice',
+        kind: 'agent-notice',
+        content: action.text,
+        createdAt: Date.now(),
+      }
+      if (state.activeConvId === action.convId) {
+        return { ...state, messages: [...state.messages, msg] }
+      }
+      return {
+        ...state,
+        // surface the conversation in the sidebar: recency bump (floats to
+        // the top of its group) + preview of the latest briefing — local
+        // only, the next conversations refresh restores server truth
+        conversations: state.conversations.map((c) =>
+          c.id === action.convId
+            ? { ...c, updatedAt: msg.createdAt, preview: msg.content.slice(0, 80) }
+            : c,
+        ),
+        notices: { ...state.notices, [action.convId]: [...(state.notices[action.convId] ?? []), msg] },
+        unread: { ...state.unread, [action.convId]: (state.unread[action.convId] ?? 0) + 1 },
+      }
     }
 
     /* streaming */
@@ -540,6 +650,24 @@ const msg = (key: string, params: Record<string, string | number> = {}): string 
   fill(translate(key), params)
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
+/** Long briefing bodies get clipped so the OS toast stays one line-ish. */
+const NOTIFY_BODY_MAX = 160
+
+/**
+ * Electron bridge: hand a jex briefing to the desktop shell as an OS
+ * notification (window.robojex.notify — main process shows the toast and
+ * focuses the app on click). window.robojex only exists inside the desktop
+ * shell; in a plain browser this is a silent no-op.
+ */
+function sysNotify(title: string, body: string): void {
+  try {
+    const w = window as unknown as { robojex?: { notify?: (t: string, b: string) => void } }
+    w.robojex?.notify?.(title, body.length > NOTIFY_BODY_MAX ? `${body.slice(0, NOTIFY_BODY_MAX)}…` : body)
+  } catch {
+    // pure browser / bridge hiccup — the in-app badge already covers it
+  }
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const stateRef = useRef(state)
@@ -554,23 +682,77 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   /** conversation the most recent /jex was dispatched from; later jex
    * chat_out frames render as 'agent-notice' cards there. Session-local. */
   const agentConvRef = useRef<string | null>(null)
+  /** the dedicated「管家报告」conversation auto-created for briefings that
+   * arrive with no /jex context and no open conversation — reused from then
+   * on so unprompted jex chatter never spawns a conversation per briefing.
+   * Session-local, like agentConvRef. */
+  const butlerConvRef = useRef<string | null>(null)
+  /** briefings that arrived while the butler conversation was still being
+   * created — flushed into it once POST /api/conversations resolves, so a
+   * burst never spawns one conversation per briefing. */
+  const butlerQueueRef = useRef<string[]>([])
+  const butlerCreatingRef = useRef(false)
 
   /* ── boot: WS + initial REST loads ── */
   const loadedOnce = useRef(false)
   useEffect(() => {
+    /** Drain briefings that arrived with nowhere to land: create the
+     * 「管家报告」conversation once, flush every queued text into it, and
+     * keep draining while more stream in — a burst never spawns one
+     * conversation per briefing. */
+    const pumpButler = async (): Promise<void> => {
+      butlerCreatingRef.current = true
+      try {
+        let conv: Conversation | null = null
+        while (butlerQueueRef.current.length > 0) {
+          const batch = butlerQueueRef.current
+          butlerQueueRef.current = []
+          if (!conv) {
+            try {
+              conv = await api.createConversation(translate('conv.butlerTitle'))
+              butlerConvRef.current = conv.id
+              dispatch({ type: 'conv-created', conv })
+            } catch {
+              // REST down while the WS still talks — fall back to the
+              // legacy pill (needs an open conversation to render; the
+              // Activity transcript carries the text either way)
+              for (const q of batch) dispatch({ type: 'chat-notice', text: `jex · ${q}` })
+              continue // creation retried when the next briefing arrives
+            }
+          }
+          for (const q of batch) dispatch({ type: 'agent-notice', convId: conv.id, text: q })
+        }
+      } finally {
+        butlerCreatingRef.current = false
+        // frames that raced the flag reset: re-pump instead of stranding them
+        if (butlerQueueRef.current.length > 0) void pumpButler()
+      }
+    }
     connRef.current = connectEvents({
       url: eventsUrl(),
       onFrame: (frame) => {
         dispatch({ type: 'frame', frame })
         setActivityItems((prev) => ingestFrame(frame as unknown as Record<string, unknown>, prev))
-        // inline jex notices inside the open conversation
+        // route jex briefings into a conversation so they are never lost
         const f = frame as { t: string; from?: string; text?: string }
         if (f.t === 'chat_out' && f.from === 'jex' && f.text) {
-          // after a /jex, replies land as timeline cards in the conversation
-          // the dispatch came from; unprompted jex chatter keeps the old pill
-          const target = agentConvRef.current
-          if (target) dispatch({ type: 'agent-msg', convId: target, kind: 'agent-notice', text: f.text })
-          else dispatch({ type: 'chat-notice', text: `jex · ${f.text}` })
+          const text = f.text
+          const st = stateRef.current
+          const route = routeNotice(st, agentConvRef.current, butlerConvRef.current)
+          const docHidden = typeof document !== 'undefined' && document.hidden
+          // OS toast when the briefing lands outside the open conversation,
+          // or the window is hidden entirely (desktop bridge; browser no-op)
+          const outsideOpen = route.create || route.convId !== st.activeConvId
+          if (api.readNotifySys() && (outsideOpen || docHidden)) {
+            sysNotify(translate('notify.butlerTitle'), text)
+          }
+          if (route.create) {
+            // no conversation to land in — queue behind the butler pump
+            butlerQueueRef.current.push(text)
+            if (!butlerCreatingRef.current) void pumpButler()
+          } else {
+            dispatch({ type: 'agent-notice', convId: route.convId, text })
+          }
         }
       },
       onStatus: (conn) => {
@@ -732,9 +914,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'conv-selected', id, messages: [] })
     try {
       const messages = await api.listMessages(id)
-      // ignore stale loads after another switch
+      // ignore stale loads after another switch; `loaded` splices parked
+      // briefing cards into the freshly fetched history
       if (stateRef.current.activeConvId === id) {
-        dispatch({ type: 'conv-selected', id, messages })
+        dispatch({ type: 'conv-selected', id, messages, loaded: true })
       }
     } catch (err) {
       localMsg(msg('cmd.loadMsgsFailed', { err: errText(err) }))

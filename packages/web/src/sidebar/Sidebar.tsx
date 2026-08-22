@@ -76,6 +76,7 @@ function CollapseIcon(): JSX.Element {
 function ConvItem({
   conv,
   active,
+  unread,
   staggerMs,
   editing,
   confirming,
@@ -90,6 +91,8 @@ function ConvItem({
 }: {
   conv: Conversation
   active: boolean
+  /** parked jex briefings (session-local; cleared on open). */
+  unread: number
   staggerMs: number
   editing: boolean
   confirming: boolean
@@ -146,6 +149,11 @@ function ConvItem({
         <>
           <div className="sb-item-top">
             <span className="sb-title">{conv.title}</span>
+            {unread > 0 ? (
+              <span className="sb-unread" data-testid="conv-unread" title={t('side.unreadAria')}>
+                {unread > 9 ? '9+' : unread}
+              </span>
+            ) : null}
             <span className="sb-time">{relTime(conv.updatedAt, Date.now(), lang)}</span>
           </div>
           <div className="sb-preview">
@@ -348,6 +356,7 @@ export function Sidebar(props: {
                   key={c.id}
                   conv={c}
                   active={c.id === activeId}
+                  unread={state.unread[c.id] ?? 0}
                   staggerMs={(stagger += 30)}
                   editing={editingId === c.id}
                   confirming={confirmId === c.id}

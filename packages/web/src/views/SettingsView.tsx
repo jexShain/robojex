@@ -99,6 +99,10 @@ const SZH = {
     'settings.chat.enterSend.on': '开 · Enter 发送，Shift+Enter 换行',
     'settings.chat.enterSend.off': '关 · Enter 换行，Ctrl+Enter 发送',
     'settings.chat.enterSendHint': '输入栏接入后生效',
+    'settings.chat.notify': '管家系统通知',
+    'settings.chat.notify.on': '开 · 简报落在未打开的会话时弹系统通知',
+    'settings.chat.notify.off': '关 · 仅用会话徽标提醒',
+    'settings.chat.notifyHint': '仅桌面版生效（浏览器环境自动跳过）',
 
     'settings.butler.title': '管家',
     'settings.butler.desc': 'jex 的自主策略与挡位表。',
@@ -269,6 +273,10 @@ const SEN: Record<SKey, string> = {
   'settings.chat.enterSend.on': 'On · Enter sends, Shift+Enter newline',
   'settings.chat.enterSend.off': 'Off · Enter newline, Ctrl+Enter sends',
   'settings.chat.enterSendHint': 'Applies once the input bar wires it up',
+  'settings.chat.notify': 'Butler system notifications',
+  'settings.chat.notify.on': 'On · OS notification when a briefing lands in an unopened conversation',
+  'settings.chat.notify.off': 'Off · in-app conversation badges only',
+  'settings.chat.notifyHint': 'Desktop shell only (browsers skip it automatically)',
 
   'settings.butler.title': 'Butler',
   'settings.butler.desc': "jex's autonomy policy and gear table.",
@@ -384,6 +392,7 @@ export const LOCAL_PREF_KEYS: readonly string[] = [
   DENSITY_KEY,
   FONTSIZE_KEY,
   ENTERSEND_KEY,
+  api.NOTIFY_SYS_KEY,
   'robojex-theme',
   'robojex-model',
   'robojex-direct',
@@ -545,6 +554,7 @@ export function SettingsView({ onClose }: { onClose(): void }) {
   const [density, setDensity] = useState<Density>(() => parseDensity(readPref(DENSITY_KEY)))
   const [fontsize, setFontsize] = useState<FontSizePref>(() => parseFontSize(readPref(FONTSIZE_KEY)))
   const [enterSend, setEnterSend] = useState<boolean>(() => parseEnterSend(readPref(ENTERSEND_KEY)))
+  const [notifySys, setNotifySys] = useState<boolean>(() => api.readNotifySys())
   const [themePref, setThemePrefState] = useState<ThemePref>(() => themeSnapshot().pref)
 
   /* data-section state */
@@ -709,6 +719,11 @@ export function SettingsView({ onClose }: { onClose(): void }) {
     setEnterSend(next)
     writePref(ENTERSEND_KEY, next ? '1' : '0')
   }
+  const toggleNotifySys = (): void => {
+    const next = !notifySys
+    setNotifySys(next)
+    writePref(api.NOTIFY_SYS_KEY, next ? '1' : '0')
+  }
   const pickTheme = (v: ThemePref): void => {
     setThemePref(v) // event bridge — same source as /theme and the palette
     setThemePrefState(v)
@@ -756,6 +771,7 @@ export function SettingsView({ onClose }: { onClose(): void }) {
     setDensity(parseDensity(readPref(DENSITY_KEY)))
     setFontsize(parseFontSize(readPref(FONTSIZE_KEY)))
     setEnterSend(parseEnterSend(readPref(ENTERSEND_KEY)))
+    setNotifySys(api.readNotifySys())
     applyBodyPrefs(parseDensity(readPref(DENSITY_KEY)), parseFontSize(readPref(FONTSIZE_KEY)))
     showToast('ok', fmt('settings.savedPrefs', { n }))
   }
@@ -1015,6 +1031,19 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                     <span className="st-switch-knob" />
                   </button>
                   <span className="st-hint">{s(enterSend ? 'settings.chat.enterSend.on' : 'settings.chat.enterSend.off')}</span>
+                </Card>
+                <Card title={s('settings.chat.notify')} desc={s('settings.chat.notifyHint')}>
+                  <button
+                    type="button"
+                    className={`st-switch${notifySys ? ' on' : ''}`}
+                    role="switch"
+                    aria-checked={notifySys}
+                    data-testid="settings-notify-sys"
+                    onClick={toggleNotifySys}
+                  >
+                    <span className="st-switch-knob" />
+                  </button>
+                  <span className="st-hint">{s(notifySys ? 'settings.chat.notify.on' : 'settings.chat.notify.off')}</span>
                 </Card>
               </section>
             ) : sec === 'butler' ? (

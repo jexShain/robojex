@@ -231,6 +231,26 @@ export function directEnabled(prefs: DirectPrefs): boolean {
   return prefs.mode === 'direct' && prefs.apiKey.trim() !== ''
 }
 
+/* ───────── renderer pref: butler OS notifications ───────── */
+
+/** localStorage key for the "butler system notifications" switch in
+ * Settings ▸ Chat. Read live by the store on every jex briefing frame so
+ * toggling applies without any store plumbing. */
+export const NOTIFY_SYS_KEY = 'robojex-notify-sys'
+
+/** Butler OS notifications default ON ('0' = off). Pure. */
+export function parseNotifySys(raw: string | null): boolean {
+  return raw !== '0'
+}
+
+export function readNotifySys(): boolean {
+  try {
+    return parseNotifySys(localStorage.getItem(NOTIFY_SYS_KEY))
+  } catch {
+    return true
+  }
+}
+
 /** Events parseDirectSSEChunk can emit — the ChatStreamEvent vocabulary the
  * store already consumes for gateway streams. */
 export type DirectSSEEvent = Extract<ChatStreamEvent, { type: 'reasoning' | 'content' | 'usage' | 'done' }>

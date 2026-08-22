@@ -162,3 +162,7 @@ SettingsView 的全部文案走本地字典 `S{zh,en}`（key 与未来全局字�
 | `settings.about.model` | 当前模型 | Current model |
 | `settings.about.github` | GitHub 仓库 | GitHub repository |
 | `settings.about.spec` | 桌面版规格文档 | Desktop spec |
+| `settings.chat.notify` | 管家系统通知 | Butler system notifications |
+| `settings.chat.notify.on` | 开 · 简报落在未打开的会话时弹系统通知 | On · OS notification when a briefing lands in an unopened conversation |
+| `settings.chat.notify.off` | 关 · 仅用会话徽标提醒 | Off · in-app conversation badges only |
+| `settings.chat.notifyHint` | 仅桌面版生效（浏览器环境自动跳过） | Desktop shell only (browsers skip it automatically) |

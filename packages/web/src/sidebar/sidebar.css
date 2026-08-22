@@ -220,6 +220,28 @@
   text-overflow: ellipsis;
 }
 .sb-item.active .sb-title { font-weight: 600; }
+/* unread jex-briefing badge: brand dot with a count (1..9, then 9+);
+ * session-local — sits left of the timestamp, cleared on open */
+.sb-unread {
+  flex: none;
+  align-self: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  font-family: var(--rj-font-mono);
+  color: rgba(255, 255, 255, 0.96);
+  background: var(--rj-brand-gradient);
+  box-shadow: var(--rj-glow-sm);
+  animation: sb-pop 160ms var(--rj-ease-spring);
+}
 .sb-time {
   flex: none;
   font-size: 10px;
@@ -460,7 +482,7 @@
 
 /* reduced motion: everything lands instantly */
 @media (prefers-reduced-motion: reduce) {
-  .sb-item, .sb-menu, .sb.overlay, .sb-confirm, .sb-status-dot {
+  .sb-item, .sb-menu, .sb.overlay, .sb-confirm, .sb-status-dot, .sb-unread {
     animation: none !important;
     opacity: 1 !important;
   }
