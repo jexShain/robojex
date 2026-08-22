@@ -102,6 +102,16 @@ export class ToolManager {
     if (blocked) return `error: ${blocked}`;
     // internal writes skip the assist approval round: they touch no user system
     if (e.writes && !e.internal && gate === "assist") {
+      // dedupe: a loop stuck on one blocked task re-requests the same call
+      // every cycle; hand back the existing pending id instead of stacking
+      // clones (they'd all expire the 50-slot queue and bury the human in
+      // stale approval prompts)
+      const argsKey = JSON.stringify(args);
+      for (const [existingId, p] of this.pending) {
+        if (p.entry === e && JSON.stringify(p.args) === argsKey) {
+          return `needs-approval ${existingId} (already pending): '${name}' — reply 'approve ${existingId}' or 'deny ${existingId}'`;
+        }
+      }
       const id = randomUUID().slice(0, 8);
       this.pending.set(id, { entry: e, args });
       // Cap pending approvals at 50 entries; evict oldest if exceeded

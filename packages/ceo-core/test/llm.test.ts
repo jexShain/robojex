@@ -187,3 +187,11 @@ test("listModels: success caches 10 minutes; failure falls back to the configure
   const c3 = new LLMClient({ baseUrl: "http://x/v1", apiKey: "k", patrolModel: "a", decideModel: "b" }, fail4);
   expect(await c3.listModels()).toEqual(["a", "b"]);
 });
+
+test("empty config models fall back per slot (decide needs non-thinking JSON)", () => {
+  const f = vi.fn(async () => new Response(okBody, { status: 200 })) as unknown as typeof fetch;
+  const c = new LLMClient({ baseUrl: "http://x/v1", apiKey: "k", patrolModel: "", decideModel: "" }, f);
+  expect(c.modelName("patrol")).toBe("deepseek-v4-flash");
+  expect(c.modelName("decide")).toBe("deepseek-chat");
+  expect(c.modelName("decide", "override")).toBe("override");
+});

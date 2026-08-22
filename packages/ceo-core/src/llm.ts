@@ -7,9 +7,15 @@ export class NonRetryableError extends Error { constructor(msg: string) { super(
 export class LLMClient {
   constructor(private cfg: LlmConfig, private fetchImpl: typeof fetch = fetch) {}
 
-  /** The model a call on `slot` would use (override first). */
+  /** The model a call on `slot` would use (override first). Empty config
+   *  falls back per slot: patrol wants broad observation (thinking ok);
+   *  decide must emit strict JSON — thinking models burn the whole budget
+   *  on reasoning and return empty content (observed as decide-starve
+   *  loops), so the non-thinking chat model is the safe default there. */
   modelName(slot: Slot, override?: string): string {
-    return override ?? (slot === "patrol" ? this.cfg.patrolModel : this.cfg.decideModel);
+    if (override) return override
+    if (slot === "patrol") return this.cfg.patrolModel || "deepseek-v4-flash"
+    return this.cfg.decideModel || "deepseek-chat"
   }
 
   async chat(slot: Slot, messages: ChatMsg[], opts: { maxTokens?: number; json?: boolean } = {}):

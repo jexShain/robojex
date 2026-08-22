@@ -87,6 +87,18 @@ describe("gates", () => {
     expect(done).toBe("did it");
     expect(mgr.pendingApprovals()).toHaveLength(0);
   });
+  it("identical re-requests reuse the pending approval instead of stacking clones", async () => {
+    reg.register(tool(true));
+    mgr = new ToolManager({ registry: reg, ctx });
+    const r1 = await mgr.call("t", { k: 1 }, "assist");
+    const r2 = await mgr.call("t", { k: 1 }, "assist");
+    expect(r1).toMatch(/needs-approval/i);
+    expect(r2).toMatch(/already pending/i);
+    expect(mgr.pendingApprovals()).toHaveLength(1);
+    // different args still get their own slot
+    await mgr.call("t", { k: 2 }, "assist");
+    expect(mgr.pendingApprovals()).toHaveLength(2);
+  });
   it("assist mode executes internal writes without an approval round", async () => {
     reg.register(tool(true, true));
     mgr = new ToolManager({ registry: reg, ctx });
