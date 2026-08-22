@@ -184,6 +184,10 @@ export class SchedulerLoop {
   // R22 periodic rescan: agents get installed while jex runs — a 6h nudge
   // keeps the fleet inventory honest without rescanning on every tick
   private lastScoutNudge = Date.now(); // boot scan just ran: first re-nudge lands 6h in
+  // R35 butler's walk: a light house round every 30 min — disk, load, odd
+  // processes. Only worth a chat line when something is actually wrong; a
+  // silent healthy round still exercises LOOKING so skills stay warm.
+  private lastWalkAt = Date.now(); // boot recon covers the first round: walk starts at +30min
 
   mode(): Gate { return this.modeNow; }
 
@@ -334,6 +338,11 @@ export class SchedulerLoop {
     if (now - this.lastScoutNudge > 6 * 3_600_000) {
       this.lastScoutNudge = now;
       this.push("agents_rescan: agent CLIs may have been installed or removed since the last scan — run the toolscout action to refresh the fleet inventory");
+    }
+    // R35: the house round — quiet by default, loud only on anomaly
+    if (now - this.lastWalkAt > 30 * 60_000) {
+      this.lastWalkAt = now;
+      this.push("patrol_walk: quick health round — check disk space, load, and anything unusual with LOOKING tools; stay silent unless something genuinely needs the human (then reply once, concisely)");
     }
   }
 

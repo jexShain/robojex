@@ -120,3 +120,18 @@ describe("R18 escape: exhausted retry ladders go quiet", () => {
     rig.loop.stop();
   });
 });
+
+describe("R35: butler's house round", () => {
+  it("fires a quiet patrol_walk every 30 minutes, not on every tick", () => {
+    const rig = makeRig();
+    const loopAny = rig.loop as unknown as { lastWalkAt: number };
+    const start = Date.now();
+    loopAny.lastWalkAt = start - 31 * 60_000; // 31 min since the last round
+    rig.loop.pumpGantt(start);
+    expect(rig.events.some((e) => e.startsWith("patrol_walk:"))).toBe(true);
+    const n = rig.events.filter((e) => e.startsWith("patrol_walk:")).length;
+    rig.loop.pumpGantt(start + 60_000); // a minute later: still inside the window
+    expect(rig.events.filter((e) => e.startsWith("patrol_walk:")).length).toBe(n);
+    rig.loop.stop();
+  });
+});
