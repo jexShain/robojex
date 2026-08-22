@@ -59,3 +59,11 @@ vitest 全绿 + tsc 0 错 + 活体验证（能活体就活体）+ TODO.md 记账
 - **H 沙箱三档（read-only/workspace-write/danger）→ 不移植**：robojex 的安全模型是"政策+硬黑名单+提权拦截"（butler/conservative 两档 × 删除/系统目录/敏感路径/提权四条红线 × terminal/jobs/file 三通道共享 commandBlackline），比 dsh 的文件系统沙箱更贴合"最大自主但两条红线"的用户需求；landlock/bwrap 在 WSL 也不可用。
 - **K 并行工具调度 → 不移植**：decide 是 JSON 单协议逐动作（0-3/周期），并行度由周期节奏+spawn 并发帽 4 提供；dsh 的 isConcurrencySafe 滚动池是为原生 function-calling 连发设计的，移植收益为零。
 - **M durable session 逐块重放 → 不移植**：任务板/战绩/聊天/traces 四处 SQLite+账本已持久化，循环队列瞬时是特性（重启=重新观察世界），不是缺陷。
+
+## 收官记录（08-23 凌晨，R1–R75 全线完成）
+
+- **dsh 对标**：A–G/I/J/L 全部移植或自研落地；H/K/M 明确不移植（见上文取舍，理由成立未变）。
+- **超越线**：N–S 全落地后又加 5 轮管家自省（R71 决策回放 / R72 静默跳拍 / R73 催办封顶 / R74 经验入聊+中文 2-gram / R75 reflect 去重）——全部由浸泡中管家自己的 MEMORY 审计驱动，"能评判自己完成度的人"初具雏形。
+- **效率硬证据**：R72+R75 后 42 分钟浸泡仅烧 20.5k（旧基线同窗 ~117k，省 ~83%）；重复教训落账归零。
+- **活体验证**：agentmode（一句话→decide→任务板 + 深夜自动排程白天）✓、gpu-grounding（最初幻觉 bug 场景闭合：记忆增强 + 一枪命中真输出）✓、ws-live 4/4 ✓。
+- **交付**：Windows 0.1.7-final（R71–R75）双产物已落桌面（自省静默版）；vitest 615/615、e2e 22/22。
