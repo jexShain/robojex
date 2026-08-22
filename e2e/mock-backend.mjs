@@ -209,6 +209,15 @@ const server = http.createServer((req, res) => {
 
       const userText = b.text || '重新生成'
       sse({ type: 'meta', conversationId: convId, userMsgId, assistantMsgId, model: b.model || 'deepseek-v4-flash' })
+      // tool-frame rehearsal (grounding loop contract): the mock emits one
+      // running+done chip pair when the user text mentions a tool query, so
+      // e2e can pin the chat tool-chip rendering without a real backend
+      if (/显卡|磁盘|工具|查/.test(String(b.text || ''))) {
+        await sleep(streamDelay)
+        sse({ type: 'tool', name: 'terminal', args: '{"command":"nvidia-smi"}', state: 'running' })
+        await sleep(3 * streamDelay)
+        sse({ type: 'tool', name: 'terminal', state: 'done', preview: 'NVIDIA GeForce RTX 4060 Ti' })
+      }
       await sleep(streamDelay)
       // reasoning phase
       const reasoningChunks = [`用户说「${userText.slice(0, 12)}」`, '，思考如何回答', '：组织语言，给出示例。']

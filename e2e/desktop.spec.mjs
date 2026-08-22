@@ -273,3 +273,24 @@ test.describe('RoboJex desktop', () => {
     }
     await shot(page, '21-agent-stats')
   })
+
+  // 22 (grounding loop): the chat tool chip renders from SSE tool frames —
+  // running state spins, done state carries the real preview text.
+  test('22 chat tool chip renders running -> done with preview', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.locator('[data-testid="view-tab"][data-view="chat"]').click()
+    await page.getByTestId('sidebar-new-chat').click()
+    await page.getByTestId('chat-input').fill('查一下我的显卡')
+    await page.getByTestId('chat-send').click()
+    const chip = page.getByTestId('tool-chip').first()
+    await chip.waitFor({ timeout: 20_000 })
+    // done lands with the preview; running may have already flipped
+    await expect(page.getByTestId('tool-chip').first()).toContainText('terminal', { timeout: 20_000 })
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="tool-chip"][data-state="done"]') !== null,
+      null, { timeout: 20_000 },
+    )
+    await expect(page.getByTestId('tool-chip').first()).toContainText('4060')
+    await shot(page, '22-tool-chip')
+  })
