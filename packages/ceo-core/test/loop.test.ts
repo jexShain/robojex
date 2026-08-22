@@ -1080,3 +1080,28 @@ test("decide prompt carries the AGENTS.md inventory block; patrol stays lean; bl
   expect(users.find((u) => u.slot === "decide")!.content).not.toContain("# AGENTS (verified");
   loop.stop();
 });
+
+test("R75: a reflect identical to the latest MEMORY entry is refused (no duplicate lessons)", async () => {
+  const runtimeDir = makeRuntime();
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const events: string[] = [];
+  try {
+    const chat = vi.fn(async (slot: string) => {
+      if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+      return { content: JSON.stringify({ actions: [{ type: "reflect", text: "深夜稳定时不要空转，这是同一课。" }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+    });
+    const loop = new SchedulerLoop({
+      llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+      orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+    });
+    const origPush = loop.push.bind(loop);
+    loop.push = (e: string) => { events.push(e); origPush(e); };
+    await loop.runOnce("tick"); // banks the lesson
+    await loop.runOnce("agents_rescan: wake"); // same lesson again → refused
+    const memory = readFileSync(join(runtimeDir, "MEMORY.md"), "utf8");
+    expect(memory.match(/深夜稳定时不要空转/g)).toHaveLength(1); // banked exactly once
+    expect(events.some((e) => e.includes("action failed") && e.includes("already the latest MEMORY entry"))).toBe(true);
+    loop.stop();
+  } finally { err.mockRestore(); }
+});
