@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ChatMsg, LLMClient } from "./llm.js";
+import { overlapTokens, overlapScore } from "./token-match.js";
 import type { TaskBoard } from "./board.js";
 import type { ContextAssembler } from "./context.js";
 import type { AgentOrchestrator } from "./orchestrator.js";
@@ -986,12 +987,11 @@ export class SchedulerLoop {
       const raw = readFileSync(join(this.d.runtimeDir, "MEMORY.md"), "utf8");
       const entries = raw.split(/\n(?=## )/).map((e) => e.trim()).filter((e) => e.startsWith("## "));
       if (entries.length === 0) return prompt;
-      const tokens = new Set(title.split(/[\s，。：；、！？·（）()\-/\\]+/).filter((t) => t.length >= 2));
+      const tokens = overlapTokens(title); // CJK-safe: 2-gram windows match partial phrases
       if (tokens.size === 0) return prompt;
       let best: Array<{ score: number; text: string }> = [];
       for (const e of entries) {
-        let score = 0;
-        for (const t of tokens) if (e.includes(t)) score++;
+        const score = overlapScore(e, tokens);
         if (score > 0) best.push({ score, text: e });
       }
       if (best.length === 0) return prompt;

@@ -10,7 +10,7 @@ import { GearController } from "../src/gears.js";
 import { BudgetGovernor } from "../src/budget.js";
 import type { LLMClient, Slot, ChatMsg } from "../src/llm.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
@@ -95,6 +95,7 @@ function fakeTools(results: string | string[]) {
 
 interface Rig {
   svc: ChatService; store: ChatStore; agentEvents: string[];
+  runtimeDir: string;
   llmState: { streamCalls: number; roundMessages: { role: string; content: string }[][] };
 }
 function mkRig(rounds: Round[], opts: { tools?: ReturnType<typeof fakeTools>["tools"]; gate?: () => Gate } = {}): Rig {
@@ -109,7 +110,7 @@ function mkRig(rounds: Round[], opts: { tools?: ReturnType<typeof fakeTools>["to
     ...(opts.tools ? { tools: opts.tools } : {}),
     ...(opts.gate ? { gate: opts.gate } : {}),
   });
-  return { svc, store, agentEvents, llmState: state };
+  return { svc, store, agentEvents, runtimeDir, llmState: state };
 }
 
 const run = (rig: Rig, body: Record<string, unknown>): Promise<FakeRes> => {
@@ -160,8 +161,7 @@ test("sentinel round: tool runs under the injected gate, the real result feeds b
   expect(rig.agentEvents).toEqual(["chat: 我现在机器显卡是啥啊"]);
 });
 
-test("normal reply with tools wired: no sentinel → no tool frames, buffered deltas flush in order", async () => {
-  const { tools, calls } = fakeTools("should-never-run");
+test("normal reply with tools wired: no sentinel → no tool frames, buffered deltas flush in order", async () => {  const { tools, calls } = fakeTools("should-never-run");
   const rig = mkRig([{ content: ["你好", "，世界 很高兴见到你", "！"] }], { tools });
   const conv = rig.store.create();
   const res = await run(rig, { conversationId: conv.id, text: "打个招呼" });
@@ -317,4 +317,23 @@ test("R11: the chat tool surface is LOOKING-only — writes never reach the prom
   for (const ban of ["write_file(", "patch(", "delegate_task(", "computer_use(", "kanban_create("]) expect(sys).not.toContain(ban);
   // a write sentinel from the model falls through to ToolManager which still
   // enforces the gate — the prompt just never advertises them
+});
+
+test("R74: matching MEMORY lessons ride the grounding prompt; no match injects nothing", async () => {
+  const { tools } = fakeTools("x");
+  const rig = mkRig([{ content: ["好"] }], { tools });
+  writeFileSync(join(rig.runtimeDir, "MEMORY.md"),
+    "# MEMORY\n\n## 显卡探查\n这台机器显卡直接 nvidia-smi 就有（RTX 4060 Ti）；lspci 缺失别试\n\n## 磁盘配额\n/home 配额 20G\n");
+  const conv = rig.store.create();
+  await run(rig, { conversationId: conv.id, text: "我机器显卡是什么" });
+  const sys = rig.llmState.roundMessages[0]![0]!.content;
+  expect(sys).toContain("# 管家经验");
+  expect(sys).toContain("nvidia-smi");
+  expect(sys).not.toContain("/home 配额"); // irrelevant lesson stays out
+
+  // unrelated question: no overlap → no note at all
+  const conv2 = rig.store.create();
+  await run(rig, { conversationId: conv2.id, text: "讲个笑话" });
+  const sys2 = rig.llmState.roundMessages.at(-1)![0]!.content;
+  expect(sys2).not.toContain("# 管家经验");
 });

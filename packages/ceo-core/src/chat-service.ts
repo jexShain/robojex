@@ -7,11 +7,12 @@
 // open with a <<tool:NAME>> {...} sentinel line, which runs one builtin tool
 // per round and feeds the real result back before the model answers.
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import type { LLMClient } from "./llm.js";
+import { overlapTokens, overlapScore } from "./token-match.js";
 import type { ChatStore } from "./chat-store.js";
 import type { GearController } from "./gears.js";
 import { chatPrompt } from "./gears.js";
@@ -145,8 +146,9 @@ export class ChatService {
     // stream: a conversational reply must not side-effect the system.
     const schemas = tools ? lookingSchemas(tools.schemasBlock()) : "";
     const grounding = tools && schemas ? `\n\n${LIVE_LOOKUP_DOC}\n\nAllowed tools:\n${schemas}` : "";
+    const memo = this.memoryNote(rawText); // R74: relevant lessons make the first tool call the right one
     const llmMessages = [
-      { role: "system", content: chatPrompt(this.d.gear.current()) + grounding },
+      { role: "system", content: chatPrompt(this.d.gear.current()) + grounding + memo },
       ...history.slice(-HISTORY_MAX).map((m) => ({ role: m.role, content: m.content })),
     ];
 
@@ -285,6 +287,31 @@ export class ChatService {
       req.off("close", onClose);
       this.active.delete(convId);
       try { res.end(); } catch { /* already destroyed */ }
+    }
+  }
+
+  /** R74: relevant MEMORY lessons ride the grounding prompt. The butler banks
+   *  hard-won facts (e.g. "GPU: nvidia-smi answers, lspci absent on this
+   *  box"); matching them against the question lets the FIRST tool call be
+   *  the right one instead of a wandering probe. Top 2 entries by token
+   *  overlap, most-recent wins ties; no overlap injects nothing. */
+  private memoryNote(question: string): string {
+    if (!this.d.runtimeDir) return "";
+    try {
+      const raw = readFileSync(join(this.d.runtimeDir, "MEMORY.md"), "utf8");
+      const entries = raw.split(/\n(?=## )/).map((e) => e.trim()).filter((e) => e.startsWith("## "));
+      if (entries.length === 0) return "";
+      const tokens = overlapTokens(question);
+      if (tokens.size === 0) return "";
+      const scored = entries
+        .map((e, i) => ({ e, i, s: overlapScore(e, tokens) }))
+        .filter((x) => x.s > 0)
+        .sort((a, b) => b.s - a.s || b.i - a.i)
+        .slice(0, 2);
+      if (scored.length === 0) return "";
+      return `\n\n# 管家经验（与本题相关的旧课——第一枪就用对工具/命令）\n${scored.map((x) => x.e.slice(0, 600)).join("\n\n")}`;
+    } catch {
+      return ""; // no ledger yet: nothing to inject
     }
   }
 
