@@ -57,6 +57,7 @@ files:
 win:
   target:
     - nsis
+    - portable # single-file exe — double-click to try without installing
   icon: build/icon.png
 nsis:
   oneClick: false
