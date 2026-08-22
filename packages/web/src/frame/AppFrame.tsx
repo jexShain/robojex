@@ -11,6 +11,8 @@ import { ChatView } from '../chat/ChatView'
 import { DetailsPanel } from '../details/DetailsPanel'
 import { Sidebar } from '../sidebar/Sidebar'
 import { useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import type { ThemeApi, ThemePref } from '../state/theme'
 import { ActivityFeed } from '../views/ActivityFeed'
 import { CommandCenter } from '../views/CommandCenter'
@@ -82,6 +84,7 @@ const ThemeIcon = ({ pref }: { pref: ThemePref }) =>
 
 export function AppFrame({ theme }: { theme: ThemeApi }) {
   const { state, selectTask } = useStore()
+  const { t } = useT()
 
   /* view (persisted; chat pane stays mounted, only hidden) */
   const [view, setView] = useState<ViewId>(loadView)
@@ -168,17 +171,17 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
           type="button"
           className="tb-btn"
           data-testid={sidebarCollapsed ? 'sidebar-expand' : 'sidebar-collapse'}
-          title={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'}
-          aria-label={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'}
+          title={sidebarCollapsed ? t('frame.expand') : t('frame.collapse')}
+          aria-label={sidebarCollapsed ? t('frame.expand') : t('frame.collapse')}
           onClick={toggleSidebar}
         >
           {sidebarCollapsed ? ExpandIcon : CollapseIcon}
         </button>
-        <div className="rj-brand" title="RoboJex — 常驻桌面 AI 系统">
+        <div className="rj-brand" title={t('frame.brandTitle')}>
           <span className="brand-orb">⚡</span>
           <span className="brand-name">RoboJex</span>
         </div>
-        <nav className="rj-tabs" role="tablist" aria-label="视图">
+        <nav className="rj-tabs" role="tablist" aria-label={t('frame.tabsAria')}>
           {VIEW_META.map((m) => (
             <button
               key={m.id}
@@ -189,11 +192,11 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
               data-view={m.id}
               data-active={view === m.id}
               aria-selected={view === m.id}
-              title={m.label}
+              title={t(m.labelKey)}
               onClick={() => changeView(m.id)}
             >
               {m.icon}
-              <span className="tab-label">{m.label}</span>
+              <span className="tab-label">{t(m.labelKey)}</span>
             </button>
           ))}
         </nav>
@@ -202,7 +205,7 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
           <button
             type="button"
             className="tb-k"
-            title="命令面板 (Ctrl+K)"
+            title={t('frame.cmdk')}
             onClick={() => {
               setSettingsOpen(false)
               setPaletteOpen(true)
@@ -215,8 +218,8 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
             type="button"
             className="tb-btn"
             data-testid="settings-open"
-            title="设置"
-            aria-label="打开设置"
+            title={t('frame.settings')}
+            aria-label={t('frame.settingsAria')}
             onClick={() => {
               setPaletteOpen(false)
               setSettingsOpen(true)
@@ -228,8 +231,8 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
             type="button"
             className="tb-btn"
             data-testid="theme-toggle"
-            title={`主题：${theme.pref} — 点击切换 浅色 → 深色 → 跟随系统`}
-            aria-label="切换主题"
+            title={fill(t('frame.themeTitle'), { pref: t(`theme.${theme.pref}`) })}
+            aria-label={t('frame.themeAria')}
             onClick={() => {
               const idx = THEME_CYCLE.indexOf(theme.pref)
               theme.setPref(THEME_CYCLE[(idx + 1) % THEME_CYCLE.length] ?? 'dark')
@@ -240,8 +243,8 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
           <button
             type="button"
             className={`tb-btn${detailsOpen ? ' on' : ''}`}
-            title={detailsOpen ? '关闭详情面板' : '打开详情面板'}
-            aria-label="切换详情面板"
+            title={detailsOpen ? t('frame.detailsClose') : t('frame.detailsOpen')}
+            aria-label={t('frame.detailsAria')}
             aria-pressed={detailsOpen}
             onClick={toggleDetails}
           >

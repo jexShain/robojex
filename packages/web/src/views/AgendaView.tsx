@@ -5,6 +5,8 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { statusTone, useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import type { Task } from '../state/types'
 import {
   type AgendaBlock,
@@ -57,6 +59,7 @@ function AgendaBlockView({
   onOpen(id: string): void
   onDragStart?: (e: PointerEvent, block: AgendaBlock) => void
 }) {
+  const { t: tr } = useT()
   const t = block.task
   const s = t.scheduledAt
   const d = t.dueAt
@@ -84,7 +87,7 @@ function AgendaBlockView({
       {!compact ? <span className="ab-time">{range}</span> : null}
       <span className="ab-title">{t.title}</span>
       {pending ? (
-        <span className="ab-pend" title="已暂存（需后端任务更新端点）">
+        <span className="ab-pend" title={tr('ag.pendingBadge')}>
           ⏳
         </span>
       ) : null}
@@ -106,6 +109,7 @@ function NowLine({ pct, now }: { pct: number; now: number }) {
 
 function DayView({ onOpen }: { onOpen(id: string): void }) {
   const { state } = useStore()
+  const { t } = useT()
   const [dayOffset, setDayOffset] = useState(0)
   const [, setTick] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -240,8 +244,8 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
         <button
           type="button"
           className="nav-btn"
-          title="Previous day"
-          aria-label="Previous day"
+          title={t('ag.prevDay')}
+          aria-label={t('ag.prevDay')}
           onClick={() => setDayOffset((d) => d - 1)}
         >
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -252,8 +256,8 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
         <button
           type="button"
           className="nav-btn"
-          title="Next day"
-          aria-label="Next day"
+          title={t('ag.nextDay')}
+          aria-label={t('ag.nextDay')}
           onClick={() => setDayOffset((d) => d + 1)}
         >
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -262,15 +266,15 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
         </button>
         {!isToday ? (
           <button type="button" className="nav-btn today" onClick={() => setDayOffset(0)}>
-            today
+            {t('ag.today')}
           </button>
         ) : (
-          <span className="agenda-date dim">today</span>
+          <span className="agenda-date dim">{t('ag.today')}</span>
         )}
         <span className="agenda-zoom-badge">{zoom}h</span>
         {pending.size > 0 ? (
-          <span className="agenda-staged" title="拖拽改期已暂存本地，等待后端任务更新端点">
-            ⏳ 已暂存 ×{pending.size}（需后端任务更新端点）
+          <span className="agenda-staged" title={t('ag.stagedTitle')}>
+            {fill(t('ag.staged'), { n: pending.size })}
           </span>
         ) : null}
       </div>
@@ -311,9 +315,9 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
           ) : null}
         </div>
         <aside className="agenda-unsched">
-          <div className="au-head">no time scheduled</div>
+          <div className="au-head">{t('ag.unschedHead')}</div>
           {side.length === 0 ? (
-            <div className="au-empty">nothing unscheduled</div>
+            <div className="au-empty">{t('ag.unschedEmpty')}</div>
           ) : (
             side.map((t) => (
               <button
@@ -384,6 +388,7 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
 
 export function AgendaView({ onOpenTask }: { onOpenTask(id: string): void }) {
   const { state } = useStore()
+  const { t } = useT()
   const [mode, setMode] = useState<'day' | 'days'>('day')
 
   if (state.tasks.length === 0) {
@@ -396,7 +401,7 @@ export function AgendaView({ onOpenTask }: { onOpenTask(id: string): void }) {
               <path d="M1.8 6.2h12.4M5 1.6v2.4M11 1.6v2.4" />
             </svg>
           </div>
-          <p>nothing scheduled yet</p>
+          <p>{t('ag.empty')}</p>
         </div>
       </div>
     )
@@ -405,14 +410,14 @@ export function AgendaView({ onOpenTask }: { onOpenTask(id: string): void }) {
   return (
     <div className="agenda-view">
       <div className="agenda-toolbar">
-        <div className="seg" role="group" aria-label="Agenda mode">
+        <div className="seg" role="group" aria-label={t('ag.modeAria')}>
           <button
             type="button"
             className={mode === 'day' ? 'active' : ''}
             aria-pressed={mode === 'day'}
             onClick={() => setMode('day')}
           >
-            Day
+            {t('ag.modeDay')}
           </button>
           <button
             type="button"
@@ -420,14 +425,10 @@ export function AgendaView({ onOpenTask }: { onOpenTask(id: string): void }) {
             aria-pressed={mode === 'days'}
             onClick={() => setMode('days')}
           >
-            7 days
+            {t('ag.modeDays')}
           </button>
         </div>
-        <span className="agenda-hint">
-          {mode === 'day'
-            ? 'scroll to pan · ctrl+scroll to zoom · drag blocks to reschedule'
-            : '7-day outlook · blocks span to their due'}
-        </span>
+        <span className="agenda-hint">{mode === 'day' ? t('ag.hintDay') : t('ag.hintDays')}</span>
       </div>
       {mode === 'day' ? <DayView onOpen={onOpenTask} /> : <DaysView onOpen={onOpenTask} />}
     </div>

@@ -6,6 +6,8 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import { Providers } from '../Providers'
 import type { TranscriptItem } from '../state/types'
 
@@ -19,14 +21,15 @@ const ROTATE_MS = 8000
 const WINDOW_MS = 2 * 3_600_000
 
 /** Summarize one transcript entry into a single short line for the feed. */
-function feedLine(it: TranscriptItem): string {
+function feedLine(it: TranscriptItem, t: (key: string) => string): string {
   if (it.kind === 'msg') return `${it.from}: ${it.text.slice(0, 60)}`
-  if (it.kind === 'cycle') return `cycle: ${(it.actions ?? []).length} actions`
+  if (it.kind === 'cycle') return fill(t('widget.cycleLine'), { n: (it.actions ?? []).length })
   return it.text.slice(0, 60) // toast
 }
 
 export function WidgetApp(): ReactElement {
   const { state: s } = useStore()
+  const { t } = useT()
   const [tab, setTab] = useState<Tab>('gantt')
   const [pinned, setPinned] = useState(false)
 
@@ -56,16 +59,16 @@ export function WidgetApp(): ReactElement {
   return (
     <div className="widget-root">
       <header className="widget-head">
-        <span className={`hud-heart${alive ? ' alive' : ''}`} title="jex heartbeat" />
+        <span className={`hud-heart${alive ? ' alive' : ''}`} title={t('widget.heartbeat')} />
         <nav>
-          {TABS.map((t) => (
+          {TABS.map((tabId) => (
             <button
-              key={t}
+              key={tabId}
               type="button"
-              className={t === tab ? 'on' : ''}
-              onClick={() => pick(t)}
+              className={tabId === tab ? 'on' : ''}
+              onClick={() => pick(tabId)}
             >
-              {t}
+              {t(`widget.tab.${tabId}`)}
             </button>
           ))}
         </nav>
@@ -73,7 +76,7 @@ export function WidgetApp(): ReactElement {
           type="button"
           className="widget-pin"
           onClick={() => setPinned((p) => !p)}
-          title={pinned ? 'unpin — resume auto-rotate' : 'pin — hold this tab'}
+          title={pinned ? t('widget.unpin') : t('widget.pin')}
           aria-pressed={pinned}
         >
           {pinned ? '📌' : '○'}
@@ -82,8 +85,8 @@ export function WidgetApp(): ReactElement {
           type="button"
           className="widget-expand"
           onClick={() => location.assign('/')}
-          title="expand to console"
-          aria-label="expand to console"
+          title={t('widget.expand')}
+          aria-label={t('widget.expand')}
         >
           ⤢
         </button>
@@ -117,7 +120,7 @@ export function WidgetApp(): ReactElement {
       {tab === 'rings' && (
         <div className="widget-rings">
           {running.length === 0 ? (
-            <p className="widle">idle — jex is alive</p>
+            <p className="widle">{t('widget.idle')}</p>
           ) : (
             running.map((t) => (
               <div key={t.id} className="wring">
@@ -142,7 +145,7 @@ export function WidgetApp(): ReactElement {
         <ul className="widget-feed">
           {s.transcript.slice(-20).reverse().map((it) => (
             <li key={it.id} className={`wf-${it.kind}`}>
-              {feedLine(it)}
+              {feedLine(it, t)}
             </li>
           ))}
         </ul>

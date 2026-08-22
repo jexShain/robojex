@@ -1,8 +1,11 @@
 // packages/web/src/views/gearDefs.ts — static fallback gear table used when
 // GET /api/gear has not answered yet (or the backend predates gears). Mirrors
-// ceo-core gears.ts / SPEC-DESKTOP.md §2.2.
+// ceo-core gears.ts / SPEC-DESKTOP.md §2.2. Display strings (name/desc/cost)
+// are localized through the i18n dictionaries — gear.N.* — so an English UI
+// shows Turbo while the backend keeps sending 狂暴.
 
 import type { GearDef } from '../state/types'
+import { translate } from '../i18n/event'
 
 export const GEAR_FALLBACK: GearDef[] = [
   {
@@ -65,4 +68,37 @@ export const GEAR_FALLBACK: GearDef[] = [
 /** Live gears when loaded, fallback otherwise. */
 export function gearsOrFallback(gears: GearDef[]): GearDef[] {
   return gears.length > 0 ? gears : GEAR_FALLBACK
+}
+
+/** dict lookup with a graceful fallback for gear ids the dictionaries
+ * predate (a missing key surfaces as 'gear.<id>.name', which starts with
+ * 'gear.' — hand the raw value back in that case). */
+function pick(key: string, fallback: string): string {
+  const v = translate(key)
+  return v === key ? fallback : v
+}
+
+/** Localized display name for a gear id (non-React call sites). */
+export function gearDisplayName(id: string): string {
+  return pick(`gear.${id}.name`, id)
+}
+
+/** Replace a gear's display fields with dictionary strings (React call
+ * sites pass their live t() so the result re-renders on language switch). */
+export function localizeGear(g: GearDef, t: (key: string) => string): GearDef {
+  const name = t(`gear.${g.id}.name`)
+  const desc = t(`gear.${g.id}.desc`)
+  const cost = t(`gear.${g.id}.cost`)
+  const miss = (v: string, key: string): boolean => v === key || v.startsWith('gear.')
+  return {
+    ...g,
+    name: miss(name, `gear.${g.id}.name`) ? g.name : name,
+    desc: miss(desc, `gear.${g.id}.desc`) ? g.desc : desc,
+    cost: miss(cost, `gear.${g.id}.cost`) ? g.cost : cost,
+  }
+}
+
+/** Localize a whole table (fallback-aware). */
+export function localizeGears(gears: GearDef[], t: (key: string) => string): GearDef[] {
+  return gears.map((g) => localizeGear(g, t))
 }

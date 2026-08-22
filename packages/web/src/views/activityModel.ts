@@ -6,7 +6,12 @@ export type ActivityItem = {
   ts: number
   type: 'cycle' | 'spawn' | 'task_done' | 'task_blocked' | 'chat' | 'mode' | 'budget' | 'tick' | 'think'
   icon: string
+  /** Dynamic text (task titles, budget lines) — rendered as-is, untranslated. */
   title: string
+  /** i18n key for fixed labels (act.*); takes precedence over `title`. */
+  labelKey?: string
+  /** Value interpolated into labelKey templates as {n}. */
+  labelParam?: string | number
   detail?: string
   color: string
 }
@@ -23,7 +28,8 @@ export function formatTime(ts: number): string {
 }
 
 /** Derive an activity item from a single cycle action. Returns null when the
- *  action is not interesting enough to surface as a standalone entry. */
+ *  action is not interesting enough to surface as a standalone entry. Fixed
+ *  labels carry a labelKey (translated at render); dynamic titles stay raw. */
 function actionToItem(a: { type: string; text?: string; title?: string; [key: string]: unknown }, ts: number): ActivityItem | null {
   switch (a.type) {
     case 'spawn':
@@ -32,7 +38,8 @@ function actionToItem(a: { type: string; text?: string; title?: string; [key: st
         ts,
         type: 'spawn',
         icon: '●',
-        title: a.title ?? 'Task spawned',
+        title: a.title ?? '',
+        labelKey: a.title ? undefined : 'act.spawned',
         detail: typeof a.framework === 'string' ? a.framework : undefined,
         color: 'green',
       }
@@ -42,7 +49,8 @@ function actionToItem(a: { type: string; text?: string; title?: string; [key: st
         ts,
         type: 'task_done',
         icon: '✓',
-        title: a.title ?? 'Task done',
+        title: a.title ?? '',
+        labelKey: a.title ? undefined : 'act.done',
         detail: typeof a.summary === 'string' ? a.summary : a.text,
         color: 'green',
       }
@@ -52,7 +60,8 @@ function actionToItem(a: { type: string; text?: string; title?: string; [key: st
         ts,
         type: 'task_blocked',
         icon: '✗',
-        title: a.title ?? 'Task blocked',
+        title: a.title ?? '',
+        labelKey: a.title ? undefined : 'act.blocked',
         detail: typeof a.error === 'string' ? a.error : a.text,
         color: 'red',
       }
@@ -62,7 +71,8 @@ function actionToItem(a: { type: string; text?: string; title?: string; [key: st
         ts,
         type: 'chat',
         icon: '●',
-        title: 'jex replied',
+        title: '',
+        labelKey: 'act.replied',
         detail: typeof a.text === 'string' ? a.text : undefined,
         color: 'purple',
       }
@@ -72,7 +82,8 @@ function actionToItem(a: { type: string; text?: string; title?: string; [key: st
         ts,
         type: 'think',
         icon: '●',
-        title: 'thinking…',
+        title: '',
+        labelKey: 'act.thinking',
         color: 'blue',
       }
     default:
@@ -95,7 +106,9 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
       ts: now,
       type: 'cycle',
       icon: '●',
-      title: `Wake #${wake}`,
+      title: '',
+      labelKey: 'act.wake',
+      labelParam: wake,
       detail: cost > 0 ? `${Math.round(cost)} tok` : undefined,
       color: 'blue',
     })
@@ -116,7 +129,8 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
         ts: now,
         type: 'chat',
         icon: '●',
-        title: 'jex replied',
+        title: '',
+        labelKey: 'act.replied',
         detail: text || undefined,
         color: 'purple',
       })
@@ -128,7 +142,9 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
       ts: now,
       type: 'mode',
       icon: '●',
-      title: `mode → ${mode}`,
+      title: '',
+      labelKey: 'act.modeLine',
+      labelParam: mode,
       color: 'amber',
     })
   } else if (t === 'budget') {
@@ -155,7 +171,8 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
           ts: now,
           type: 'task_done',
           icon: '✓',
-          title: task.title ?? 'Task done',
+          title: task.title ?? '',
+          labelKey: task.title ? undefined : 'act.done',
           detail: typeof task.resultSummary === 'string' ? task.resultSummary : undefined,
           color: 'green',
         })
@@ -165,7 +182,8 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
           ts: now,
           type: 'task_blocked',
           icon: '✗',
-          title: task.title ?? 'Task blocked',
+          title: task.title ?? '',
+          labelKey: task.title ? undefined : 'act.blocked',
           color: 'red',
         })
       }
@@ -176,7 +194,8 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
       ts: now,
       type: 'tick',
       icon: '●',
-      title: 'heartbeat',
+      title: '',
+      labelKey: 'act.heartbeat',
       color: 'dim',
     })
   }

@@ -725,3 +725,9 @@
     animation: none;
   }
 }
+
+/* i18n: the CSS-generated today marker follows the interface language
+ * (documentElement.dataset.lang, set by i18n/event.ts) */
+[data-lang='en'] .cc-day.today::after {
+  content: 'Today';
+}

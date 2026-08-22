@@ -5,18 +5,17 @@
 
 import { useState } from 'react'
 import { useStore, statusTone } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import { TakeoverPreview } from './TakeoverPreview'
 
 type Tab = 'task' | 'files' | 'screen'
 
-const VERDICT_LABEL: Record<string, string> = {
-  pass: '✓ 通过',
-  partial: '◐ 部分',
-  fail: '✗ 未过',
-  unchecked: '○ 未验',
-}
+/** Valid verdict keys (label lookup goes through the verdict.* dictionary). */
+const VERDICT_KEYS = ['pass', 'partial', 'fail', 'unchecked'] as const
 
 function CopyButton({ text, label }: { text: string; label: string }) {
+  const { t } = useT()
   const [done, setDone] = useState(false)
   const copy = (): void => {
     const fallback = (): void => {
@@ -46,11 +45,11 @@ function CopyButton({ text, label }: { text: string; label: string }) {
     <button
       type="button"
       className="file-copy"
-      title={`复制 ${label}`}
-      aria-label={`复制 ${label}`}
+      title={fill(t('detail.copyTitle'), { label })}
+      aria-label={fill(t('detail.copyTitle'), { label })}
       onClick={copy}
     >
-      {done ? '✓ 已复制' : '⧉ 复制'}
+      {done ? t('detail.copiedBtn') : t('detail.copyBtn')}
     </button>
   )
 }
@@ -69,15 +68,16 @@ function FileView({ label, text }: { label: string; text: string }) {
 
 function TaskDetail() {
   const { state } = useStore()
+  const { t } = useT()
   const task =
     state.selectedTaskId !== null
       ? state.tasks.find((t) => t.id === state.selectedTaskId) ?? null
       : null
   if (!task) {
-    return <div className="detail-hint">select a task in the sidebar</div>
+    return <div className="detail-hint">{t('detail.selectHint')}</div>
   }
   const verdict = task.verdict ? task.verdict.toLowerCase() : null
-  const verdictKey = verdict && verdict in VERDICT_LABEL ? verdict : verdict ? 'unchecked' : null
+  const verdictKey = verdict && verdict in VERDICT_KEYS ? verdict : verdict ? 'unchecked' : null
   const progress = typeof task.progress === 'number' ? Math.max(0, Math.min(100, Math.round(task.progress))) : null
   return (
     <div>
@@ -85,9 +85,9 @@ function TaskDetail() {
       {(verdictKey || progress !== null) && (
         <div className="detail-badges">
           {progress !== null ? (
-            <span className={`db progress ${progress >= 100 ? 'ok' : ''}`}>进度 {progress}%</span>
+            <span className={`db progress ${progress >= 100 ? 'ok' : ''}`}>{fill(t('detail.progress'), { n: progress })}</span>
           ) : null}
-          {verdictKey ? <span className={`db verdict v-${verdictKey}`}>{VERDICT_LABEL[verdictKey]}</span> : null}
+          {verdictKey ? <span className={`db verdict v-${verdictKey}`}>{t(`verdict.${verdictKey}`)}</span> : null}
         </div>
       )}
       <div className="kv">
@@ -147,11 +147,12 @@ function FilesView() {
 }
 
 export function DetailsPanel({ onClose }: { onClose(): void }) {
+  const { t } = useT()
   const [tab, setTab] = useState<Tab>('task')
   const tabs: { id: Tab; label: string }[] = [
-    { id: 'task', label: '任务' },
-    { id: 'files', label: '文件' },
-    { id: 'screen', label: '屏幕' },
+    { id: 'task', label: t('detail.tabTask') },
+    { id: 'files', label: t('detail.tabFiles') },
+    { id: 'screen', label: t('detail.tabScreen') },
   ]
   return (
     <div className="details">
@@ -171,8 +172,8 @@ export function DetailsPanel({ onClose }: { onClose(): void }) {
         <button
           type="button"
           className="icon-btn"
-          title="Close details"
-          aria-label="Close details"
+          title={t('detail.close')}
+          aria-label={t('detail.close')}
           onClick={onClose}
         >
           <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5">

@@ -6,6 +6,9 @@
 
 import { useMemo } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
+import { useT } from '../i18n'
+import type { Lang } from '../i18n'
+import { translate } from '../i18n'
 import { Marked } from 'marked'
 import type { RendererObject, Tokens } from 'marked'
 import DOMPurify from 'dompurify'
@@ -80,6 +83,11 @@ function escapeHtml(s: string): string {
 
 const AUTO_HIGHLIGHT_LIMIT = 20_000 // skip highlightAuto on huge blobs
 
+/** Language of the chrome strings the renderer bakes into code-block headers;
+ * set per parse by renderMarkdown (parse is synchronous, so a module-level
+ * slot is race-free). */
+let mdLang: Lang = 'zh'
+
 const renderer: RendererObject = {
   code({ text, lang }: Tokens.Code): string {
     const raw = (lang || '').trim().split(/\s+/)[0] ?? ''
@@ -101,8 +109,8 @@ const renderer: RendererObject = {
       `<div class="mdx-code">` +
       `<div class="mdx-code-head">` +
       `<span class="mdx-code-lang">${escapeHtml(label)}</span>` +
-      `<button type="button" class="mdx-copy" data-testid="code-copy" aria-label="复制代码">` +
-      `<span class="mdx-copy-idle">复制</span><span class="mdx-copy-done">✓ 已复制</span>` +
+      `<button type="button" class="mdx-copy" data-testid="code-copy" aria-label="${escapeHtml(translate('md.copyAria', mdLang))}">` +
+      `<span class="mdx-copy-idle">${escapeHtml(translate('md.copy', mdLang))}</span><span class="mdx-copy-done">${escapeHtml(translate('md.copied', mdLang))}</span>` +
       `</button>` +
       `</div>` +
       `<pre><code class="hljs">${body}</code></pre>` +
@@ -145,7 +153,8 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
 })
 
-function renderMarkdown(text: string): string {
+function renderMarkdown(text: string, lang: Lang): string {
+  mdLang = lang
   const src = closeOpenFences(text)
   const raw = marked.parse(src, { async: false })
   return DOMPurify.sanitize(raw, { ALLOWED_TAGS, ALLOWED_ATTR, SANITIZE_DOM: true })
@@ -170,7 +179,8 @@ function onContainerClick(e: ReactMouseEvent<HTMLDivElement>): void {
 }
 
 export function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
-  const html = useMemo(() => renderMarkdown(text), [text])
+  const { lang } = useT()
+  const html = useMemo(() => renderMarkdown(text, lang), [text, lang])
   return (
     <div
       className={`mdx${streaming ? ' mdx-streaming' : ''}`}

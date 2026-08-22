@@ -12,17 +12,14 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from 'react'
 import { useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import type { Conversation } from '../state/types'
 import type { ThemeApi } from '../state/theme'
+import { gearsOrFallback, localizeGears } from '../views/gearDefs'
 import type { ViewId } from '../views/viewState'
 import { groupConversations, relTime } from './grouping'
 import './sidebar.css'
-
-const CONN_LABEL: Record<string, string> = {
-  connecting: '连接中…',
-  live: '已连接',
-  reconnecting: '重连中…',
-}
 
 interface MenuState {
   id: string
@@ -105,6 +102,7 @@ function ConvItem({
   onDelete(): void
   onContext(e: ReactMouseEvent): void
 }): JSX.Element {
+  const { t, lang } = useT()
   const [draft, setDraft] = useState(conv.title)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -148,18 +146,18 @@ function ConvItem({
         <>
           <div className="sb-item-top">
             <span className="sb-title">{conv.title}</span>
-            <span className="sb-time">{relTime(conv.updatedAt)}</span>
+            <span className="sb-time">{relTime(conv.updatedAt, Date.now(), lang)}</span>
           </div>
           <div className="sb-preview">
-            {conv.preview || (conv.messageCount > 0 ? `${conv.messageCount} 条消息` : '新对话')}
+            {conv.preview || (conv.messageCount > 0 ? fill(t('side.messages'), { n: conv.messageCount }) : t('side.newChat'))}
           </div>
           <div className="sb-acts" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"
               className="sb-act"
               data-testid="conv-pin"
-              title={conv.pinned === 1 ? '取消置顶' : '置顶'}
-              aria-label={conv.pinned === 1 ? '取消置顶' : '置顶'}
+              title={conv.pinned === 1 ? t('side.unpin') : t('side.pin')}
+              aria-label={conv.pinned === 1 ? t('side.unpin') : t('side.pin')}
               onClick={onPin}
             >
               <PinIcon />
@@ -168,8 +166,8 @@ function ConvItem({
               type="button"
               className="sb-act"
               data-testid="conv-rename"
-              title="重命名"
-              aria-label="重命名"
+              title={t('side.rename')}
+              aria-label={t('side.rename')}
               onClick={onStartRename}
             >
               <PencilIcon />
@@ -178,8 +176,8 @@ function ConvItem({
               type="button"
               className="sb-act danger"
               data-testid="conv-delete"
-              title="删除"
-              aria-label="删除对话"
+              title={t('side.delete')}
+              aria-label={t('side.deleteConvAria')}
               onClick={onStartConfirm}
             >
               <TrashIcon />
@@ -187,12 +185,12 @@ function ConvItem({
           </div>
           {confirming ? (
             <div className="sb-confirm" onClick={(e) => e.stopPropagation()}>
-              <span className="q">删除「{conv.title}」？</span>
+              <span className="q">{fill(t('side.deleteConfirm'), { title: conv.title })}</span>
               <button type="button" className="sb-confirm-btn del" onClick={onDelete}>
-                删除
+                {t('side.delete')}
               </button>
               <button type="button" className="sb-confirm-btn" onClick={onCancel}>
-                取消
+                {t('chat.cancel')}
               </button>
             </div>
           ) : null}
@@ -224,17 +222,18 @@ export function Sidebar(props: {
     togglePinConversation,
     deleteConversationById,
   } = useStore()
+  const { t, lang } = useT()
   const [query, setQuery] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
-  const gearLevel = state.gears.find((g) => g.id === state.gear)?.level ?? 2
-  const gearName =
-    state.gears.find((g) => g.id === state.gear)?.name ??
-    ({ dormant: '休眠', eco: '省电', balanced: '均衡', focused: '专注', turbo: '狂暴' } as Record<string, string>)[state.gear] ??
-    state.gear
+  const gears = useMemo(() => localizeGears(gearsOrFallback(state.gears), t), [state.gears, t])
+  const gearLevel = gears.find((g) => g.id === state.gear)?.level ?? 2
+  const gearName = gears.find((g) => g.id === state.gear)?.name ?? state.gear
+  const connLabel = (conn: string): string =>
+    t(`side.conn.${conn}`) === `side.conn.${conn}` ? conn : t(`side.conn.${conn}`)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -244,7 +243,7 @@ export function Sidebar(props: {
     )
   }, [state.conversations, query])
 
-  const groups = useMemo(() => groupConversations(filtered), [filtered])
+  const groups = useMemo(() => groupConversations(filtered, undefined, lang), [filtered, lang])
   const activeId = state.activeConvId
 
   /* close the context menu on any outside pointer / scroll / Esc */
@@ -295,13 +294,13 @@ export function Sidebar(props: {
         </div>
         <div className="sb-brand-text">
           <div className="sb-brand-name">RoboJex</div>
-          <div className="sb-brand-sub">{gearName}挡 · 常驻 AI</div>
+          <div className="sb-brand-sub">{fill(t('side.brandSub'), { name: gearName })}</div>
         </div>
         <button
           type="button"
           className="sb-collapse"
-          title="折叠侧栏"
-          aria-label="折叠侧栏"
+          title={t('side.collapse')}
+          aria-label={t('side.collapse')}
           onClick={collapse}
         >
           <CollapseIcon />
@@ -314,7 +313,7 @@ export function Sidebar(props: {
         data-testid="sidebar-new-chat"
         onClick={() => void newConversation()}
       >
-        <span className="plus" aria-hidden="true">＋</span>新对话
+        <span className="plus" aria-hidden="true">＋</span>{t('side.newChat')}
       </button>
 
       <div className="sb-search">
@@ -322,23 +321,23 @@ export function Sidebar(props: {
         <input
           type="text"
           value={query}
-          placeholder="搜索对话"
+          placeholder={t('side.search')}
           spellCheck={false}
-          aria-label="搜索对话"
+          aria-label={t('side.search')}
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
 
-      <nav className="sb-list" aria-label="会话列表">
+      <nav className="sb-list" aria-label={t('side.listAria')}>
         {state.convsLoading ? (
-          <div className="sb-skel" aria-label="加载中">
+          <div className="sb-skel" aria-label={t('side.loading')}>
             {[0, 1, 2, 3, 4, 5].map((i) => (
               <div key={i} className="row rj-skeleton" />
             ))}
           </div>
         ) : groups.length === 0 ? (
           <div className="sb-empty">
-            {query ? '没有匹配的对话' : '还没有对话\n点击「＋ 新对话」开始'}
+            {query ? t('side.emptySearch') : t('side.empty')}
           </div>
         ) : (
           groups.map((g) => (
@@ -391,14 +390,14 @@ export function Sidebar(props: {
         <div
           className="sb-status"
           data-testid="conn-status"
-          title={`jex · ${gearName} · ${CONN_LABEL[state.conn] ?? state.conn}${state.version ? ` · v${state.version}` : ''}`}
+          title={`jex · ${gearName} · ${connLabel(state.conn)}${state.version ? ` · v${state.version}` : ''}`}
         >
           <span className="sb-status-dot" />
           <div className="sb-status-text">
             <span className="sb-status-name">
-              {gearName}挡
+              {fill(t('side.gearSuffix'), { name: gearName })}
             </span>
-            <span className={`sb-status-conn ${state.conn}`}>{CONN_LABEL[state.conn] ?? state.conn}</span>
+            <span className={`sb-status-conn ${state.conn}`}>{connLabel(state.conn)}</span>
           </div>
           {state.version ? <span className="sb-status-ver">v{state.version}</span> : null}
         </div>
@@ -410,7 +409,7 @@ export function Sidebar(props: {
           className="sb-menu"
           style={clampMenu(menu.x, menu.y)}
           role="menu"
-          aria-label="会话操作"
+          aria-label={t('side.menuAria')}
         >
           <button
             type="button"
@@ -422,7 +421,7 @@ export function Sidebar(props: {
             }}
           >
             <span className="mi">📌</span>
-            {menuConv.pinned === 1 ? '取消置顶' : '置顶'}
+            {menuConv.pinned === 1 ? t('side.unpin') : t('side.pin')}
           </button>
           <button
             type="button"
@@ -433,7 +432,7 @@ export function Sidebar(props: {
               setMenu(null)
             }}
           >
-            <span className="mi">✏️</span>重命名
+            <span className="mi">✏️</span>{t('side.rename')}
           </button>
           <button
             type="button"
@@ -444,7 +443,7 @@ export function Sidebar(props: {
               setMenu(null)
             }}
           >
-            <span className="mi">🗑️</span>删除
+            <span className="mi">🗑️</span>{t('side.delete')}
           </button>
         </div>
       ) : null}

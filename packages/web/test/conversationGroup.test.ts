@@ -1,8 +1,8 @@
 // packages/web/test/conversationGroup.test.ts — pure tests for sidebar
 // conversation bucketing (📌置顶 first, 今天/昨天/近 7 天/更早 by local
-// calendar day) and the Chinese relative-time formatter.
+// calendar day) and the bilingual (zh | en) relative-time formatter.
 import { describe, expect, test } from 'vitest'
-import { groupConversations, relTime, startOfDay } from '../src/sidebar/grouping'
+import { groupConversations, groupLabel, relTime, startOfDay } from '../src/sidebar/grouping'
 import type { Conversation } from '../src/state/types'
 
 let n = 0
@@ -83,6 +83,16 @@ describe('groupConversations', () => {
     const groups = groupConversations([C({ id: 'edge', updatedAt: at(-7) })], NOW)
     expect(groups.map((g) => g.key)).toEqual(['older'])
   })
+
+  test('group labels follow the lang argument (zh default)', () => {
+    const groups = groupConversations([C({ id: 'p', pinned: 1, updatedAt: at(0) })], NOW, 'en')
+    expect(groups[0]!.label).toBe('📌 Pinned')
+    expect(groupLabel('today', 'en')).toBe('Today')
+    expect(groupLabel('week', 'en')).toBe('Last 7 days')
+    expect(groupLabel('older', 'en')).toBe('Older')
+    // default stays Chinese — the existing zh UI is unchanged
+    expect(groupConversations([C({ id: 'p', pinned: 1 })], NOW)[0]!.label).toBe('📌 置顶')
+  })
 })
 
 describe('relTime', () => {
@@ -114,6 +124,24 @@ describe('relTime', () => {
 
   test('other years → YYYY/M/D', () => {
     expect(relTime(new Date(2025, 11, 30, 10).getTime(), NOW)).toBe('2025/12/30')
+  })
+})
+
+describe('relTime (en)', () => {
+  test('just now / N min ago', () => {
+    expect(relTime(NOW - 10_000, NOW, 'en')).toBe('just now')
+    expect(relTime(NOW - 5 * 60_000, NOW, 'en')).toBe('5 min ago')
+  })
+
+  test('Today / Yesterday keep the clock suffix', () => {
+    expect(relTime(new Date(2026, 7, 21, 15, 0).getTime(), NOW, 'en')).toBe('Today 15:00')
+    expect(relTime(new Date(2026, 7, 20, 14, 30).getTime(), NOW, 'en')).toBe('Yesterday 14:30')
+  })
+
+  test('N days ago, then short month + day within the year', () => {
+    expect(relTime(at(-3, 10), NOW, 'en')).toBe('3 days ago')
+    expect(relTime(new Date(2026, 5, 9, 10).getTime(), NOW, 'en')).toBe('Jun 9')
+    expect(relTime(new Date(2025, 11, 30, 10).getTime(), NOW, 'en')).toBe('2025/12/30')
   })
 })
 

@@ -1,13 +1,16 @@
 // packages/web/src/frame/CommandPalette.tsx — Ctrl+K palette (centered 640px,
 // blurred backdrop, scale-in). Searches conversations (store.state) and offers
-// grouped actions: new chat · switch view ×5 · theme ×3 · gear ×5.
-// Keyboard: ↑/↓ move, Enter run, Esc close.
+// grouped actions: new chat · switch view ×5 · theme ×3 · language cycle
+// (zh→en→system) · gear ×5. Keyboard: ↑/↓ move, Enter run, Esc close.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
+import type { LangPref } from '../i18n'
 import type { ThemeApi } from '../state/theme'
 import type { GearId } from '../state/types'
-import { gearsOrFallback } from '../views/gearDefs'
+import { gearsOrFallback, localizeGears } from '../views/gearDefs'
 import { VIEW_META } from '../views/ViewSwitcher'
 import type { ViewId } from '../views/viewState'
 
@@ -20,11 +23,8 @@ interface CmdItem {
   run(): void
 }
 
-const THEME_LABEL: Record<'light' | 'dark' | 'system', string> = {
-  light: '浅色',
-  dark: '深色',
-  system: '跟随系统',
-}
+/** Language cycle for the palette's switch-language action. */
+const LANG_CYCLE: LangPref[] = ['zh', 'en', 'system']
 
 export function CommandPalette({
   theme,
@@ -36,6 +36,7 @@ export function CommandPalette({
   onView(view: ViewId): void
 }) {
   const store = useStore()
+  const { t, pref: langPref, setPref: setLangPrefState } = useT()
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
@@ -46,8 +47,8 @@ export function CommandPalette({
     for (const c of store.state.conversations) {
       out.push({
         id: `conv-${c.id}`,
-        group: '会话',
-        label: c.title || '(untitled)',
+        group: t('cmdk.groupConv'),
+        label: c.title || t('cmdk.untitled'),
         hint: c.preview,
         icon: (
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -62,8 +63,8 @@ export function CommandPalette({
     }
     out.push({
       id: 'act-new-conv',
-      group: '动作',
-      label: '新对话',
+      group: t('cmdk.groupAction'),
+      label: t('cmdk.newChat'),
       icon: <span>✏️</span>,
       run: () => {
         void store.newConversation()
@@ -73,8 +74,8 @@ export function CommandPalette({
     for (const m of VIEW_META) {
       out.push({
         id: `act-view-${m.id}`,
-        group: '动作',
-        label: `切换视图 · ${m.label}`,
+        group: t('cmdk.groupAction'),
+        label: fill(t('cmdk.switchView'), { view: t(m.labelKey) }),
         icon: m.icon,
         run: () => onView(m.id),
       })
@@ -82,24 +83,33 @@ export function CommandPalette({
     for (const pref of ['light', 'dark', 'system'] as const) {
       out.push({
         id: `act-theme-${pref}`,
-        group: '动作',
-        label: `主题 · ${THEME_LABEL[pref]}`,
+        group: t('cmdk.groupAction'),
+        label: fill(t('cmdk.theme'), { name: t(`theme.${pref}`) }),
         icon: <span>{pref === 'light' ? '☀️' : pref === 'dark' ? '🌙' : '🖥️'}</span>,
         run: () => theme.setPref(pref),
       })
     }
-    for (const g of gearsOrFallback(store.state.gears)) {
+    // language: cycles zh → en → system from the CURRENT preference
+    const nextLang = LANG_CYCLE[(LANG_CYCLE.indexOf(langPref) + 1) % LANG_CYCLE.length] ?? 'zh'
+    out.push({
+      id: 'act-lang-cycle',
+      group: t('cmdk.groupAction'),
+      label: fill(t('cmdk.switchLang'), { next: t(`lang.${nextLang}`) }),
+      icon: <span>🌐</span>,
+      run: () => setLangPrefState(nextLang),
+    })
+    for (const g of localizeGears(gearsOrFallback(store.state.gears), t)) {
       out.push({
         id: `act-gear-${g.id}`,
-        group: '动作',
-        label: `挡位 · ${g.name}（${g.id}）`,
+        group: t('cmdk.groupAction'),
+        label: fill(t('cmdk.gear'), { name: g.name, id: g.id }),
         hint: g.cost,
         icon: <span>{g.emoji}</span>,
         run: () => void store.changeGear(g.id as GearId),
       })
     }
     return out
-  }, [store, theme, onView])
+  }, [store, theme, onView, t, langPref, setLangPrefState])
 
   const q = query.trim().toLowerCase()
   const visible = useMemo(() => {
@@ -197,7 +207,7 @@ export function CommandPalette({
         className="cmdk-panel"
         role="dialog"
         aria-modal="true"
-        aria-label="命令面板"
+        aria-label={t('cmdk.aria')}
         onKeyDown={onKeyDown}
       >
         <div className="cmdk-input-row">
@@ -210,7 +220,7 @@ export function CommandPalette({
             className="cmdk-input"
             data-testid="cmdk-input"
             value={query}
-            placeholder="搜索会话、切换视图 / 主题 / 挡位…"
+            placeholder={t('cmdk.placeholder')}
             spellCheck={false}
             onChange={(e) => {
               setQuery(e.target.value)
@@ -221,7 +231,7 @@ export function CommandPalette({
         </div>
         <div className="cmdk-body" ref={listRef}>
           {visible.length === 0 ? (
-            <div className="cmdk-empty">没有匹配项</div>
+            <div className="cmdk-empty">{t('cmdk.empty')}</div>
           ) : (
             rows
           )}
@@ -229,13 +239,13 @@ export function CommandPalette({
         <div className="cmdk-foot">
           <span>
             <kbd>↑</kbd>
-            <kbd>↓</kbd>选择
+            <kbd>↓</kbd>{t('cmdk.footSelect')}
           </span>
           <span>
-            <kbd>↵</kbd>执行
+            <kbd>↵</kbd>{t('cmdk.footRun')}
           </span>
           <span>
-            <kbd>esc</kbd>关闭
+            <kbd>esc</kbd>{t('cmdk.footClose')}
           </span>
         </div>
       </div>

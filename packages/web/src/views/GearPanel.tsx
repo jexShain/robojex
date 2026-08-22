@@ -8,8 +8,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as api from '../state/api'
 import { useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import type { DayUsage } from '../state/types'
-import { gearsOrFallback } from './gearDefs'
+import { gearsOrFallback, localizeGears } from './gearDefs'
 import { ThinkingStream } from './ThinkingStream'
 import './cockpit.css'
 
@@ -32,13 +34,14 @@ function fmtTok(n: number): string {
   return String(Math.round(n))
 }
 
-function fmtTick(ms: number): string {
-  if (ms <= 0) return '停止'
+function fmtTick(ms: number, t: (key: string) => string): string {
+  if (ms <= 0) return t('cp.tickStop')
   if (ms >= 60_000) return `${Math.round(ms / 60_000)} min`
   return `${Math.round(ms / 1000)} s`
 }
 
 function GearDial({ level, emoji }: { level: number; emoji: string }) {
+  const { t } = useT()
   const arc = `M ${CX - R} ${CY} A ${R} ${R} 0 0 1 ${CX + R} ${CY}`
   const frac = (level / 4) * 100
   const ticks = [0, 1, 2, 3, 4].map((lv) => {
@@ -51,7 +54,7 @@ function GearDial({ level, emoji }: { level: number; emoji: string }) {
       data-testid="gear-dial"
       viewBox="0 0 240 136"
       role="img"
-      aria-label={`当前挡位 ${level}/4`}
+      aria-label={fill(t('cp.dialAria'), { n: level })}
     >
       <defs>
         <linearGradient id="cpGearGrad" x1="0" y1="0" x2="1" y2="0">
@@ -104,6 +107,7 @@ function GearDial({ level, emoji }: { level: number; emoji: string }) {
 }
 
 function UsageChart() {
+  const { t } = useT()
   const [usage, setUsage] = useState<DayUsage[] | null>(null)
 
   useEffect(() => {
@@ -137,14 +141,14 @@ function UsageChart() {
   return (
     <div className="cp-usage" data-testid="usage-chart">
       <div className="cp-usage-head">
-        <span className="cp-sec-title">今日消耗</span>
+        <span className="cp-sec-title">{t('cp.todayUsage')}</span>
         <span className="cp-usage-today">
-          {fmtTok(today)} tok<span className="cp-usage-week"> · 7 日 {fmtTok(week)}</span>
+          {fmtTok(today)} tok<span className="cp-usage-week">{fill(t('cp.weekUsage'), { n: fmtTok(week) })}</span>
         </span>
       </div>
       <div className="cp-charts">
         {usage.length === 0 ? (
-          <div className="cp-usage-empty">暂无用量数据</div>
+          <div className="cp-usage-empty">{t('cp.noUsage')}</div>
         ) : (
           usage.map((d, i) => {
             const total = d.tokensIn + d.tokensOut
@@ -169,12 +173,13 @@ function UsageChart() {
 
 function BudgetFuel() {
   const { state } = useStore()
+  const { t } = useT()
   const b = state.budget
   if (!b) {
     return (
       <div className="cp-fuel">
-        <div className="cp-sec-title">预算</div>
-        <div className="cp-fuel-line dim">等待核心状态…</div>
+        <div className="cp-sec-title">{t('cp.budget')}</div>
+        <div className="cp-fuel-line dim">{t('cp.waitCore')}</div>
       </div>
     )
   }
@@ -183,16 +188,14 @@ function BudgetFuel() {
   return (
     <div className="cp-fuel">
       <div className="cp-fuel-head">
-        <span className="cp-sec-title">预算燃料</span>
+        <span className="cp-sec-title">{t('cp.budgetFuel')}</span>
         <span className="cp-fuel-label">
           {burn ? (
             <>
-              <b className="infty">∞</b> burn · 今日 {fmtTok(b.spentToday)} tok
+              <b className="infty">∞</b> {fill(t('cp.burnToday'), { n: fmtTok(b.spentToday) })}
             </>
           ) : (
-            <>
-              {fmtTok(b.spentToday)} / {fmtTok(b.dailyTokens)} tok（{pct}%）
-            </>
+            fill(t('cp.fuelLabel'), { a: fmtTok(b.spentToday), b: fmtTok(b.dailyTokens), p: pct })
           )}
         </span>
       </div>
@@ -210,7 +213,8 @@ function BudgetFuel() {
 
 export function GearPanel() {
   const { state, changeGear } = useStore()
-  const gears = gearsOrFallback(state.gears)
+  const { t } = useT()
+  const gears = useMemo(() => localizeGears(gearsOrFallback(state.gears), t), [state.gears, t])
   const cur = useMemo(
     () => gears.find((g) => g.id === state.gear) ?? gears[0],
     [gears, state.gear],
@@ -244,14 +248,16 @@ export function GearPanel() {
             <span className="v">{cur.cost}</span>
             <span className="k">tick</span>
             <span className="v">
-              {fmtTick(cur.tickMs)}（生效 {fmtTick(state.gearAppliedTickMs)}）
+              {fmtTick(cur.tickMs, t)}{fill(t('cp.applied'), { x: fmtTick(state.gearAppliedTickMs, t) })}
             </span>
             <span className="k">decide</span>
             <span className="v">{cur.decideMaxTokens > 0 ? `${cur.decideMaxTokens} tok` : '—'}</span>
             <span className="k">patrol</span>
-            <span className="v">{cur.patrolEvery > 0 ? `每 ${cur.patrolEvery} tick` : '关'}</span>
+            <span className="v">
+              {cur.patrolEvery > 0 ? fill(t('cp.patrolEvery'), { n: cur.patrolEvery }) : t('cp.patrolOff')}
+            </span>
           </div>
-          <div className="cp-quick" role="group" aria-label="快速切换挡位">
+          <div className="cp-quick" role="group" aria-label={t('cp.quickAria')}>
             {gears.map((g) => (
               <button
                 key={g.id}
@@ -278,7 +284,7 @@ export function GearPanel() {
 
       {/* ── reasoning stream ── */}
       <section className="cp-stream">
-        <div className="cp-stream-head cp-sec-title">思考流 · reasoning 轨迹</div>
+        <div className="cp-stream-head cp-sec-title">{t('cp.streamTitle')}</div>
         <ThinkingStream embedded />
       </section>
     </div>

@@ -9,6 +9,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import type { Message } from '../state/types'
 import { Markdown } from './Markdown'
 import { InputBar } from './InputBar'
@@ -115,6 +117,7 @@ function ActionBtn({
 
 /** Copy button with ✓ feedback; independent per action row. */
 function CopyAction({ text }: { text: string }): JSX.Element {
+  const { t } = useT()
   const [done, setDone] = useState(false)
   const timer = useRef(0)
   useEffect(() => () => window.clearTimeout(timer.current), [])
@@ -126,7 +129,7 @@ function CopyAction({ text }: { text: string }): JSX.Element {
     })
   }
   return (
-    <ActionBtn testId="msg-copy" title={done ? '已复制' : '复制'} onClick={onClick} done={done}>
+    <ActionBtn testId="msg-copy" title={done ? t('chat.copied') : t('chat.copy')} onClick={onClick} done={done}>
       {done ? <CheckIcon /> : <CopyIcon />}
     </ActionBtn>
   )
@@ -135,6 +138,7 @@ function CopyAction({ text }: { text: string }): JSX.Element {
 /* ── thinking fold ── */
 
 function ThinkingBlock({ msg, wasLive }: { msg: Message; wasLive: boolean }): JSX.Element | null {
+  const { t } = useT()
   const reasoning = msg.reasoning ?? ''
   const [manual, setManual] = useState(false)
   const [collapsedByUser, setCollapsedByUser] = useState(true)
@@ -163,7 +167,11 @@ function ThinkingBlock({ msg, wasLive }: { msg: Message; wasLive: boolean }): JS
 
   const end = msg.streaming ? now : endAtRef.current
   const secs = end !== null ? Math.max(1, Math.round((end - msg.createdAt) / 1000)) : 0
-  const label = msg.streaming ? `思考中… ${secs}s` : secs > 0 ? `已思考 ${secs}s` : '已思考'
+  const label = msg.streaming
+    ? fill(t('chat.thinking'), { n: secs })
+    : secs > 0
+      ? fill(t('chat.thoughtFor'), { n: secs })
+      : t('chat.thought')
 
   const toggle = (): void => {
     setManual(true)
@@ -198,6 +206,7 @@ function ThinkingBlock({ msg, wasLive }: { msg: Message; wasLive: boolean }): JS
 
 function UserRow({ msg, messages }: { msg: Message; messages: Message[] }): JSX.Element {
   const { deleteMessageById, sendMessage } = useStore()
+  const { t } = useT()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(msg.content)
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -247,10 +256,10 @@ function UserRow({ msg, messages }: { msg: Message; messages: Message[] }): JSX.
           />
           <div className="cv-edit-row">
             <button type="button" className="cv-edit-btn" onClick={() => setEditing(false)}>
-              取消
+              {t('chat.cancel')}
             </button>
             <button type="button" className="cv-edit-btn primary" onClick={confirmEdit}>
-              发送
+              {t('chat.send')}
             </button>
           </div>
         </div>
@@ -265,7 +274,7 @@ function UserRow({ msg, messages }: { msg: Message; messages: Message[] }): JSX.
         <CopyAction text={msg.content} />
         <ActionBtn
           testId="msg-edit"
-          title="编辑并重发"
+          title={t('chat.editResend')}
           onClick={() => {
             setDraft(msg.content)
             setEditing(true)
@@ -273,7 +282,7 @@ function UserRow({ msg, messages }: { msg: Message; messages: Message[] }): JSX.
         >
           <PencilIcon />
         </ActionBtn>
-        <ActionBtn testId="msg-del" title="删除" danger onClick={() => void deleteMessageById(msg.id)}>
+        <ActionBtn testId="msg-del" title={t('chat.delete')} danger onClick={() => void deleteMessageById(msg.id)}>
           <TrashIcon />
         </ActionBtn>
       </div>
@@ -293,6 +302,7 @@ function AssistantRow({
   wasLive: boolean
 }): JSX.Element {
   const { deleteMessageById, regenerateLast } = useStore()
+  const { t } = useT()
   const streaming = msg.streaming === true
 
   const onRegen = (): void => {
@@ -321,16 +331,16 @@ function AssistantRow({
             <div className="cv-err">
               <span className="msg">{msg.error}</span>
               <button type="button" className="cv-err-retry" onClick={() => void regenerateLast()}>
-                重试
+                {t('chat.retry')}
               </button>
             </div>
           ) : null}
           <div className="cv-acts">
             <CopyAction text={msg.content} />
-            <ActionBtn testId="msg-regen" title="重新生成" onClick={onRegen}>
+            <ActionBtn testId="msg-regen" title={t('chat.regenerate')} onClick={onRegen}>
               <RefreshIcon />
             </ActionBtn>
-            <ActionBtn testId="msg-del" title="删除" danger onClick={() => void deleteMessageById(msg.id)}>
+            <ActionBtn testId="msg-del" title={t('chat.delete')} danger onClick={() => void deleteMessageById(msg.id)}>
               <TrashIcon />
             </ActionBtn>
           </div>
@@ -362,6 +372,7 @@ function NoticeRow({ msg }: { msg: Message }): JSX.Element {
  * border and a small timestamp: clearly neither a chat bubble nor an LLM
  * reply. Client-only messages (never persisted server-side). */
 function AgentTimelineCard({ msg }: { msg: Message }): JSX.Element {
+  const { t } = useT()
   const send = msg.kind === 'agent-send'
   const time = new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   return (
@@ -375,7 +386,7 @@ function AgentTimelineCard({ msg }: { msg: Message }): JSX.Element {
           <BoltIcon />
         </span>
         <div className="agent-body">
-          <span className="agent-label">{send ? '→ 派发给 jex' : 'jex'}</span>
+          <span className="agent-label">{send ? t('chat.agentDispatch') : t('chat.agentJex')}</span>
           <div className="agent-text">{msg.content}</div>
         </div>
         <span className="agent-time">{time}</span>
@@ -386,14 +397,17 @@ function AgentTimelineCard({ msg }: { msg: Message }): JSX.Element {
 
 /* ── empty state ── */
 
-const EXAMPLE_PROMPTS = [
-  { icon: '🤖', title: '认识 RoboJex', text: '介绍一下你自己：你是谁，能帮我做些什么？' },
-  { icon: '💡', title: '解释概念', text: '用通俗易懂的方式解释 React Hooks 的原理，并给出代码示例' },
-  { icon: '🧭', title: '规划任务', text: '帮我制定一个两周学习计划，主题是 Rust 系统编程' },
-  { icon: '⚡', title: '写点代码', text: '用 Python 写一个快速排序，并逐行讲解实现思路' },
+/** Example prompt cards — icons fixed, titles/texts live in the dictionaries
+ * (chat.ex.*) so the sent prompt follows the interface language). */
+const EXAMPLES: { icon: string; key: string }[] = [
+  { icon: '🤖', key: 'know' },
+  { icon: '💡', key: 'concept' },
+  { icon: '🧭', key: 'plan' },
+  { icon: '⚡', key: 'code' },
 ]
 
 function EmptyState({ onPick }: { onPick(text: string): void }): JSX.Element {
+  const { t } = useT()
   return (
     <div className="cv-empty">
       <div className="cv-orb-zone">
@@ -402,23 +416,23 @@ function EmptyState({ onPick }: { onPick(text: string): void }): JSX.Element {
           <BoltIcon />
         </div>
       </div>
-      <h1 className="cv-empty-title">有什么可以帮您？</h1>
-      <p className="cv-empty-sub">与 RoboJex 对话，或让它在 Agent 模式下自主工作</p>
+      <h1 className="cv-empty-title">{t('chat.emptyTitle')}</h1>
+      <p className="cv-empty-sub">{t('chat.emptySub')}</p>
       <div className="cv-prompts">
-        {EXAMPLE_PROMPTS.map((p, i) => (
+        {EXAMPLES.map((p, i) => (
           <button
-            key={p.title}
+            key={p.key}
             type="button"
             className="cv-prompt"
             data-testid="empty-prompt"
             style={{ animationDelay: `${120 + i * 90}ms` } as CSSProperties}
-            onClick={() => onPick(p.text)}
+            onClick={() => onPick(t(`chat.ex.${p.key}.text`))}
           >
             <span className="cv-prompt-head">
               <span className="ico" aria-hidden="true">{p.icon}</span>
-              {p.title}
+              {t(`chat.ex.${p.key}.title`)}
             </span>
-            <span className="cv-prompt-text">{p.text}</span>
+            <span className="cv-prompt-text">{t(`chat.ex.${p.key}.text`)}</span>
           </button>
         ))}
       </div>
@@ -430,6 +444,7 @@ function EmptyState({ onPick }: { onPick(text: string): void }): JSX.Element {
 
 export function ChatView() {
   const { state, sendMessage, regenerateLast } = useStore()
+  const { t } = useT()
   const scrollRef = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const [jump, setJump] = useState(false)
@@ -508,8 +523,8 @@ export function ChatView() {
       </div>
 
       {jump && messages.length > 0 ? (
-        <button type="button" className="cv-jump" onClick={scrollToBottom} aria-label="回到底部">
-          <span className="arrow">↓</span> 回到底部
+        <button type="button" className="cv-jump" onClick={scrollToBottom} aria-label={t('chat.backToBottom')}>
+          <span className="arrow">↓</span> {t('chat.backToBottom')}
         </button>
       ) : null}
 
@@ -519,7 +534,7 @@ export function ChatView() {
             <span aria-hidden="true">⚠</span>
             <span className="msg">{streamErr}</span>
             <button type="button" className="cv-err-retry" onClick={() => void regenerateLast()}>
-              重试
+              {t('chat.retry')}
             </button>
           </div>
         ) : null}

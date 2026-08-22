@@ -6,6 +6,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { statusTone, useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import type { Task } from '../state/types'
 import {
   type BoardFilter,
@@ -17,22 +19,20 @@ import {
 } from './boardModel'
 import { fmtStamp } from './timefmt'
 
-const FILTERS: { id: BoardFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'running', label: 'Running' },
-  { id: 'due-today', label: 'Due today' },
-]
+/** Filter ids map to board.filter.* dictionary keys. */
+const FILTERS: BoardFilter[] = ['all', 'running', 'due-today']
 
 function Badges({ task, now }: { task: Task; now: number }) {
+  const { t } = useT()
   return (
     <>
       {task.scheduledAt != null ? (
-        <span className="bc-badge sched" title={`scheduled ${fmtStamp(task.scheduledAt, now)}`}>
+        <span className="bc-badge sched" title={fill(t('board.schedBadge'), { t: fmtStamp(task.scheduledAt, now) })}>
           ⏱ {fmtStamp(task.scheduledAt, now)}
         </span>
       ) : null}
       {task.dueAt != null ? (
-        <span className="bc-badge due" title={`due ${fmtStamp(task.dueAt, now)}`}>
+        <span className="bc-badge due" title={fill(t('board.dueBadge'), { t: fmtStamp(task.dueAt, now) })}>
           ⏳ {fmtStamp(task.dueAt, now)}
         </span>
       ) : null}
@@ -51,12 +51,13 @@ const VERDICT_GLYPH: Record<string, string> = {
  * by task.progress; stroke color follows the verdict semantics:
  * pass→green, partial→amber, fail→red, unchecked→gray. */
 function ProgressRing({ task }: { task: Task }) {
+  const { t } = useT()
   const verdict = (task.verdict ?? 'unchecked').toLowerCase()
   const v = VERDICT_GLYPH[verdict] ? verdict : 'unchecked'
   const progress = typeof task.progress === 'number' ? Math.max(0, Math.min(100, task.progress)) : 0
   return (
     <div className="bc-progress">
-      <svg className="ring" viewBox="0 0 36 36" width="20" height="20" aria-label={`progress ${progress}%`}>
+      <svg className="ring" viewBox="0 0 36 36" width="20" height="20" aria-label={fill(t('board.progressAria'), { n: progress })}>
         <circle cx="18" cy="18" r="15.9" className="ring-bg" />
         <circle
           cx="18"
@@ -90,6 +91,7 @@ function BoardCard({
   onSelect(): void
   onToggle(): void
 }) {
+  const { t } = useT()
   const { task, children, subtreeBlocked, subtreeRunning, allChildrenDone } = placed.node
   const tone = statusTone(task.status)
   const hasKids = children.length > 0
@@ -130,7 +132,7 @@ function BoardCard({
           <button
             type="button"
             className="bc-caret"
-            title={collapsed ? `expand ${children.length}` : 'collapse'}
+            title={collapsed ? fill(t('board.expandN'), { n: children.length }) : t('board.collapse')}
             aria-pressed={!collapsed}
             onClick={(e) => {
               e.stopPropagation()
@@ -144,7 +146,7 @@ function BoardCard({
           </button>
         ) : null}
         {subtreeBlocked && tone !== 'failed' ? (
-          <span className="bc-warn" title="a child task is blocked">
+          <span className="bc-warn" title={t('board.childBlocked')}>
             ⚠
           </span>
         ) : null}
@@ -155,6 +157,7 @@ function BoardCard({
 
 export function BoardView() {
   const { state, selectTask } = useStore()
+  const { t } = useT()
   const [filter, setFilter] = useState<BoardFilter>('all')
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
   // + new-task inline entry (POST /api/task; the tasks broadcast updates the
@@ -228,7 +231,7 @@ export function BoardView() {
         <input
           className="bn-input"
           value={newTitle}
-          placeholder="＋ 新任务，回车创建"
+          placeholder={t('board.newPlaceholder')}
           disabled={creating}
           onChange={(e) => setNewTitle(e.target.value)}
           onKeyDown={(e) => {
@@ -238,7 +241,7 @@ export function BoardView() {
         <button
           type="button"
           className="bn-btn"
-          title="创建任务"
+          title={t('board.create')}
           disabled={!newTitle.trim() || creating}
           onClick={() => void createTask()}
         >
@@ -246,28 +249,28 @@ export function BoardView() {
         </button>
       </div>
       {createErr ? <span className="bn-err" title={createErr}>⚠ {createErr}</span> : null}
-      <div className="seg" role="group" aria-label="Filter">
+      <div className="seg" role="group" aria-label={t('board.filterAria')}>
           {FILTERS.map((f) => (
             <button
-              key={f.id}
+              key={f}
               type="button"
-              className={filter === f.id ? 'active' : ''}
-              aria-pressed={filter === f.id}
-              onClick={() => setFilter(f.id)}
+              className={filter === f ? 'active' : ''}
+              aria-pressed={filter === f}
+              onClick={() => setFilter(f)}
             >
-              {f.label}
+              {t(`board.filter.${f}`)}
             </button>
           ))}
         </div>
-        <span className="board-count" title="visible / total tasks">
-          {layout.nodes.length} / {state.tasks.length} tasks
+        <span className="board-count" title={t('board.countTitle')}>
+          {fill(t('board.count'), { n: layout.nodes.length, m: state.tasks.length })}
         </span>
-        <div className="seg" role="group" aria-label="Expand">
+        <div className="seg" role="group" aria-label={t('board.expandAria')}>
           <button type="button" onClick={() => setCollapsed(new Set())}>
-            Expand all
+            {t('board.expandAll')}
           </button>
           <button type="button" onClick={() => setCollapsed(new Set(parentIds(filtered)))}>
-            Collapse all
+            {t('board.collapseAll')}
           </button>
         </div>
       </div>
@@ -286,13 +289,13 @@ export function BoardView() {
               <path d="M4 7.4v2.5a1.6 1.6 0 0 0 1.6 1.6H9" />
             </svg>
           </div>
-          <p>no tasks yet — create one above, or jex will post its board here</p>
+          <p>{t('board.empty')}</p>
         </div>
       ) : (
       <div className="board-scroller">
         {layout.nodes.length === 0 ? (
           <div className="board-empty">
-            <p>no tasks match this filter</p>
+            <p>{t('board.filterEmpty')}</p>
           </div>
         ) : (
           <div

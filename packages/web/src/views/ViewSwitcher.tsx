@@ -1,12 +1,15 @@
 // packages/web/src/views/ViewSwitcher.tsx — six-view segmented control
 // (指挥中心 / 对话 / 任务板 / 日历 / 活动 / 驾驶舱) for the sidebar foot.
-// The top bar tabs in frame/AppFrame reuse VIEW_META (same icons + labels).
+// The top bar tabs in frame/AppFrame reuse VIEW_META (same icons; labels are
+// dictionary keys resolved with t() at render).
 
+import { useT } from '../i18n'
 import type { ViewId } from './viewState'
 
 export interface ViewMeta {
   id: ViewId
-  label: string
+  /** i18n key (view.*) — resolve with t(labelKey) at render time. */
+  labelKey: string
   icon: JSX.Element
 }
 
@@ -50,12 +53,12 @@ const COCKPIT_ICON = (
 )
 
 export const VIEW_META: ViewMeta[] = [
-  { id: 'command', label: '指挥中心', icon: COMMAND_ICON },
-  { id: 'chat', label: '对话', icon: CHAT_ICON },
-  { id: 'board', label: '任务板', icon: BOARD_ICON },
-  { id: 'agenda', label: '日历', icon: AGENDA_ICON },
-  { id: 'activity', label: '活动', icon: ACTIVITY_ICON },
-  { id: 'cockpit', label: '驾驶舱', icon: COCKPIT_ICON },
+  { id: 'command', labelKey: 'view.command', icon: COMMAND_ICON },
+  { id: 'chat', labelKey: 'view.chat', icon: CHAT_ICON },
+  { id: 'board', labelKey: 'view.board', icon: BOARD_ICON },
+  { id: 'agenda', labelKey: 'view.agenda', icon: AGENDA_ICON },
+  { id: 'activity', labelKey: 'view.activity', icon: ACTIVITY_ICON },
+  { id: 'cockpit', labelKey: 'view.cockpit', icon: COCKPIT_ICON },
 ]
 
 export function ViewSwitcher({
@@ -65,19 +68,20 @@ export function ViewSwitcher({
   view: ViewId
   onChange(view: ViewId): void
 }) {
+  const { t } = useT()
   return (
-    <div className="view-switch" role="group" aria-label="View">
+    <div className="view-switch" role="group" aria-label={t('frame.tabsAria')}>
       {VIEW_META.map((m) => (
         <button
           key={m.id}
           type="button"
           className={`vsw${view === m.id ? ' active' : ''}`}
-          title={`${m.label} view`}
+          title={t(m.labelKey)}
           aria-pressed={view === m.id}
           onClick={() => onChange(m.id)}
         >
           {m.icon}
-          <span>{m.label}</span>
+          <span>{t(m.labelKey)}</span>
         </button>
       ))}
     </div>

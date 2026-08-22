@@ -1,41 +1,49 @@
 // packages/web/src/chat/SlashMenu.tsx — the `/` command palette. Entries are
-// the full runCommand set from the store (gear/model/models/theme/jex/mode/
-// tasks/mission/budget/help), grouped and filtered by typed prefix. Keyboard
-// state lives in InputBar; this file is presentation + pure filter helpers.
+// the full runCommand set from the store (gear/model/models/theme/lang/jex/
+// mode/tasks/mission/budget/help), grouped and filtered by typed prefix.
+// Command tokens (labels) stay verbatim across languages; groups + descs are
+// dictionary keys translated at render. Keyboard state lives in InputBar; this
+// file is presentation + pure filter helpers.
+
+import { useT } from '../i18n'
 
 export interface SlashEntry {
-  group: string
-  /** Full invocation; a trailing ` <…>` marks an argument-taking command. */
+  groupKey: string
+  /** Full invocation — the command token itself, never translated; a
+   * trailing ` <…>` marks an argument-taking command. */
   label: string
-  desc: string
+  descKey: string
 }
 
 export const SLASH_ENTRIES: SlashEntry[] = [
-  /* 挡位 */
-  { group: '挡位', label: '/gear dormant', desc: '😴 休眠 · 零自主，仅直聊' },
-  { group: '挡位', label: '/gear eco', desc: '🌱 省电 · 极省 token' },
-  { group: '挡位', label: '/gear balanced', desc: '⚖️ 均衡 · 默认自主' },
-  { group: '挡位', label: '/gear focused', desc: '🎯 专注 · 主动推进任务' },
-  { group: '挡位', label: '/gear turbo', desc: '🚀 狂暴 · 最大自主' },
-  /* 模型 */
-  { group: '模型', label: '/model <名称>', desc: '切换聊天模型' },
-  { group: '模型', label: '/models', desc: '列出可用模型' },
-  /* 主题 */
-  { group: '主题', label: '/theme light', desc: '浅色主题' },
-  { group: '主题', label: '/theme dark', desc: '深色主题' },
-  { group: '主题', label: '/theme system', desc: '跟随系统' },
-  /* jex 编排 */
-  { group: 'jex 编排', label: '/jex <文本>', desc: '发给 jex 编排循环（自主任务）' },
-  { group: 'jex 编排', label: '/mode observe', desc: '仅观察，不执行' },
-  { group: 'jex 编排', label: '/mode assist', desc: '辅助执行' },
-  { group: 'jex 编排', label: '/mode full', desc: '完全自主' },
-  /* 任务 */
-  { group: '任务', label: '/tasks', desc: '查看任务板' },
-  { group: '任务', label: '/mission <文本>', desc: '追加到 MISSION.md' },
-  /* 预算 */
-  { group: '预算', label: '/budget', desc: '今日 token 预算' },
-  /* 帮助 */
-  { group: '帮助', label: '/help', desc: '全部命令列表' },
+  /* 挡位 / gear */
+  { groupKey: 'slash.group.gear', label: '/gear dormant', descKey: 'slash.gearDormant' },
+  { groupKey: 'slash.group.gear', label: '/gear eco', descKey: 'slash.gearEco' },
+  { groupKey: 'slash.group.gear', label: '/gear balanced', descKey: 'slash.gearBalanced' },
+  { groupKey: 'slash.group.gear', label: '/gear focused', descKey: 'slash.gearFocused' },
+  { groupKey: 'slash.group.gear', label: '/gear turbo', descKey: 'slash.gearTurbo' },
+  /* 模型 / model — placeholders stay language-neutral (<name>/<text>) so the
+   * command token itself never changes between locales */
+  { groupKey: 'slash.group.model', label: '/model <name>', descKey: 'slash.modelSet' },
+  { groupKey: 'slash.group.model', label: '/models', descKey: 'slash.modelsList' },
+  /* 主题 / theme */
+  { groupKey: 'slash.group.theme', label: '/theme light', descKey: 'slash.themeLight' },
+  { groupKey: 'slash.group.theme', label: '/theme dark', descKey: 'slash.themeDark' },
+  { groupKey: 'slash.group.theme', label: '/theme system', descKey: 'slash.themeSystem' },
+  /* 语言 / language */
+  { groupKey: 'slash.group.lang', label: '/lang <zh|en|system>', descKey: 'slash.langSet' },
+  /* jex 编排 / orchestration */
+  { groupKey: 'slash.group.jex', label: '/jex <text>', descKey: 'slash.jexSend' },
+  { groupKey: 'slash.group.jex', label: '/mode observe', descKey: 'slash.modeObserve' },
+  { groupKey: 'slash.group.jex', label: '/mode assist', descKey: 'slash.modeAssist' },
+  { groupKey: 'slash.group.jex', label: '/mode full', descKey: 'slash.modeFull' },
+  /* 任务 / tasks */
+  { groupKey: 'slash.group.task', label: '/tasks', descKey: 'slash.tasks' },
+  { groupKey: 'slash.group.task', label: '/mission <text>', descKey: 'slash.mission' },
+  /* 预算 / budget */
+  { groupKey: 'slash.group.budget', label: '/budget', descKey: 'slash.budget' },
+  /* 帮助 / help */
+  { groupKey: 'slash.group.help', label: '/help', descKey: 'slash.help' },
 ]
 
 /** Typed prefix matches when it starts the entry's base command, or extends it
@@ -63,15 +71,16 @@ export function SlashMenu({
   onHover(idx: number): void
   onPick(entry: SlashEntry): void
 }) {
+  const { t } = useT()
   let lastGroup = ''
   return (
-    <div className="slm" role="listbox" aria-label="斜杠命令">
+    <div className="slm" role="listbox" aria-label={t('slash.aria')}>
       {entries.length === 0 ? (
-        <div className="slm-empty">没有匹配的命令 — 试试 /help</div>
+        <div className="slm-empty">{t('slash.empty')}</div>
       ) : (
         entries.map((e, idx) => {
-          const header = e.group !== lastGroup ? <div className="slm-group">{e.group}</div> : null
-          lastGroup = e.group
+          const header = e.groupKey !== lastGroup ? <div className="slm-group">{t(e.groupKey)}</div> : null
+          lastGroup = e.groupKey
           return (
             <div key={e.label}>
               {header}
@@ -88,7 +97,7 @@ export function SlashMenu({
                 }}
               >
                 <span className="name">{e.label}</span>
-                <span className="desc">{e.desc}</span>
+                <span className="desc">{t(e.descKey)}</span>
               </button>
             </div>
           )

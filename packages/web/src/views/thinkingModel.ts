@@ -2,6 +2,7 @@
 // a thinking-step timeline for the ThinkingStream panel.
 
 import type { ServerFrame } from '../state/types'
+import { fill } from '../i18n/event'
 
 export type ThinkingKind =
   | 'patrol'
@@ -25,8 +26,12 @@ export interface ThinkingStep {
 let _seq = 0
 function seqId(): number { return ++_seq }
 
-/** Extract thinking steps from a single WS frame. */
-export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
+/** Extract thinking steps from a single WS frame. `t` localizes the fixed
+ * labels (i18n ts.* keys carry emoji + {placeholders} already). */
+export function frameToThinkingSteps(
+  frame: ServerFrame,
+  t: (key: string) => string,
+): ThinkingStep[] {
   switch (frame.t) {
     case 'cycle': {
       const steps: ThinkingStep[] = []
@@ -35,19 +40,23 @@ export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
         id: seqId(),
         kind: 'patrol',
         ts: Date.now(),
-        label: `🔍 Patrol — ${frame.cost.toFixed(0)} tokens`,
-        detail: `Cycle completed. Wake: ${frame.wake}ms, Cost: ${frame.cost} tokens, Actions: ${frame.actions.length}`,
+        label: fill(t('ts.patrol'), { n: frame.cost.toFixed(0) }),
+        detail: fill(t('ts.patrolDetail'), {
+          wake: frame.wake,
+          cost: frame.cost,
+          n: frame.actions.length,
+        }),
       })
       // Decision step — summarize actions
       if (frame.actions.length > 0) {
         const spawns = frame.actions.filter((a) => a.type === 'spawn')
         const replies = frame.actions.filter((a) => a.type === 'reply')
         const others = frame.actions.filter((a) => a.type !== 'spawn' && a.type !== 'reply')
-        let label = '✅ Decision'
+        let label = t('ts.decision')
         const parts: string[] = []
-        if (spawns.length) parts.push(`${spawns.length} spawn(s)`)
-        if (replies.length) parts.push(`${replies.length} reply`)
-        if (others.length) parts.push(`${others.length} other`)
+        if (spawns.length) parts.push(fill(t('ts.spawnCount'), { n: spawns.length }))
+        if (replies.length) parts.push(fill(t('ts.replyCount'), { n: replies.length }))
+        if (others.length) parts.push(fill(t('ts.otherCount'), { n: others.length }))
         if (parts.length) label += ` — ${parts.join(', ')}`
         steps.push({
           id: seqId(),
@@ -62,7 +71,7 @@ export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
             id: seqId(),
             kind: 'spawn',
             ts: Date.now() + 2,
-            label: `⚡ Spawn — ${a.title || a.text || 'unnamed'}`,
+            label: fill(t('ts.spawn'), { title: a.title || a.text || t('ts.unnamed') }),
             detail: JSON.stringify(a, null, 2),
           })
         }
@@ -71,11 +80,12 @@ export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
     }
     case 'chat_out': {
       if (frame.from !== 'jex') return []
+      const brief = `${frame.text.slice(0, 60)}${frame.text.length > 60 ? '…' : ''}`
       return [{
         id: seqId(),
         kind: 'reply',
         ts: frame.ts,
-        label: `💬 Reply — ${frame.text.slice(0, 60)}${frame.text.length > 60 ? '…' : ''}`,
+        label: fill(t('ts.reply'), { text: brief }),
         detail: frame.text,
       }]
     }
@@ -85,12 +95,12 @@ export function frameToThinkingSteps(frame: ServerFrame): ThinkingStep[] {
 }
 
 /** Returns the 'deciding' placeholder step shown between patrol and decision. */
-export function decidingPlaceholder(): ThinkingStep {
+export function decidingPlaceholder(t: (key: string) => string): ThinkingStep {
   return {
     id: seqId(),
     kind: 'deciding',
     ts: Date.now(),
-    label: '🧠 Deciding…',
+    label: t('ts.deciding'),
     detail: '',
   }
 }

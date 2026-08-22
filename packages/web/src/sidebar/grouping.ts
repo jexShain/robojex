@@ -1,8 +1,10 @@
 // packages/web/src/sidebar/grouping.ts — pure conversation bucketing and
-// Chinese relative-time formatting (本地时区). No DOM imports so it runs in
-// vitest's node environment.
+// relative-time formatting (本地时区), bilingual (zh | en) via an optional lang
+// argument defaulting to zh. No DOM imports so it runs in vitest's node
+// environment.
 
 import type { Conversation } from '../state/types'
+import type { Lang } from '../i18n/event'
 
 export type GroupKey = 'pinned' | 'today' | 'yesterday' | 'week' | 'older'
 
@@ -14,12 +16,26 @@ export interface ConvGroup {
 
 export const GROUP_ORDER: GroupKey[] = ['pinned', 'today', 'yesterday', 'week', 'older']
 
-export const GROUP_LABELS: Record<GroupKey, string> = {
-  pinned: '📌 置顶',
-  today: '今天',
-  yesterday: '昨天',
-  week: '近 7 天',
-  older: '更早',
+const GROUP_LABELS: Record<Lang, Record<GroupKey, string>> = {
+  zh: {
+    pinned: '📌 置顶',
+    today: '今天',
+    yesterday: '昨天',
+    week: '近 7 天',
+    older: '更早',
+  },
+  en: {
+    pinned: '📌 Pinned',
+    today: 'Today',
+    yesterday: 'Yesterday',
+    week: 'Last 7 days',
+    older: 'Older',
+  },
+}
+
+/** Group heading in the requested language. */
+export function groupLabel(key: GroupKey, lang: Lang = 'zh'): string {
+  return GROUP_LABELS[lang][key]
 }
 
 const DAY = 86_400_000
@@ -44,9 +60,13 @@ function bucketOf(c: Conversation, today0: number): GroupKey {
 /**
  * Bucket conversations into 📌置顶 / 今天 / 昨天 / 近 7 天 / 更早 (pinned first
  * regardless of age), each bucket sorted by updatedAt desc, empty buckets
- * omitted. Pure: `now` injectable for tests.
+ * omitted. Pure: `now` injectable for tests; labels follow `lang`.
  */
-export function groupConversations(convs: Conversation[], now: number = Date.now()): ConvGroup[] {
+export function groupConversations(
+  convs: Conversation[],
+  now: number = Date.now(),
+  lang: Lang = 'zh',
+): ConvGroup[] {
   const today0 = startOfDay(now)
   const buckets = new Map<GroupKey, Conversation[]>()
   for (const key of GROUP_ORDER) buckets.set(key, [])
@@ -59,7 +79,7 @@ export function groupConversations(convs: Conversation[], now: number = Date.now
     const items = buckets.get(key)!
     if (items.length === 0) continue
     items.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
-    groups.push({ key, label: GROUP_LABELS[key], items })
+    groups.push({ key, label: groupLabel(key, lang), items })
   }
   return groups
 }
@@ -67,20 +87,28 @@ export function groupConversations(convs: Conversation[], now: number = Date.now
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 
 /**
- * Chinese relative time: 刚刚 / N分钟前 / 今天 HH:MM / 昨天 HH:MM / N天前 /
- * M月D日 / YYYY/M/D. Pure: `now` injectable.
+ * Relative time, zh by default: 刚刚 / N分钟前 / 今天 HH:MM / 昨天 HH:MM /
+ * N天前 / M月D日 / YYYY/M/D. English: just now / N min ago / Today HH:MM /
+ * Yesterday HH:MM / N days ago / Aug 9 / YYYY/M/D. Pure: `now` injectable.
  */
-export function relTime(ts: number, now: number = Date.now()): string {
+export function relTime(ts: number, now: number = Date.now(), lang: Lang = 'zh'): string {
   const diff = now - ts
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`
+  if (diff < 60_000) return lang === 'en' ? 'just now' : '刚刚'
+  if (diff < 3_600_000) {
+    const mins = Math.floor(diff / 60_000)
+    return lang === 'en' ? `${mins} min ago` : `${mins}分钟前`
+  }
   const d = new Date(ts)
   const n = new Date(now)
   const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
   const dayDiff = Math.floor((startOfDay(now) - startOfDay(ts)) / DAY)
-  if (dayDiff === 0) return `今天 ${hm}`
-  if (dayDiff === 1) return `昨天 ${hm}`
-  if (dayDiff < 7) return `${dayDiff}天前`
-  if (d.getFullYear() === n.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`
+  if (dayDiff === 0) return lang === 'en' ? `Today ${hm}` : `今天 ${hm}`
+  if (dayDiff === 1) return lang === 'en' ? `Yesterday ${hm}` : `昨天 ${hm}`
+  if (dayDiff < 7) return lang === 'en' ? `${dayDiff} days ago` : `${dayDiff}天前`
+  if (d.getFullYear() === n.getFullYear()) {
+    return lang === 'en'
+      ? `${d.toLocaleDateString('en-US', { month: 'short' })} ${d.getDate()}`
+      : `${d.getMonth() + 1}月${d.getDate()}日`
+  }
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
 }

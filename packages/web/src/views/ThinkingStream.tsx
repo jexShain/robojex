@@ -9,6 +9,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import type { ServerFrame, TranscriptItem } from '../state/types'
 import type { ThinkingStep } from './thinkingModel'
 import { frameToThinkingSteps } from './thinkingModel'
@@ -23,22 +25,28 @@ const ICONS: Record<ThinkingStep['kind'], string> = {
   reply: '💬',
 }
 
-function stepsForItem(item: TranscriptItem): ThinkingStep[] {
+function stepsForItem(item: TranscriptItem, t: (key: string) => string): ThinkingStep[] {
   if (item.kind === 'cycle') {
-    return frameToThinkingSteps({
-      t: 'cycle',
-      wake: item.wake,
-      cost: item.cost,
-      actions: item.actions,
-    } as ServerFrame)
+    return frameToThinkingSteps(
+      {
+        t: 'cycle',
+        wake: item.wake,
+        cost: item.cost,
+        actions: item.actions,
+      } as ServerFrame,
+      t,
+    )
   }
   if (item.kind === 'msg' && item.from === 'jex') {
-    return frameToThinkingSteps({
-      t: 'chat_out',
-      from: 'jex',
-      text: item.text,
-      ts: item.ts,
-    } as ServerFrame)
+    return frameToThinkingSteps(
+      {
+        t: 'chat_out',
+        from: 'jex',
+        text: item.text,
+        ts: item.ts,
+      } as ServerFrame,
+      t,
+    )
   }
   return []
 }
@@ -72,6 +80,7 @@ function ThinkingEntry({
 
 export function ThinkingStream({ embedded = false }: { embedded?: boolean }) {
   const { state } = useStore()
+  const { t, lang } = useT()
   const [steps, setSteps] = useState<ThinkingStep[]>([])
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -82,23 +91,34 @@ export function ThinkingStream({ embedded = false }: { embedded?: boolean }) {
   const mountedFor = useRef(state.transcript)
 
   useEffect(() => {
-    const t = state.transcript
-    if (t === mountedFor.current) return
-    mountedFor.current = t
+    const list = state.transcript
+    if (list === mountedFor.current) return
+    mountedFor.current = list
     let start = consumed.current
-    if (start > t.length || (start > 0 && t[start - 1].id !== lastId.current)) {
+    if (start > list.length || (start > 0 && list[start - 1].id !== lastId.current)) {
       start = 0 // hello rebuilt the ring — start over
     }
     const added: ThinkingStep[] = []
-    for (let i = start; i < t.length; i++) added.push(...stepsForItem(t[i]))
-    consumed.current = t.length
-    lastId.current = t.length > 0 ? t[t.length - 1].id : -1
+    for (let i = start; i < list.length; i++) added.push(...stepsForItem(list[i], t))
+    consumed.current = list.length
+    lastId.current = list.length > 0 ? list[list.length - 1].id : -1
     if (start === 0) {
       setSteps(added.slice(-MAX_STEPS))
     } else if (added.length > 0) {
       setSteps((prev) => [...prev, ...added].slice(-MAX_STEPS))
     }
-  }, [state.transcript])
+    // `lang` in deps: after the reset effect above, this re-derives every
+    // label in the window with the new dictionary
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.transcript, lang])
+
+  // Language switch: reset the ingest cursor so the whole live window
+  // re-derives with fresh labels.
+  useEffect(() => {
+    consumed.current = 0
+    lastId.current = -1
+    mountedFor.current = []
+  }, [lang])
 
   // Auto-scroll to latest
   useEffect(() => {
@@ -119,14 +139,14 @@ export function ThinkingStream({ embedded = false }: { embedded?: boolean }) {
     <div className={`thinking-stream${embedded ? ' embedded' : ''}`}>
       {!embedded ? (
         <div className="ts-header">
-          <span className="ts-title">Thinking Stream</span>
-          <span className="ts-count">{steps.length} steps</span>
+          <span className="ts-title">{t('ts.title')}</span>
+          <span className="ts-count">{fill(t('ts.steps'), { n: steps.length })}</span>
         </div>
       ) : null}
       {steps.length === 0 ? (
         <div className="ts-empty">
           <div className="ts-empty-icon">🧠</div>
-          <p>waiting for jex's first cycle…</p>
+          <p>{t('ts.empty')}</p>
         </div>
       ) : (
         <div className="ts-list" ref={scrollRef}>
@@ -139,7 +159,7 @@ export function ThinkingStream({ embedded = false }: { embedded?: boolean }) {
             />
           ))}
           {!embedded ? null : (
-            <div className="ts-embedded-count">{steps.length} steps</div>
+            <div className="ts-embedded-count">{fill(t('ts.steps'), { n: steps.length })}</div>
           )}
         </div>
       )}

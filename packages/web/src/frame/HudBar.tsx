@@ -6,6 +6,8 @@
 
 import { useEffect, useState } from 'react'
 import { useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import type { Mode } from '../state/types'
 
 const MODE_CYCLE: Mode[] = ['observe', 'assist', 'full']
@@ -23,6 +25,7 @@ function fmtTokens(n: number): string {
 
 export function HudBar() {
   const { state, setMode } = useStore()
+  const { t } = useT()
   const [, setTick] = useState(0)
 
   // The clock advances on its own 30s heartbeat; store frames also re-render.
@@ -49,17 +52,20 @@ export function HudBar() {
       <span
         className={`hud-heart${live ? ' alive' : ''}`}
         data-testid="hud-heart"
-        title={live ? 'jex 心跳 — WS live' : `connection: ${state.conn}`}
+        title={live ? t('hud.heartLive') : fill(t('hud.heartOff'), { conn: state.conn })}
       />
       <button
         type="button"
         className={`hud-mode ${state.mode}`}
         onClick={cycleMode}
-        title={`mode: ${state.mode} — 点击切换 observe → assist → full`}
+        title={fill(t('hud.modeTitle'), { mode: state.mode })}
       >
         {state.mode}
       </button>
-      <span data-testid="hud-budget" title={b ? `${b.line} · today ${spentToday} / ${dailyTokens} tok` : 'budget unknown'}>
+      <span
+        data-testid="hud-budget"
+        title={b ? fill(t('hud.budgetTitle'), { line: b.line, spent: spentToday, daily: dailyTokens }) : t('hud.budgetUnknown')}
+      >
         {b && burn ? (
           <span className="hud-burn">
             <span className="infty">∞</span>

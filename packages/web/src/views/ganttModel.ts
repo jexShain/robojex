@@ -5,6 +5,7 @@
 // so the geometry is unit-tested directly (test/ganttModel.test.ts).
 
 import type { Task } from '../state/types'
+import type { Lang } from '../i18n/event'
 import { DAY_MS, dayStartOf } from './timefmt'
 
 /** Time-band span: today plus six more days. */
@@ -107,20 +108,21 @@ export function groupForGantt(tasks: Task[], win: GanttWindow): GanttGroup {
   return { scheduled, unscheduled, lanes: LANES.map((lane) => ({ lane, tasks: laneMap.get(lane)! })) }
 }
 
-/** Compact relative time for card corners: `3h` future / `2h前`; null for
- * missing dates (callers fall back to creation age). */
-export function fmtRel(ms: number | null | undefined, now: number): string | null {
+/** Compact relative time for card corners: `3h` future / `2h前` (zh) or
+ * `2h ago` (en); null for missing dates (callers fall back to creation age). */
+export function fmtRel(ms: number | null | undefined, now: number, lang: Lang = 'zh'): string | null {
   if (ms == null) return null
   const diff = ms - now
   const abs = Math.abs(diff)
   const mins = Math.round(abs / 60_000)
   let core: string
-  if (mins < 1) return '刚刚'
+  if (mins < 1) return lang === 'en' ? 'now' : '刚刚'
   if (mins < 60) core = `${mins}m`
   else if (abs < DAY_MS) {
     // one decimal under 10h (1.5h), integers beyond (14h) — no trailing .0
     const h = abs / 3_600_000
     core = `${h < 10 ? Math.round(h * 10) / 10 : Math.round(h)}h`
   } else core = `${Math.round(abs / DAY_MS)}d`
-  return diff >= 0 ? core : `${core}前`
+  if (diff >= 0) return core
+  return lang === 'en' ? `${core} ago` : `${core}前`
 }

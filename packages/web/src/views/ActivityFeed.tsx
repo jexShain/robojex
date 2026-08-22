@@ -3,6 +3,8 @@
 
 import { useEffect, useRef } from 'react'
 import { useStore } from '../state/store'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 import { formatTime } from './activityModel'
 import type { ActivityItem } from '../state/types'
 
@@ -17,7 +19,13 @@ function frameworkBadge(detail: string | undefined): string | null {
 }
 
 function ItemRow({ item }: { item: ActivityItem }) {
+ const { t } = useT()
  const fw = (item.type === 'spawn' || item.type === 'task_done') ? frameworkBadge(item.detail) : null
+ // fixed labels translate via labelKey; dynamic titles (task names, budget
+ // lines) render as-is — they belong to the data, not the chrome
+ const label = item.labelKey
+   ? fill(t(item.labelKey), { n: item.labelParam ?? '' })
+   : item.title
 
  return (
    <div className="activity-item rj-animate-in">
@@ -25,7 +33,7 @@ function ItemRow({ item }: { item: ActivityItem }) {
      <div className="activity-content">
        <div className="activity-item-title">
          {item.type === 'task_done' ? '✓ ' : item.type === 'task_blocked' ? '✗ ' : null}
-         {item.title}
+         {label}
          {fw ? <span className={`fw-badge ${fw}`}>{fw}</span> : null}
        </div>
        {item.detail ? <div className="activity-item-detail">{item.detail}</div> : null}
@@ -40,6 +48,7 @@ export function ActivityFeed() {
  // We subscribe via the store hook which triggers re-render on any state change.
  // The activityItems array is also exposed; we read it directly.
  const store = useStore()
+ const { t } = useT()
  // Access activityItems through the store API
  const items = store.activityItems
 
@@ -55,7 +64,7 @@ export function ActivityFeed() {
  return (
    <div className="activity-feed">
      <div className="activity-header">
-       <span className="activity-title">Activity</span>
+       <span className="activity-title">{t('act.title')}</span>
        <span className="activity-pulse" />
      </div>
      <div className="activity-list" ref={listRef}>
@@ -66,7 +75,7 @@ export function ActivityFeed() {
                <div key={i} className="rj-skeleton" style={{ animationDelay: `${i * 0.15}s` }} />
              ))}
            </div>
-           <p>waiting for activity…</p>
+           <p>{t('act.empty')}</p>
          </div>
        ) : (
          items.map((item) => <ItemRow key={item.id} item={item} />)

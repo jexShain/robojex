@@ -24,7 +24,9 @@ import { connectEvents, eventsUrl } from './connection'
 import type { ConnectionHandle } from './connection'
 import * as api from './api'
 import type { DirectMessage, DirectPrefs, StreamHandle } from './api'
+import { fill, langSnapshot, setLangPref, translate } from '../i18n/event'
 import { setThemePref, themeSnapshot } from './theme'
+import { gearDisplayName } from '../views/gearDefs'
 import type {
   Budget,
   ChatMsg,
@@ -220,7 +222,7 @@ function localConversation(id: string, model: string): Conversation {
   const now = Date.now()
   return {
     id,
-    title: '直连对话',
+    title: translate('conv.directTitle'),
     createdAt: now,
     updatedAt: now,
     pinned: 0,
@@ -533,6 +535,11 @@ const StoreContext = createContext<StoreApi | null>(null)
 
 const REPLY_TIMEOUT_MS = 30_000
 
+/** Localized command echo / error text (snapshot lang — works outside React). */
+const msg = (key: string, params: Record<string, string | number> = {}): string =>
+  fill(translate(key), params)
+const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const stateRef = useRef(state)
@@ -605,11 +612,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ mode }),
       }).then(
         (res) => {
-          if (res.ok) localMsg(`mode → ${mode}`)
-          else localMsg(`mode change rejected (HTTP ${res.status})`)
+          if (res.ok) localMsg(msg('cmd.modeEcho', { mode }))
+          else localMsg(msg('cmd.modeRejected', { code: res.status }))
         },
         (err: unknown) => {
-          localMsg(`mode change failed (${err instanceof Error ? err.message : String(err)})`)
+          localMsg(msg('cmd.modeFailed', { err: errText(err) }))
         },
       )
     },
@@ -624,10 +631,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ text }),
       }).then(
         (res) => {
-          if (!res.ok) localMsg(`mission append rejected (HTTP ${res.status})`)
+          if (!res.ok) localMsg(msg('cmd.missionRejected', { code: res.status }))
         },
         (err: unknown) => {
-          localMsg(`mission append failed (${err instanceof Error ? err.message : String(err)})`)
+          localMsg(msg('cmd.missionFailed', { err: errText(err) }))
         },
       )
     },
@@ -650,9 +657,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       try {
         const g = await api.setGear(gear)
         dispatch({ type: 'gear-loaded', gear: g.gear, gears: g.gears, appliedTickMs: g.appliedTickMs })
-        dispatch({ type: 'chat-notice', text: `挡位切换 → ${g.gears.find((x) => x.id === gear)?.name ?? gear}` })
+        dispatch({ type: 'chat-notice', text: msg('cmd.gearSwitched', { name: gearDisplayName(gear) }) })
       } catch (err) {
-        localMsg(`gear change failed (${err instanceof Error ? err.message : String(err)})`)
+        localMsg(msg('cmd.gearFailed', { err: errText(err) }))
         void refreshGear()
       }
     },
@@ -676,7 +683,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'conv-selected', id: conv.id, messages: [] })
       return conv
     } catch (err) {
-      localMsg(`new conversation failed (${err instanceof Error ? err.message : String(err)})`)
+      localMsg(msg('cmd.newConvFailed', { err: errText(err) }))
       return null
     }
   }, [localMsg])
@@ -706,10 +713,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ text: body }),
       }).then(
         (res) => {
-          if (!res.ok) localMsg(`send failed (HTTP ${res.status})`)
+          if (!res.ok) localMsg(msg('cmd.sendRejected', { code: res.status }))
         },
         (err: unknown) => {
-          localMsg(`send failed (${err instanceof Error ? err.message : String(err)})`)
+          localMsg(msg('cmd.sendFailed', { err: errText(err) }))
         },
       )
     },
@@ -730,7 +737,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'conv-selected', id, messages })
       }
     } catch (err) {
-      localMsg(`load messages failed (${err instanceof Error ? err.message : String(err)})`)
+      localMsg(msg('cmd.loadMsgsFailed', { err: errText(err) }))
     }
   }, [localMsg])
 
@@ -739,7 +746,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const conv = await api.updateConversation(id, { title })
       dispatch({ type: 'conv-updated', conv })
     } catch (err) {
-      localMsg(`rename failed (${err instanceof Error ? err.message : String(err)})`)
+      localMsg(msg('cmd.renameFailed', { err: errText(err) }))
     }
   }, [localMsg])
 
@@ -748,7 +755,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const conv = await api.updateConversation(id, { pinned })
       dispatch({ type: 'conv-updated', conv })
     } catch (err) {
-      localMsg(`pin failed (${err instanceof Error ? err.message : String(err)})`)
+      localMsg(msg('cmd.pinFailed', { err: errText(err) }))
     }
   }, [localMsg])
 
@@ -758,7 +765,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         await api.deleteConversation(id)
         dispatch({ type: 'conv-deleted', id })
       } catch (err) {
-        localMsg(`delete failed (${err instanceof Error ? err.message : String(err)})`)
+        localMsg(msg('cmd.deleteFailed', { err: errText(err) }))
       }
     },
     [localMsg],
@@ -770,7 +777,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     try {
       await api.deleteMessage(id)
     } catch (err) {
-      localMsg(`delete message failed (${err instanceof Error ? err.message : String(err)})`)
+      localMsg(msg('cmd.deleteMsgFailed', { err: errText(err) }))
     }
   }, [localMsg])
 
@@ -925,15 +932,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!text.startsWith('/')) return false
       const m = /^\/(\w+)(?:\s+([\s\S]*))?$/.exec(text)
       if (!m) {
-        localMsg(`unknown command · ${text}`)
+        localMsg(msg('cmd.unknown', { text }))
         return true
       }
-      const [, name, arg = ''] = m
+      const [, name, rawArg = ''] = m
+      // picking a palette entry can submit its placeholder verbatim
+      // ('/model <name>'); treat that as "no argument given"
+      const arg = /^<[^>]*>$/.test(rawArg.trim()) ? '' : rawArg
       switch (name) {
         case 'mode': {
           const mode = arg.trim() as Mode
           if (mode === 'observe' || mode === 'assist' || mode === 'full') setMode(mode)
-          else localMsg('usage: /mode observe|assist|full')
+          else localMsg(msg('cmd.modeUsage'))
           return true
         }
         case 'gear': {
@@ -942,49 +952,57 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             void changeGear(gear)
           } else {
             const cur = stateRef.current.gear
-            localMsg(
-              `current gear: ${cur}\nusage: /gear dormant|eco|balanced|focused|turbo\n0=休眠 1=省电 2=均衡 3=专注 4=狂暴`,
-            )
+            localMsg(msg('cmd.gearUsage', { gear: gearDisplayName(cur) }))
           }
           return true
         }
         case 'model': {
           const model = arg.trim()
           if (model) setModel(model)
-          else localMsg(`current model: ${stateRef.current.model}\nusage: /model <name> (see /models)`)
+          else localMsg(msg('cmd.modelCurrent', { model: stateRef.current.model }))
           return true
         }
         case 'models':
           void refreshModels().then(() => {
-            localMsg(stateRef.current.models.join('\n') || 'no models — check settings')
+            localMsg(stateRef.current.models.join('\n') || translate('cmd.noModels'))
           })
           return true
         case 'theme': {
           const pref = arg.trim() as 'light' | 'dark' | 'system'
           if (pref === 'light' || pref === 'dark' || pref === 'system') {
             setThemePref(pref)
-            localMsg(`theme → ${themeSnapshot().resolved}`)
-          } else localMsg('usage: /theme light|dark|system')
+            localMsg(msg('cmd.themeEcho', { resolved: themeSnapshot().resolved }))
+          } else localMsg(msg('cmd.themeUsage'))
+          return true
+        }
+        case 'lang': {
+          // tolerate the slash-palette placeholder '<zh|en|system>' completion
+          const pref = arg.trim().replace(/^<|>$/g, '').toLowerCase()
+          if (pref === 'zh' || pref === 'en' || pref === 'system') {
+            setLangPref(pref)
+            // echo AFTER the switch — the snapshot already carries the new lang
+            localMsg(msg('cmd.langEcho', { lang: translate(`lang.${langSnapshot().lang}`) }))
+          } else localMsg(msg('cmd.langUsage'))
           return true
         }
         case 'jex': {
           const body = arg.trim()
           if (body) void sendAgentChat(body)
-          else localMsg('usage: /jex <text> — send to the jex orchestration loop')
+          else localMsg(msg('cmd.jexUsage'))
           return true
         }
         case 'tasks': {
           const tasks = stateRef.current.tasks
           localMsg(
             tasks.length === 0
-              ? 'task board is empty'
+              ? translate('cmd.tasksEmpty')
               : tasks.map((t) => `- [${t.status}] ${t.title} (${t.id})`).join('\n'),
           )
           return true
         }
         case 'mission': {
           const body = arg.trim()
-          if (!body) localMsg('usage: /mission <text> — appends to MISSION.md')
+          if (!body) localMsg(msg('cmd.missionUsage'))
           else appendMission(body)
           return true
         }
@@ -992,26 +1010,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const b = stateRef.current.budget
           localMsg(
             b
-              ? `${b.line}\nspent today: ${b.spentToday} / ${b.dailyTokens} tokens`
-              : 'budget unknown — waiting for core state',
+              ? msg('cmd.budgetLine', { line: b.line, spent: b.spentToday, daily: b.dailyTokens })
+              : translate('cmd.budgetUnknown'),
           )
           return true
         }
         case 'help':
-          localMsg(
-            [
-              '/gear dormant|eco|balanced|focused|turbo — 自主挡位切换',
-              '/model <name> · /models — 选择/列出模型',
-              '/theme light|dark|system — 主题',
-              '/jex <text> — 发给 jex 编排循环（自主任务）',
-              '/mode observe|assist|full — takeover 模式',
-              '/tasks — 任务板 · /mission <text> — 追加使命',
-              '/budget — 今日 token 预算 · /help — 本列表',
-            ].join('\n'),
-          )
+          localMsg(translate('cmd.help'))
           return true
         default:
-          localMsg(`unknown command · /${name} — try /help`)
+          localMsg(msg('cmd.unknownTry', { name }))
           return true
       }
     },

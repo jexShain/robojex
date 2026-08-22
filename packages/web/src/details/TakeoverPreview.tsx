@@ -5,6 +5,8 @@
 // nearest-neighbor. Screenshots are polled at 1 fps while mounted.
 
 import { useEffect, useRef, useState } from 'react'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
 
 interface ScreenState {
   status: 'connecting' | 'live' | 'offline'
@@ -14,6 +16,7 @@ interface ScreenState {
 }
 
 export function TakeoverPreview() {
+  const { t } = useT()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [screen, setScreen] = useState<ScreenState>({
     status: 'connecting',
@@ -132,14 +135,14 @@ export function TakeoverPreview() {
         {screen.status === 'live' ? (
           <canvas ref={canvasRef} width={64} height={36} />
         ) : (
-          <div className="screen-off">takeoverd {screen.status}…</div>
+          <div className="screen-off">takeoverd {t(`scr.${screen.status}`)}…</div>
         )}
         <span className="mode-badge">{screen.mode}</span>
       </div>
       <div className="screen-meta" style={{ marginTop: 8 }}>
-        <span>state: {screen.status}</span>
+        <span>{fill(t('scr.state'), { s: t(`scr.${screen.status}`) })}</span>
         {screen.hamming !== null ? <span>hamming: {screen.hamming}</span> : null}
-        <span>1 fps grayscale</span>
+        <span>{t('scr.fps')}</span>
       </div>
       {screen.ocr ? (
         <>
