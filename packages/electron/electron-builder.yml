@@ -1,16 +1,19 @@
 # packages/electron/electron-builder.yml — packaging for the RoboJex desktop app.
 #
-# App layout inside the asar (directories.app = packages/electron):
-#   main.js / preload.js / icon.png / package.json   <- electron shell
+# App layout inside the asar (directories.app = packages/electron, paths in
+# `files` are relative to it; run electron-builder from the repo root):
+#   main.js / preload.js / icon.png / package.json   <- electron shell (CJS)
 #   web/                 <- packages/web/dist  (vite build, base './')
-#   core/                <- packages/ceo-core/dist + its package.json
-#                          ("type":"module" so ESM dynamic import works from
-#                          the CJS shell), plus node_modules/ws — the only
-#                          runtime dep of ceo-core (everything else is node:)
+#   core/dist/**         <- packages/ceo-core ESM dist; core/package.json
+#                          ("type":"module") rides along so the dynamic
+#                          import from the CJS shell resolves as ESM —
+#                          verified working from inside the asar
+#   node_modules/ws      <- ceo-core's only external dep (rest is node:)
 #   build/icon.png       <- buildResources (512px png; auto-converted to
 #                          ico/icns for win/mac targets)
 appId: com.robojex.app
 productName: robojex
+executableName: robojex
 electronVersion: 43.4.1
 directories:
   # relative to the project dir (repo root — where electron-builder runs)
@@ -51,10 +54,6 @@ files:
     filter:
       - '**/*'
       - '!node_modules/**' # ws has no transitive runtime deps
-asarUnpack:
-  # ESM dynamic import from the unpacked real filesystem is the most robust
-  # path for the embedded core (in-asar import is the first candidate anyway)
-  - core/**/*
 win:
   target:
     - nsis

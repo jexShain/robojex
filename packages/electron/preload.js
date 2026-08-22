@@ -28,10 +28,12 @@ function subscribe(channel, callback) {
 
 contextBridge.exposeInMainWorld('robojex', {
   platform: process.platform,
+  // sandboxed preloads get a limited `process` surface; versions may be absent
+  // on some Electron builds — degrade to 'unknown' rather than throw
   versions: {
-    electron: process.versions.electron,
-    chrome: process.versions.chrome,
-    node: process.versions.node,
+    electron: process.versions?.electron ?? 'unknown',
+    chrome: process.versions?.chrome ?? 'unknown',
+    node: process.versions?.node ?? 'unknown',
   },
 
   window: {

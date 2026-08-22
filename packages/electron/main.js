@@ -38,10 +38,6 @@ const DEFAULT_API_PORT = 7620;
 const EXTERNAL_BACKEND = process.env.ROBOJEX_EXTERNAL === '1';
 
 app.setName('RoboJex');
-// node:sqlite is built into modern Electron Node builds; the switch is a
-// no-op when already unflagged and unblocks older ones. Unknown switches are
-// ignored by Chromium, so this is safe to set unconditionally.
-app.commandLine.appendSwitch('experimental-sqlite');
 
 /* ────────────────────────── runtime state ────────────────────────── */
 
@@ -56,9 +52,11 @@ let coreStopped = false;
 /** UI origin (prod): the embedded ApiServer origin once resolved; null means
  *  the file:// fallback shell (backend down). Dev always uses vite :5173. */
 let uiBase = null;
+/** action queued for a window that was still loading when it was triggered */
+let pendingAction = null;
 
 const backend = {
-  /** 'booting' | 'up' | 'external' | 'down' | 'degraded' */
+  /** 'booting' | 'up' | 'external' | 'down' */
   status: 'booting',
   /** embedded handle: { loop, api, stop } from ceo-core assembleAndStart */
   handle: null,
@@ -197,10 +195,9 @@ function hardenWebContents(wc) {
 
 /* ──────────────────────── windows ──────────────────────── */
 
-const WEB_RELPATH = ['web', 'index.html'];
-
 function prodIndexHtml() {
-  return path.join(__dirname, ...WEB_RELPATH);
+  // packaged layout: web dist is mapped into the asar root as web/
+  return path.join(__dirname, 'web', 'index.html');
 }
 
 /** Resolve what the main window should load. Dev: vite. Prod: the embedded
@@ -271,7 +268,7 @@ function createMainWindow() {
   else mainWindow.loadFile(target.file);
 
   // surface a backend failure that happened before this window existed
-  if (backend.status === 'down' || backend.status === 'degraded') notifyBackendDown();
+  if (backend.status === 'down') notifyBackendDown();
   return mainWindow;
 }
 
@@ -349,12 +346,26 @@ const TRAY_ICON_B64 =
 
 function sendAction(type, payload = {}) {
   // tray/menu actions ride one channel; the renderer's onAction() fans out
+  let createdFresh = false;
   if (!mainWindow || mainWindow.isDestroyed()) {
     createMainWindow(); // darwin closed-window path: recreate, then deliver
+    createdFresh = true;
   }
   if (mainWindow?.isMinimized()) mainWindow.restore();
   mainWindow?.show();
-  mainWindow?.webContents.send('robojex:action', { type, ...payload });
+  const action = { type, ...payload };
+  if (createdFresh && mainWindow) {
+    // the page is still loading: the renderer's listener isn't up yet, so
+    // stash the action and flush once the document finished loading
+    pendingAction = action;
+    mainWindow.webContents.once('did-finish-load', () => {
+      if (!pendingAction || !mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send('robojex:action', pendingAction);
+      pendingAction = null;
+    });
+    return;
+  }
+  mainWindow?.webContents.send('robojex:action', action);
 }
 
 function buildTrayMenu() {
@@ -654,6 +665,7 @@ app.on('before-quit', (event) => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  tray?.destroy(); // release the indicator before the process goes away
 });
 
 app.on('window-all-closed', () => {
