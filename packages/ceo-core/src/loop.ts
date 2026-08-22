@@ -14,7 +14,7 @@ import { taskView, type ChatFrom } from "./api.js";
 import { getGearDef, loopPrompt, type GearId } from "./gears.js";
 import type { ToolScout } from "./toolscout.js";
 import type { TentacleManager } from "./tentacles.js";
-import type { ToolManager } from "./tools/manager.js";
+import type { ToolManager, Gate } from "./tools/manager.js";
 import WebSocket from "ws";
 
 // Minimal socket surface the loop needs; ws's WebSocket satisfies it structurally.
@@ -81,7 +81,7 @@ export class SchedulerLoop {
   tickN(): number { return this.tickCount; }
 
   // takeover mode as last reported by takeoverd; observe is the safe default
-  private modeNow: "observe" | "assist" | "full" = "observe";
+  private modeNow: Gate = "observe";
   // autonomy gear: dormant stops ticking entirely; eco thins patrol to every
   // 5th tick; higher gears retime faster and buy bigger decide budgets
   private gearNow: GearId = "balanced";
@@ -120,22 +120,47 @@ export class SchedulerLoop {
   // for 5 minutes; lost on restart, re-nudge is idempotent
   private verifyNudgedAt = new Map<string, number>();
 
-  mode(): "observe" | "assist" | "full" { return this.modeNow; }
+  mode(): Gate { return this.modeNow; }
+
+  // takeover link liveness: the socket exists and is past the handshake
+  private linked(): boolean { return !!this.ws && this.ws.readyState === WS_OPEN; }
 
   // api seam: forward a ctrl frame over the takeover link; false = link down
   sendCtrl(frame: Record<string, unknown>): boolean {
-    if (!this.ws || this.ws.readyState !== WS_OPEN) return false;
-    this.ws.send(JSON.stringify(frame));
+    if (!this.linked()) return false;
+    this.ws!.send(JSON.stringify(frame));
     return true;
+  }
+
+  /** Effective gate for the builtin tool layer. observe exists to protect the
+   *  desktop takeoverd drives; with the link down there is no desktop to
+   *  protect, and a hard observe would only freeze jex's own reversible work
+   *  — so tools run at assist (writes still face the approval queue).
+   *  modeNow itself is untouched: towards takeoverd the mode stays observe. */
+  gateForTools(): Gate {
+    if (this.modeNow === "observe" && !this.linked()) return "assist";
+    return this.modeNow;
+  }
+
+  /** Local mode switch for the takeover-less deployment (desktop/headless):
+   *  takeoverd is not there to own the switch, so the loop applies it directly
+   *  and emits the same {t:'mode'} frame + wake event a takeoverd
+   *  mode_changed would have produced — operator UIs and the tool gate stay
+   *  truthful. Unknown values are ignored, like the mode_changed handler. */
+  setModeLocal(mode: string): void {
+    if (mode !== "observe" && mode !== "assist" && mode !== "full") return;
+    this.modeNow = mode;
+    this.d.outlet?.frame({ t: "mode", mode });
+    this.push(`mode_changed -> ${mode}`);
   }
 
   // chat-driven approval resolution: "approve <id>" / "deny <id>" from the
   // human settles a pending assist-mode write-class tool call. The current
-  // gate rides along: a mode drop to observe since the call was queued must
-  // refuse the write even after a yes (Task 6 semantics).
+  // effective gate rides along: a mode drop to observe since the call was
+  // queued must refuse the write even after a yes (Task 6 semantics).
   async resolveToolApproval(id: string, ok: boolean): Promise<string | null> {
     if (!this.d.builtinTools) return null;
-    const r = await this.d.builtinTools.resolveApproval(id, ok, this.modeNow);
+    const r = await this.d.builtinTools.resolveApproval(id, ok, this.gateForTools());
     if (r !== null) this.push(`tool approval ${id} ${ok ? "approved" : "denied"}: ${r}`);
     return r;
   }
@@ -425,9 +450,10 @@ export class SchedulerLoop {
             const args = (a.args && typeof a.args === "object" && !Array.isArray(a.args)) ? a.args as Record<string, unknown> : {};
             const name = a.tool;
             // fire-and-forget like tentacle_call: the result rides the log +
-            // the next wake's event queue; observe mode is refused inside the
-            // manager, and assist-mode writes land in the approval queue
-            void this.d.builtinTools.call(name, args, this.modeNow).then((r) => {
+            // the next wake's event queue; the gate is the effective one
+            // (gateForTools: observe with no takeover link degrades to assist),
+            // non-internal writes under assist land in the approval queue
+            void this.d.builtinTools.call(name, args, this.gateForTools()).then((r) => {
               console.log(`[ceo] tool ${name} -> ${r.slice(0, 200)}`);
               this.push(`tool ${name} -> ${r}`);
             }).catch((err: unknown) => {

@@ -1,7 +1,8 @@
 // packages/ceo-core/test/api.test.ts
 // Covers the operator-facing HTTP+WS api: state snapshot, chat in (POST and
-// WS frame), jex reply out, mode proxy over the takeover link, mission
-// append, board/cycle frames, static serving, and index.ts assembly.
+// WS frame), jex reply out, mode proxy over the takeover link (with the
+// link-down local fallback), mission append, board/cycle frames, static
+// serving, and index.ts assembly.
 import { ApiServer } from "../src/api.js";
 import { SchedulerLoop, type WsLike } from "../src/loop.js";
 import { TaskBoard } from "../src/board.js";
@@ -67,7 +68,7 @@ function mkRig(budget: { mode?: "burn" | "budgeted"; dailyTokens?: number } = {}
 }
 
 // ApiServer on an ephemeral port; every instance is closed in afterEach.
-function makeApi(rig: Rig, loop: { push: (e: string) => void; sendCtrl?: (f: Record<string, unknown>) => boolean; mode?: () => string; tickN?: () => number }, extra: { webDir?: string } = {}): ApiServer {
+function makeApi(rig: Rig, loop: { push: (e: string) => void; sendCtrl?: (f: Record<string, unknown>) => boolean; setModeLocal?: (mode: string) => void; mode?: () => string; tickN?: () => number }, extra: { webDir?: string } = {}): ApiServer {
   const api = new ApiServer({
     port: 0, board: rig.board, budget: rig.budget, runtimeDir: rig.runtimeDir, loop,
     ...(extra.webDir ? { webDir: extra.webDir } : {}),
@@ -471,23 +472,59 @@ test("cycle frame fires every decision cycle (even patrol-none); tasks frames fo
   loop.stop(); // cancels the agent_done debounce before it spends tokens
 });
 
-test("POST /api/mode: valid mode forwards ctrl/set_mode (202); invalid 400; takeover link down 503", async () => {
+test("POST /api/mode: valid mode forwards ctrl/set_mode (202); invalid 400; link down falls back to setModeLocal (202 local); a handle with neither seam 503s", async () => {
   const rig = mkRig();
   const sendCtrl = vi.fn(() => true);
-  const api = makeApi(rig, { push: vi.fn(), sendCtrl });
+  const setModeLocal = vi.fn();
+  const api = makeApi(rig, { push: vi.fn(), sendCtrl, setModeLocal });
   await api.start();
 
   const ok = await post(api, "/api/mode", { mode: "assist" });
   expect(ok.status).toBe(202);
+  expect(await ok.json()).toMatchObject({ ok: true });
   expect(sendCtrl).toHaveBeenCalledWith({ t: "ctrl", op: "set_mode", mode: "assist" });
+  expect(setModeLocal).not.toHaveBeenCalled(); // link up: takeoverd owns the switch
 
   const bad = await post(api, "/api/mode", { mode: "yolo" });
   expect(bad.status).toBe(400);
   expect(sendCtrl).toHaveBeenCalledTimes(1); // invalid input never reaches the takeover link
 
-  sendCtrl.mockReturnValue(false); // link down
-  const down = await post(api, "/api/mode", { mode: "full" });
-  expect(down.status).toBe(503);
+  sendCtrl.mockReturnValue(false); // link down: applied locally instead of a 503 dead end
+  const local = await post(api, "/api/mode", { mode: "full" });
+  expect(local.status).toBe(202);
+  expect(await local.json()).toMatchObject({ ok: true, local: true });
+  expect(setModeLocal).toHaveBeenCalledWith("full");
+
+  const helpless = makeApi(rig, { push: vi.fn() }); // a loop handle with neither seam
+  await helpless.start();
+  expect((await post(helpless, "/api/mode", { mode: "assist" })).status).toBe(503);
+});
+
+test("POST /api/mode with takeover link down (desktop-less loop): local fallback applies the mode, broadcasts {t:'mode'}, state and gate follow", async () => {
+  const rig = mkRig();
+  const chat = fakeLlmChat(async () => ({ content: '{"action":"none"}', usage: { promptTokens: 1, completionTokens: 1 } }));
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: rig.board, ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir: rig.runtimeDir, reviewEvery: 1000 }), budget: rig.budget, runtimeDir: rig.runtimeDir,
+    // no takeoverUrl: desktop-less jex, sendCtrl can never succeed
+  });
+  const api = makeApi(rig, loop);
+  loop.setOutlet(api);
+  await api.start();
+  const c = wsCollect(api);
+  await c.opened;
+
+  const res = await post(api, "/api/mode", { mode: "assist" });
+  expect(res.status).toBe(202);
+  expect(await res.json()).toMatchObject({ ok: true, local: true });
+  await until(() => c.frames.some((f) => f.t === "mode"));
+  expect(c.frames.find((f) => f.t === "mode")!.mode).toBe("assist"); // same frame a takeoverd mode_changed produces
+  const s = (await (await fetch(`http://127.0.0.1:${api.port}/api/state`)).json()) as StateFrame;
+  expect(s.mode).toBe("assist");
+  expect(loop.mode()).toBe("assist");
+  expect(loop.gateForTools()).toBe("assist"); // the agent can work again
+  loop.stop(); // cancels the mode_changed wake debounce before it spends tokens
 });
 
 test("POST /api/mission: appends MISSION.md (never overwrites), snapshots history, broadcasts chat_out(system); bad input 400", async () => {
@@ -586,7 +623,8 @@ test("assembleAndStart wires the api server on cfg.apiPort (0 = ephemeral) and s
   seedRuntimeFiles(dir);
   writeFileSync(join(dir, "TOOLS.md"), "- demo (demo) — demo tool [vd-1] verified 2026-01-01\n");
   writeFileSync(join(dir, "TENTACLES.md"), "\n");
-  const fakeLoop = { start: vi.fn(), stop: vi.fn(), push: vi.fn() };
+  const setModeLocal = vi.fn();
+  const fakeLoop = { start: vi.fn(), stop: vi.fn(), push: vi.fn(), setModeLocal };
   const assembled = assembleAndStart({ apiPort: 0 }, dir, { loopFactory: () => fakeLoop, exit: () => {} });
   servers.push(assembled.api);
   await assembled.api.ready;
@@ -595,8 +633,10 @@ test("assembleAndStart wires the api server on cfg.apiPort (0 = ephemeral) and s
   expect(res.status).toBe(200);
   expect(((await res.json()) as StateFrame).mode).toBe("observe"); // fake loop exposes no mode: safe default
 
-  const modeRes = await post(assembled.api, "/api/mode", { mode: "assist" }); // fake loop has no sendCtrl
-  expect(modeRes.status).toBe(503);
+  const modeRes = await post(assembled.api, "/api/mode", { mode: "assist" }); // fake loop has no sendCtrl: local fallback
+  expect(modeRes.status).toBe(202);
+  expect(await modeRes.json()).toMatchObject({ ok: true, local: true });
+  expect(setModeLocal).toHaveBeenCalledWith("assist");
 
   assembled.stop();
   await expect(fetch(`http://127.0.0.1:${assembled.api.port}/api/state`)).rejects.toThrow();

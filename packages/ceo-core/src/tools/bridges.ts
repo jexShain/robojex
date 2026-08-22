@@ -66,9 +66,11 @@ function withCard(ctx: ToolCtx, rawId: unknown, fn: (t: Task) => string): string
 
 export function boardTools(): ToolEntry[] {
   // writes defaults to true (approval-gated under assist); the four pure-read
-  // variants opt out so assist-mode board inspection needs no approval round
+  // variants opt out so assist-mode board inspection needs no approval round.
+  // Every kanban variant is internal: the board is jex's own state —
+  // reversible, touches no user system — so observe may still work it.
   const boardSchema = (name: string, description: string, props: Record<string, { type: string; description: string; enum?: string[] }>, required: string[], writes = true): ToolEntry => ({
-    name, toolset: "kanban", writes, handler: (a, ctx) => boardDispatch(name, a, ctx),
+    name, toolset: "kanban", writes, internal: true, handler: (a, ctx) => boardDispatch(name, a, ctx),
     schema: { name, description, parameters: { type: "object", properties: props, required } },
   });
   // single dispatch keeps every kanban variant visible in one switch
@@ -91,7 +93,7 @@ export function boardTools(): ToolEntry[] {
     }
   };
   return [
-    { name: "todo", toolset: "todo", writes: true, handler: todo,
+    { name: "todo", toolset: "todo", writes: true, internal: true, handler: todo,
       schema: { name: "todo", description: "Lightweight personal todo list backed by the task board.", parameters: { type: "object", properties: { action: { type: "string", description: "What to do", enum: ["add", "list", "complete"] }, title: { type: "string", description: "Task title (action='add')" }, task_id: { type: "string", description: "Task id (action='complete'; unique prefix works)" } }, required: ["action"] } } },
     boardSchema("kanban_create", "Create a kanban card in a column (todo/doing/done/blocked).", { title: { type: "string", description: "Card title" }, column: { type: "string", description: "Column", enum: ["todo", "doing", "done", "blocked"] } }, ["title"]),
     boardSchema("kanban_list", "Show the whole board grouped by column.", {}, [], false),
@@ -138,7 +140,7 @@ async function skillView(args: Record<string, unknown>, ctx: ToolCtx): Promise<s
 
 export function miscBridges(): ToolEntry[] {
   return [
-    { name: "memory", toolset: "memory", writes: true, handler: memory,
+    { name: "memory", toolset: "memory", writes: true, internal: true, handler: memory,
       schema: { name: "memory", description: "Long-lived memory: append durable facts (read by every future decision cycle) or read them back.", parameters: { type: "object", properties: { action: { type: "string", description: "append or read", enum: ["append", "read"] }, content: { type: "string", description: "The fact to remember (action='append')" } }, required: ["action"] } } },
     { name: "skills_list", toolset: "skills", writes: false, handler: async (_a, ctx) => readdirSync(ctx.skillsDir).filter((f) => f.endsWith(".md")).map((f) => `- ${f.slice(0, -3)}`).join("\n") || "(no skills)",
       schema: { name: "skills_list", description: "List the agent framework manuals available to delegate to.", parameters: { type: "object", properties: {} } } },

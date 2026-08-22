@@ -26,6 +26,7 @@ export interface ChatMessage { from: ChatFrom; ts: number; text: string; }
 export interface ApiLoopHandle {
   push(event: string): void;
   sendCtrl?(frame: Record<string, unknown>): boolean; // false/absent: takeover link down
+  setModeLocal?(mode: string): void;                  // link-down fallback: switch the mode without takeoverd
   mode?(): string;
   tickN?(): number;                     // decision-cycle count for HUD lag detection; absent = 0
   resolveToolApproval?(id: string, ok: boolean): Promise<string | null>; // settles a pending assist-mode tool write
@@ -472,8 +473,13 @@ export class ApiServer implements LoopOutlet {
     }
     // the mode switch itself is takeoverd's call: forward over the takeover WS
     const sent = this.d.loop.sendCtrl?.({ t: "ctrl", op: "set_mode", mode: body.mode }) ?? false;
-    if (!sent) { json(res, 503, { error: "takeover link down" }); return; }
-    json(res, 202, { ok: true });
+    if (sent) { json(res, 202, { ok: true }); return; }
+    // takeoverd absent (desktop-less/headless): apply locally instead of a
+    // 503 — otherwise the operator can never leave observe and the agent
+    // freezes; only a loop handle with neither seam still answers 503
+    if (!this.d.loop.setModeLocal) { json(res, 503, { error: "takeover link down" }); return; }
+    this.d.loop.setModeLocal(body.mode);
+    json(res, 202, { ok: true, local: true });
   }
 
   // -- Settings CRUD -----------------------------------------------------

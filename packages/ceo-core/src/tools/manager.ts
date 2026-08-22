@@ -1,6 +1,7 @@
 // packages/ceo-core/src/tools/manager.ts
 // ToolManager — the gate in front of every builtin tool call: mode gating
-// (observe/assist/full), sensitive-path interception, output truncation,
+// (observe/assist/full; internal jex-state tools and reads pass observe,
+// non-internal writes do not), sensitive-path interception, output truncation,
 // checkFn caching, and the assist-mode approval queue (hermes write_approval
 // semantics: writes wait for a human yes/no delivered over chat).
 import { randomUUID } from "node:crypto";
@@ -90,11 +91,17 @@ export class ToolManager {
   async call(name: string, args: Record<string, unknown>, gate: Gate): Promise<string> {
     const e = this.opts.registry.get(name);
     if (!e) return `error: unknown tool '${name}' — available: ${this.opts.registry.names().join(", ")}`;
-    if (gate === "observe") return `error: observe mode: tool calls disabled (switch to assist/full first)`;
+    // observe protects the user's system, not jex itself: internal tools
+    // (board/memory — jex-own, reversible) and read-class tools still run;
+    // only non-internal writes are frozen until the gate is raised
+    if (gate === "observe" && e.writes && !e.internal) {
+      return `error: observe mode: write-class tool '${name}' refused — observe only watches (switch to assist/full first)`;
+    }
     if (!this.available(e)) return `error: tool '${name}' is not available in this environment`;
     const blocked = this.guardPaths(name, args);
     if (blocked) return `error: ${blocked}`;
-    if (e.writes && gate === "assist") {
+    // internal writes skip the assist approval round: they touch no user system
+    if (e.writes && !e.internal && gate === "assist") {
       const id = randomUUID().slice(0, 8);
       this.pending.set(id, { entry: e, args });
       // Cap pending approvals at 50 entries; evict oldest if exceeded

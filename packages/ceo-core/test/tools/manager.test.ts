@@ -20,6 +20,19 @@ describe("registration", () => {
     expect(reg.names()).toHaveLength(27);
     expect(new Set(reg.names()).size).toBe(27);
   });
+  it("jex-own state tools are internal; system-touching tools are not", () => {
+    for (const e of P1_TOOLS()) reg.register(e);
+    // board / todo / memory: reversible, touch no user system
+    for (const n of ["todo", "memory", "kanban_create", "kanban_list", "kanban_show", "kanban_complete",
+      "kanban_block", "kanban_unblock", "kanban_comment", "kanban_heartbeat", "kanban_request_review",
+      "kanban_request_changes", "kanban_link", "kanban_attach", "kanban_attach_url", "kanban_attachments"]) {
+      expect(reg.get(n)!.internal, `${n} should be internal`).toBe(true);
+    }
+    // file / terminal / delegation / desktop: the user's system, gated hard
+    for (const n of ["read_file", "write_file", "patch", "search_files", "terminal", "process", "delegate_task", "computer_use"]) {
+      expect(reg.get(n)!.internal, `${n} must not be internal`).toBeUndefined();
+    }
+  });
 });
 
 describe("schemasBlock", () => {
@@ -35,22 +48,35 @@ describe("schemasBlock", () => {
 });
 
 describe("gates", () => {
-  const tool = (writes: boolean): ToolEntry => ({
-    name: "t", toolset: "x", writes, handler: async () => "did it",
+  const tool = (writes: boolean, internal = false): ToolEntry => ({
+    name: "t", toolset: "x", writes, ...(internal ? { internal: true } : {}), handler: async () => "did it",
     schema: { name: "t", description: "t", parameters: { type: "object", properties: {} } },
   });
-  it("observe mode refuses everything", async () => {
-    reg.register(tool(false));
+  it("observe mode refuses non-internal write-class tools", async () => {
+    reg.register(tool(true));
     mgr = new ToolManager({ registry: reg, ctx });
     const r = await mgr.call("t", {}, "observe");
     expect(r).toMatch(/observe mode/i);
+    expect(r).toMatch(/switch to assist\/full/i);
+    expect(mgr.pendingApprovals()).toHaveLength(0); // refused, never queued
+  });
+  it("observe mode executes read-class tools", async () => {
+    reg.register(tool(false));
+    mgr = new ToolManager({ registry: reg, ctx });
+    expect(await mgr.call("t", {}, "observe")).toBe("did it");
+  });
+  it("observe mode executes internal tools directly (jex-own state, no approval)", async () => {
+    reg.register(tool(true, true));
+    mgr = new ToolManager({ registry: reg, ctx });
+    expect(await mgr.call("t", {}, "observe")).toBe("did it");
+    expect(mgr.pendingApprovals()).toHaveLength(0);
   });
   it("full mode executes reads and writes", async () => {
     reg.register(tool(true));
     mgr = new ToolManager({ registry: reg, ctx });
     expect(await mgr.call("t", {}, "full")).toBe("did it");
   });
-  it("assist mode defers writes into pending approvals", async () => {
+  it("assist mode defers non-internal writes into pending approvals", async () => {
     reg.register(tool(true));
     mgr = new ToolManager({ registry: reg, ctx });
     const r = await mgr.call("t", { k: 1 }, "assist");
@@ -59,6 +85,12 @@ describe("gates", () => {
     const id = mgr.pendingApprovals()[0];
     const done = await mgr.resolveApproval(id, true);
     expect(done).toBe("did it");
+    expect(mgr.pendingApprovals()).toHaveLength(0);
+  });
+  it("assist mode executes internal writes without an approval round", async () => {
+    reg.register(tool(true, true));
+    mgr = new ToolManager({ registry: reg, ctx });
+    expect(await mgr.call("t", {}, "assist")).toBe("did it");
     expect(mgr.pendingApprovals()).toHaveLength(0);
   });
   it("deny drops the call", async () => {

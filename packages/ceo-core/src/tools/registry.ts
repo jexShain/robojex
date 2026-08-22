@@ -32,6 +32,8 @@ export interface ToolEntry {
   handler: ToolHandler;
   checkFn?: () => boolean; // absent = always available
   writes?: boolean;        // write-class: approval-gated under assist mode
+  internal?: boolean;      // jex-own state (board, memory, todo): reversible, touches
+                           // no user system — runs under observe, skips assist approval
 }
 
 export class ToolRegistry {

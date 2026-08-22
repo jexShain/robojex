@@ -3,7 +3,7 @@
 // prompt block, chat-driven approval resolution, and the api approve/deny
 // shorthand — the whole chain against the real ToolManager over P1_TOOLS.
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
@@ -125,13 +125,19 @@ describe("tool_call action", () => {
     rig.loop.stop();
   });
 
-  it("assist mode queues write-class calls; resolveToolApproval executes on yes and re-checks the current gate", async () => {
+  it("assist mode queues non-internal writes (internal memory runs free); resolveToolApproval executes on yes and re-checks the current gate", async () => {
+    const tmpA = join(tmpdir(), `rjloopi-${process.pid}-${Date.now()}-a.txt`);
+    const tmpB = join(tmpdir(), `rjloopi-${process.pid}-${Date.now()}-b.txt`);
     const rig = makeRig({ actions: [
-      { type: "tool_call", tool: "memory", args: { action: "append", content: "fact one" } },
-      { type: "tool_call", tool: "memory", args: { action: "append", content: "fact two" } },
+      { type: "tool_call", tool: "memory", args: { action: "append", content: "fact zero" } }, // internal: no approval round
+      { type: "tool_call", tool: "write_file", args: { path: tmpA, content: "fact one" } },    // system write: approval round
+      { type: "tool_call", tool: "write_file", args: { path: tmpB, content: "fact two" } },
     ] }, { ws: true });
     mode(rig, "assist");
     await rig.loop.runOnce("boot");
+    // internal write executed immediately despite assist's approval queue
+    await until(() => rig.events.some((e) => e.startsWith("tool memory -> remembered: fact zero")));
+    expect(readFileSync(join(rig.dir, "MEMORY.md"), "utf8")).toContain("fact zero");
     await until(() => rig.events.filter((e) => e.includes("needs-approval")).length >= 2);
     const ids = rig.events
       .map((e) => /needs-approval ([0-9a-f]{8})/.exec(e)?.[1])
@@ -141,16 +147,52 @@ describe("tool_call action", () => {
     for (const id of ids) expect(rig.mgr.pendingApprovals()).toContain(id);
 
     const r1 = await rig.loop.resolveToolApproval(ids[0]!, true);
-    expect(r1).toBe("remembered: fact one");
-    expect(readFileSync(join(rig.dir, "MEMORY.md"), "utf8")).toContain("fact one");
-    expect(rig.events.some((e) => e.startsWith(`tool approval ${ids[0]} approved: remembered: fact one`))).toBe(true);
+    expect(r1).toMatch(/^wrote \d+ bytes to /);
+    expect(readFileSync(tmpA, "utf8")).toBe("fact one");
+    expect(rig.events.some((e) => e.startsWith(`tool approval ${ids[0]} approved: wrote `))).toBe(true);
 
     // a mode drop to observe between queueing and approving must refuse the
     // write even though the human said yes (Task 6 gate re-check semantics)
     rig.ws!.emit("message", JSON.stringify({ t: "evt", type: "mode_changed", mode: "observe" }));
     const r2 = await rig.loop.resolveToolApproval(ids[1]!, true);
     expect(r2).toBe(`denied ${ids[1]}: observe mode re-checked`);
-    expect(readFileSync(join(rig.dir, "MEMORY.md"), "utf8")).not.toContain("fact two");
+    expect(existsSync(tmpB)).toBe(false);
+    rig.loop.stop();
+  });
+});
+
+describe("effective tool gate (gateForTools)", () => {
+  it("no takeover link: observe degrades to assist for tools; a wired link follows modeNow; a dropped link degrades again", () => {
+    const bare = makeRig({ actions: [] });
+    expect(bare.loop.mode()).toBe("observe");        // desktop-less boot: modeNow stays observe
+    expect(bare.loop.gateForTools()).toBe("assist"); // but the tool layer must not freeze
+
+    const rig = makeRig({ actions: [] }, { ws: true });
+    rig.loop.start(60_000); // start() wires the takeover socket handlers
+    rig.ws!.emit("message", JSON.stringify({ t: "evt", type: "mode_changed", mode: "observe" }));
+    expect(rig.loop.gateForTools()).toBe("observe"); // link up: observe guards the desktop
+    rig.ws!.emit("message", JSON.stringify({ t: "evt", type: "mode_changed", mode: "full" }));
+    expect(rig.loop.gateForTools()).toBe("full");    // raised modes pass through unchanged
+    rig.ws!.readyState = 3;                          // link dropped mid-flight
+    expect(rig.loop.gateForTools()).toBe("full");
+    rig.ws!.emit("message", JSON.stringify({ t: "evt", type: "mode_changed", mode: "observe" }));
+    expect(rig.loop.gateForTools()).toBe("assist");  // observe + dead link -> assist again
+    rig.loop.stop();
+    bare.loop.stop();
+  });
+
+  it("desktop-less observe: internal kanban_create runs, non-internal write_file queues for approval instead of executing", async () => {
+    const tmpNote = join(tmpdir(), `rjloopi-${process.pid}-${Date.now()}-c.txt`);
+    const rig = makeRig({ actions: [
+      { type: "tool_call", tool: "kanban_create", args: { title: "ship the demo" } },
+      { type: "tool_call", tool: "write_file", args: { path: tmpNote, content: "nope" } },
+    ] });
+    expect(rig.loop.mode()).toBe("observe"); // no takeover WS wired at all
+    await rig.loop.runOnce("boot");
+    await until(() => rig.events.some((e) => e.startsWith("tool kanban_create ->")));
+    expect(rig.events.some((e) => e.includes("created") && e.includes("ship the demo"))).toBe(true);
+    await until(() => rig.events.some((e) => e.includes("needs-approval"))); // effective assist: queued, not executed
+    expect(existsSync(tmpNote)).toBe(false);
     rig.loop.stop();
   });
 });
