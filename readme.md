@@ -22,7 +22,7 @@
 unzip robojex-linux-x64.zip && cd robojex
 ```
 
-包内：`robojex-ceo`、`robojex-takeoverd`、`skills/`（框架手册）、`viewer/`。
+包内：`robojex-ceo`（内嵌 Web 控制台，启动后浏览器打开 http://127.0.0.1:7620）、`robojex-takeoverd`、`skills/`（框架手册）。
 
 **2. 配置模型** —— 编辑 `runtime/config.json`（密钥只存在这里，该目录不入库）:
 

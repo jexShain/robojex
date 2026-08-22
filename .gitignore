@@ -13,3 +13,4 @@ TODO.md
 test-results/
 playwright-report/
 .webpack/
+probe-shots/

@@ -216,11 +216,14 @@ test.describe('RoboJex desktop', () => {
     expect(consoleErrors.filter((e) => !e.includes('favicon'))).toEqual([])
   })
 
-  test('19 jex agent chat via /jex command shows notice', async ({ page }) => {
+  test('19 jex agent chat via /jex command shows timeline cards', async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('chat-input').waitFor()
     await page.getByTestId('chat-input').fill('/jex 去巡逻一下')
     await page.getByTestId('chat-input').press('Enter')
-    await expect(page.locator('[data-testid="msg-row"][data-role="notice"]')).toBeVisible({ timeout: 8_000 })
+    // dispatch renders immediately as an agent-send timeline card…
+    await expect(page.locator('[data-testid="agent-card"][data-kind="send"]')).toBeVisible({ timeout: 8_000 })
+    // …and the (mock) jex reply lands as an agent-notice card
+    await expect(page.locator('[data-testid="agent-card"][data-kind="notice"]')).toBeVisible({ timeout: 8_000 })
   })
 })
