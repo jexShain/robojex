@@ -1,0 +1,244 @@
+// packages/web/src/frame/CommandPalette.tsx — Ctrl+K palette (centered 640px,
+// blurred backdrop, scale-in). Searches conversations (store.state) and offers
+// grouped actions: new chat · switch view ×5 · theme ×3 · gear ×5.
+// Keyboard: ↑/↓ move, Enter run, Esc close.
+
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useStore } from '../state/store'
+import type { ThemeApi } from '../state/theme'
+import type { GearId } from '../state/types'
+import { gearsOrFallback } from '../views/gearDefs'
+import { VIEW_META } from '../views/ViewSwitcher'
+import type { ViewId } from '../views/viewState'
+
+interface CmdItem {
+  id: string
+  group: string
+  label: string
+  hint?: string
+  icon: JSX.Element
+  run(): void
+}
+
+const THEME_LABEL: Record<'light' | 'dark' | 'system', string> = {
+  light: '浅色',
+  dark: '深色',
+  system: '跟随系统',
+}
+
+export function CommandPalette({
+  theme,
+  onClose,
+  onView,
+}: {
+  theme: ThemeApi
+  onClose(): void
+  onView(view: ViewId): void
+}) {
+  const store = useStore()
+  const [query, setQuery] = useState('')
+  const [active, setActive] = useState(0)
+  const listRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const items = useMemo<CmdItem[]>(() => {
+    const out: CmdItem[] = []
+    for (const c of store.state.conversations) {
+      out.push({
+        id: `conv-${c.id}`,
+        group: '会话',
+        label: c.title || '(untitled)',
+        hint: c.preview,
+        icon: (
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M2.5 3.5h11v8H8l-3.2 2.6V11.5h-2.3z" />
+          </svg>
+        ),
+        run: () => {
+          void store.selectConversation(c.id)
+          onView('chat')
+        },
+      })
+    }
+    out.push({
+      id: 'act-new-conv',
+      group: '动作',
+      label: '新对话',
+      icon: <span>✏️</span>,
+      run: () => {
+        void store.newConversation()
+        onView('chat')
+      },
+    })
+    for (const m of VIEW_META) {
+      out.push({
+        id: `act-view-${m.id}`,
+        group: '动作',
+        label: `切换视图 · ${m.label}`,
+        icon: m.icon,
+        run: () => onView(m.id),
+      })
+    }
+    for (const pref of ['light', 'dark', 'system'] as const) {
+      out.push({
+        id: `act-theme-${pref}`,
+        group: '动作',
+        label: `主题 · ${THEME_LABEL[pref]}`,
+        icon: <span>{pref === 'light' ? '☀️' : pref === 'dark' ? '🌙' : '🖥️'}</span>,
+        run: () => theme.setPref(pref),
+      })
+    }
+    for (const g of gearsOrFallback(store.state.gears)) {
+      out.push({
+        id: `act-gear-${g.id}`,
+        group: '动作',
+        label: `挡位 · ${g.name}（${g.id}）`,
+        hint: g.cost,
+        icon: <span>{g.emoji}</span>,
+        run: () => void store.changeGear(g.id as GearId),
+      })
+    }
+    return out
+  }, [store, theme, onView])
+
+  const q = query.trim().toLowerCase()
+  const visible = useMemo(() => {
+    if (!q) return items
+    return items.filter(
+      (it) =>
+        it.label.toLowerCase().includes(q) ||
+        (it.hint ? it.hint.toLowerCase().includes(q) : false) ||
+        it.group.includes(q),
+    )
+  }, [items, q])
+
+  // Clamp the cursor when the filtered list shrinks.
+  useEffect(() => {
+    setActive((i) => Math.min(i, Math.max(0, visible.length - 1)))
+  }, [visible.length])
+
+  // Focus the input on open.
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  // Keep the active row in view.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(`[data-idx="${active}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [active])
+
+  const exec = (item: CmdItem | undefined): void => {
+    if (!item) return
+    item.run()
+    onClose()
+  }
+
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onClose()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActive((i) => (visible.length === 0 ? 0 : (i + 1) % visible.length))
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActive((i) => (visible.length === 0 ? 0 : (i - 1 + visible.length) % visible.length))
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      exec(visible[active])
+    }
+  }
+
+  // Grouped rendering over the flat visible list.
+  const rows: JSX.Element[] = []
+  let lastGroup = ''
+  visible.forEach((it, i) => {
+    if (it.group !== lastGroup) {
+      lastGroup = it.group
+      rows.push(
+        <div key={`g-${it.group}`} className="cmdk-group-label">
+          {it.group}
+        </div>,
+      )
+    }
+    rows.push(
+      <button
+        key={it.id}
+        type="button"
+        className={`cmdk-item${i === active ? ' active' : ''}`}
+        data-idx={i}
+        onMouseEnter={() => setActive(i)}
+        onClick={() => exec(it)}
+      >
+        <span className="ci-icon">{it.icon}</span>
+        <span className="ci-label">{it.label}</span>
+        {it.hint ? <span className="ci-hint">{it.hint}</span> : null}
+      </button>,
+    )
+  })
+
+  return (
+    <div
+      className="cmdk-backdrop"
+      data-testid="cmdk"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div
+        className="cmdk-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="命令面板"
+        onKeyDown={onKeyDown}
+      >
+        <div className="cmdk-input-row">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="7" cy="7" r="4.5" />
+            <path d="M10.5 10.5 14 14" />
+          </svg>
+          <input
+            ref={inputRef}
+            className="cmdk-input"
+            data-testid="cmdk-input"
+            value={query}
+            placeholder="搜索会话、切换视图 / 主题 / 挡位…"
+            spellCheck={false}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setActive(0)
+            }}
+          />
+          <kbd>esc</kbd>
+        </div>
+        <div className="cmdk-body" ref={listRef}>
+          {visible.length === 0 ? (
+            <div className="cmdk-empty">没有匹配项</div>
+          ) : (
+            rows
+          )}
+        </div>
+        <div className="cmdk-foot">
+          <span>
+            <kbd>↑</kbd>
+            <kbd>↓</kbd>选择
+          </span>
+          <span>
+            <kbd>↵</kbd>执行
+          </span>
+          <span>
+            <kbd>esc</kbd>关闭
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}

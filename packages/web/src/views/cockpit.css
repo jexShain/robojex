@@ -1,0 +1,431 @@
+/* packages/web/src/views/cockpit.css — 「挡位驾驶舱」cockpit view (GearPanel):
+ * gear dial (SVG semicircle, spring needle), gear facts + quick switch,
+ * 7-day usage bars with hover tooltips, budget fuel, embedded thinking
+ * stream. Tokens-only colors; both themes ride the alias variables. */
+
+.cockpit {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--rj-space-4);
+  padding: var(--rj-space-5) clamp(16px, 5%, 48px) var(--rj-space-6);
+}
+
+.cp-sec-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── top: dial + facts ── */
+
+.cp-top {
+  flex: none;
+  display: flex;
+  gap: var(--rj-space-6);
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.cp-dial-wrap {
+  flex: none;
+  width: 260px;
+  max-width: 100%;
+}
+
+.cp-dial-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.cp-arc-bg {
+  fill: none;
+  stroke: var(--dsw-alias-interactive-bg-hover);
+  stroke-width: 10;
+  stroke-linecap: round;
+}
+
+.cp-arc-fg {
+  fill: none;
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: stroke-dasharray 600ms var(--rj-ease-spring);
+}
+
+.cp-tick {
+  stroke: var(--dsw-alias-label-dimmed);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.cp-tick.lit {
+  stroke: var(--dsw-alias-label-secondary);
+}
+
+.cp-tick-txt {
+  font-family: var(--rj-font-mono);
+  font-size: 9px;
+  fill: var(--dsw-alias-label-tertiary);
+}
+
+.cp-needle {
+  transition: transform 600ms var(--rj-ease-spring);
+  transform-origin: 120px 118px;
+}
+
+.cp-needle line {
+  stroke: var(--dsw-alias-label-primary);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.cp-needle circle {
+  fill: var(--dsw-alias-label-primary);
+}
+
+.cp-hub {
+  fill: var(--dsw-alias-bg-layer-2);
+  stroke: var(--dsw-alias-border-l3);
+  stroke-width: 2;
+}
+
+.cp-emoji {
+  font-size: 17px;
+}
+
+.cp-facts {
+  flex: 1;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--rj-space-2);
+}
+
+.cp-facts-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cp-gear-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.cp-gear-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.cp-gear-icon.busy {
+  color: var(--dsw-alias-state-business-primary);
+  animation: rj-spin 2.2s linear infinite;
+}
+
+.cp-cur-emoji {
+  font-size: 21px;
+  line-height: 1;
+}
+
+.cp-cur-name {
+  font-size: var(--rj-font-size-hero);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.cp-cur-desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.cp-facts-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 14px;
+  font-size: 12px;
+  max-width: 480px;
+}
+
+.cp-facts-kv .k {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--rj-font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  align-self: center;
+}
+
+.cp-facts-kv .v {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* quick switch buttons */
+.cp-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: var(--rj-space-2);
+}
+
+.cp-quick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border: 1.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rj-radius-full);
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  transition: transform var(--rj-duration-fast) var(--rj-ease-spring),
+    border-color var(--rj-duration-fast) var(--rj-ease-smooth),
+    box-shadow var(--rj-duration-fast) var(--rj-ease-smooth),
+    color var(--rj-duration-fast) var(--rj-ease-smooth);
+}
+
+.cp-quick-btn:hover {
+  transform: translateY(-1px);
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.cp-quick-btn.on {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+  box-shadow: var(--rj-glow-sm);
+}
+
+.cp-quick-btn.on::after {
+  content: '●';
+  font-size: 8px;
+  color: inherit;
+}
+
+/* ── mid: usage + budget ── */
+
+.cp-mid {
+  flex: none;
+  display: flex;
+  gap: var(--rj-space-6);
+  flex-wrap: wrap;
+}
+
+.cp-usage {
+  flex: 1.4;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cp-usage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cp-usage-today {
+  font-family: var(--rj-font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-usage-week {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.cp-charts {
+  position: relative;
+  height: 96px;
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  padding: 6px 4px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.uc-bar {
+  position: relative;
+  flex: 1;
+  min-width: 14px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.uc-fill {
+  border-radius: 4px 4px 0 0;
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  min-height: 3px;
+  transition: height var(--rj-duration-slow) var(--rj-ease-smooth);
+}
+
+.uc-bar.today .uc-fill {
+  background: var(--rj-brand-gradient);
+  box-shadow: var(--rj-glow-sm);
+}
+
+.uc-day {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 3px;
+  text-align: center;
+  font-family: var(--rj-font-mono);
+  font-size: 9px;
+  color: var(--dsw-alias-label-dimmed);
+  white-space: nowrap;
+}
+
+/* CSS-only hover tooltip */
+.uc-bar::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) translateY(3px);
+  padding: 5px 9px;
+  border-radius: var(--rj-radius-sm);
+  background: var(--dsw-alias-tooltip-bg);
+  color: var(--dsw-alias-label-primary-inverted);
+  font-family: var(--rj-font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--rj-duration-fast) var(--rj-ease-out),
+    transform var(--rj-duration-fast) var(--rj-ease-out);
+  z-index: 5;
+}
+
+.uc-bar:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.cp-usage-empty {
+  align-self: center;
+  padding: 20px 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* budget fuel */
+.cp-fuel {
+  flex: 1;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cp-fuel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cp-fuel-label {
+  font-family: var(--rj-font-mono);
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-fuel-label .infty {
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 15px;
+}
+
+.cp-fuel-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  overflow: hidden;
+}
+
+.cp-fuel-bar.burn {
+  background: var(--rj-brand-gradient);
+  opacity: 0.65;
+}
+
+.cp-fuel-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--dsw-alias-state-business-primary);
+  transition: width 0.6s var(--rj-ease-smooth);
+}
+
+.cp-fuel-fill.warn {
+  background: var(--dsw-alias-state-warn-primary);
+  animation: hud-fuel-warn 1.6s var(--rj-ease-in-out) infinite;
+}
+
+.cp-fuel-line {
+  font-family: var(--rj-font-mono);
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.cp-fuel-line.dim {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── bottom: embedded thinking stream ── */
+
+.cp-stream {
+  flex: none;
+  height: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  padding-top: var(--rj-space-4);
+}
+
+.cp-stream .thinking-stream {
+  height: 100%;
+  min-height: 0;
+}
+
+.cp-stream-head {
+  flex: none;
+}
+
+.ts-embedded-count {
+  padding: 8px 16px 4px;
+  font-family: var(--rj-font-mono);
+  font-size: 10.5px;
+  color: var(--dsw-alias-label-dimmed);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cp-arc-fg,
+  .cp-needle,
+  .uc-fill,
+  .cp-fuel-fill,
+  .cp-quick-btn,
+  .cp-gear-icon.busy {
+    animation: none;
+    transition: none;
+  }
+}

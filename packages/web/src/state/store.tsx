@@ -847,7 +847,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case 'jex': {
           const body = arg.trim()
           if (!body) localMsg('usage: /jex <text> — send to the jex orchestration loop')
-          else sendAgentChat(body)
+          else if (!stateRef.current.activeConvId) {
+            // give the jex replies a home: open a conversation first
+            void newConversation().then((conv) => {
+              if (conv) sendAgentChat(body)
+            })
+          } else sendAgentChat(body)
           return true
         }
         case 'tasks': {
@@ -892,7 +897,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return true
       }
     },
-    [appendMission, changeGear, localMsg, refreshModels, sendAgentChat, setMode, setModel],
+    [appendMission, changeGear, localMsg, newConversation, refreshModels, sendAgentChat, setMode, setModel],
   )
 
   const selectTask = useCallback((id: string | null) => dispatch({ type: 'select-task', id }), [])
