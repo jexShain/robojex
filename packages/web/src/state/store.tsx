@@ -102,6 +102,7 @@ type Action =
   | { type: 'reply-timeout' }
   /* gears */
   | { type: 'gear-loaded'; gear: GearId; gears: GearDef[]; appliedTickMs: number }
+  | { type: 'gears-catalog'; gears: GearDef[]; appliedTickMs: number }
   | { type: 'gear-set'; gear: GearId; appliedTickMs?: number }
   /* conversations */
   | { type: 'convs-loading' }
@@ -319,6 +320,11 @@ export function reducer(state: WebState, action: Action): WebState {
     /* gears */
     case 'gear-loaded':
       return { ...state, gear: action.gear, gears: action.gears, gearAppliedTickMs: action.appliedTickMs }
+    // initial-connection catalog fetch: the REST response may land AFTER a
+    // newer WS gear frame (server applies gear asynchronously), so it must
+    // never regress state.gear — hello + gear frames own the gear value
+    case 'gears-catalog':
+      return { ...state, gears: action.gears, gearAppliedTickMs: action.appliedTickMs }
     case 'gear-set':
       return {
         ...state,
@@ -793,7 +799,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (conn === 'live' && !loadedOnce.current) {
           loadedOnce.current = true
           void api.getGear().then(
-            (g) => dispatch({ type: 'gear-loaded', gear: g.gear, gears: g.gears, appliedTickMs: g.appliedTickMs }),
+            (g) => dispatch({ type: 'gears-catalog', gears: g.gears, appliedTickMs: g.appliedTickMs }),
             () => undefined,
           )
           void api.listConversations().then(

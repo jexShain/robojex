@@ -311,11 +311,19 @@ scenarios.widget = async ({ page }) => {
 
 scenarios['ws-live'] = async ({ page }) => {
   await open(page)
+  // ensure the page's own WS is live (hello processed) BEFORE mutating gear —
+  // otherwise the broadcast fires into a socket still mid-upgrade and is lost
+  await page
+    .getByTestId('conn-status')
+    .filter({ hasText: /live|已连接|連線/i })
+    .waitFor({ timeout: 10_000 })
   await api('PUT', '/api/gear', { gear: 'turbo' })
   let reflected = false
   for (let i = 0; i < 10; i++) {
     await page.waitForTimeout(500)
-    const txt = await page.getByTestId('gear-chip').innerText().catch(() => '')
+    // boot view = command center; its chip is cc-gear-chip (unique testid —
+    // gear-chip on the chat dock would multi-match Playwright strict mode)
+    const txt = await page.getByTestId('cc-gear-chip').innerText().catch(() => '')
     if (/狂暴|turbo/i.test(txt)) { reflected = true; break }
   }
   ok('WS push: gear change reflects live', reflected)

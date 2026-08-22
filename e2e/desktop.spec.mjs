@@ -246,6 +246,10 @@ test.describe('RoboJex desktop', () => {
     await expect(page.getByTestId('gantt-board')).toBeVisible()
     await expect(page.getByTestId('gantt-band')).toBeVisible()
     await expect(page.getByTestId('think-log')).toBeVisible()
+    // gear chip is probeable from the boot (command) view too — the command
+    // center carries its own (cc-gear-chip); InputBar's gear-chip may also be
+    // docked here, so target the command-center one explicitly
+    await expect(page.getByTestId('cc-gear-chip')).toBeVisible()
     // policy badge from mock settings (absent policy => hidden, so assert either way)
     const badge = page.getByTestId('policy-badge')
     if (await badge.count()) await expect(badge).toBeVisible()

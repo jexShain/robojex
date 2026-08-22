@@ -553,6 +553,7 @@ export function CommandCenter() {
         {cur ? (
           <span
             className={`cc-gear-chip${busy ? ' busy' : ''}`}
+            data-testid="cc-gear-chip"
             style={{ '--cc-gear': `var(--rj-gear-${cur.level})` } as CSSProperties}
             title={fill(t('cc.gearTitle'), { name: cur.name, desc: cur.desc })}
           >
