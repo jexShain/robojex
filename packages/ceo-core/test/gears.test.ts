@@ -2,7 +2,7 @@
 // The 5-gear contract (wire shape + numbers), prompt differentiation, the
 // controller's persistence/hot-switch, and the loop's gear-awareness
 // (dormant stop, eco patrol thinning, decide budget).
-import { GEARS, GEAR_IDS, DEFAULT_GEAR, getGearDef, isGearId, loopPrompt, chatPrompt, GearController } from "../src/gears.js";
+import { GEARS, GEAR_IDS, DEFAULT_GEAR, getGearDef, isGearId, loopPrompt, chatPrompt, GearController, type GearId } from "../src/gears.js";
 import { SchedulerLoop } from "../src/loop.js";
 import { LLMClient } from "../src/llm.js";
 import { TaskBoard } from "../src/board.js";
@@ -52,13 +52,28 @@ test("loopPrompt: five distinct profiles; dormant empty; eco/turbo carry real do
   expect(prompts[4]).toContain("MISSION");
 });
 
-test("chatPrompt: five distinct personas, low gears terse / high gears proactive", () => {
+test("loopPrompt: butler doctrine in every live gear — delegate, accept, verify, reflect", () => {
+  for (const g of ["eco", "balanced", "focused", "turbo"] as GearId[]) {
+    const p = loopPrompt(g);
+    expect(p, `${g} delegates`).toContain("spawn");
+    expect(p, `${g} demands acceptance`).toMatch(/accept/i);
+    expect(p, `${g} verifies`).toContain("verify");
+    expect(p, `${g} starts with the gear prefix`).toMatch(/^【自主挡位：/);
+  }
+  // idle-cycle menu is spelled out at balanced: reflect / catch-up / MISSION
+  const b = loopPrompt("balanced");
+  expect(b).toContain("reflect");
+  expect(b).toContain("甘特图");
+});
+
+test("chatPrompt: five distinct butler personas, low gears terse / high gears proactive", () => {
   const prompts = GEAR_IDS.map((g) => chatPrompt(g));
   expect(new Set(prompts).size).toBe(5);
   for (const p of prompts) expect(p.length).toBeGreaterThan(20);
   expect(chatPrompt("dormant")).toContain("克制");
   expect(chatPrompt("balanced")).toContain("友好");
-  expect(chatPrompt("turbo")).toContain("/jex");
+  expect(chatPrompt("turbo")).toContain("管家");
+  expect(chatPrompt("turbo")).not.toContain("/jex"); // the butler takes the errand, never coaches syntax
 });
 
 /* ───────────────── controller ───────────────── */

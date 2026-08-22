@@ -11,8 +11,9 @@ import { AgentOrchestrator } from "./orchestrator.js";
 import { AgentRegistry, BUILTIN_AGENTS } from "./agent-registry.js";
 import { Auditor } from "./auditor.js";
 import { BudgetGovernor, type BudgetMode } from "./budget.js";
-import { SchedulerLoop, DEFAULT_SKILLS_DIR, type LoopDeps } from "./loop.js";
+import { SchedulerLoop, DEFAULT_SKILLS_DIR, resolvePolicy, type LoopDeps } from "./loop.js";
 import { ToolScout } from "./toolscout.js";
+import { AgentScout, type AgentWhichFn } from "./agent-scout.js";
 import { TentacleManager } from "./tentacles.js";
 import { ApiServer } from "./api.js";
 import { ChatStore } from "./chat-store.js";
@@ -22,7 +23,7 @@ import { ToolRegistry } from "./tools/registry.js";
 import { ToolManager, P1_TOOLS } from "./tools/manager.js";
 
 // runtime state that must never enter git history (config.json holds the API key)
-export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\nchat.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\nTENTACLES.md\ntentacles/\ntentacle-manuals/\n";
+export const RUNTIME_GITIGNORE = "config.json\nboard.sqlite*\ntraces.sqlite*\nchat.sqlite*\npids.json\nruns/\nshots/\nTOOLS.md\ntool-manuals/\nPENDING_INSTALLS.md\nTENTACLES.md\ntentacles/\ntentacle-manuals/\nAGENTS.md\nagent-manuals/\n";
 const SEED_DOCS = ["MISSION.md", "RUBRIC.md", "MEMORY.md"] as const;
 
 export function seedRuntimeFiles(runtimeDir: string): void {
@@ -96,6 +97,7 @@ interface Config {
   budgetMode?: "burn" | "budgeted"; dailyTokens?: number; tickMs?: number; takeoverUrl?: string;
   webhookPort?: number; apiPort?: number; apiHost?: string;
   autonomyGear?: string; // dormant|eco|balanced|focused|turbo (GearController validates)
+  policy?: "butler" | "conservative"; // autonomy doctrine (SPEC-BUTLER §1); butler is the default
 }
 
 // The loop surface main() needs; SchedulerLoop satisfies it structurally and
@@ -110,6 +112,8 @@ export interface StartableLoop {
 export interface AssembleDeps {
   loopFactory?: (deps: LoopDeps) => StartableLoop; // test seam: spy on start()
   exit?: () => void;                               // test seam: no process.exit
+  bootReconMs?: number;                            // test seam: boot-recon delay (default ~3s)
+  agentWhichFn?: AgentWhichFn;                     // test seam: deterministic agent probing
 }
 
 export interface Assembled { loop: StartableLoop; api: ApiServer; stop: () => void; }
@@ -131,6 +135,15 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
   const budget = new BudgetGovernor(budgetCfg.budgetMode, budgetCfg.dailyTokens);
   const scout = new ToolScout({ llm, runtimeDir, spend: (u) => budget.spend(u) }); // scout LLM calls are budget burn too
   const tentacles = new TentacleManager({ llm, runtimeDir, spend: (u) => budget.spend(u) }); // manual LLM calls likewise
+  // agent recon (SPEC-BUTLER §2): probes known agent CLIs and wires the hits
+  // into orchestrator + registry; fired below once the loop exists (it wakes
+  // jex with the discovery), then refreshed by jex's own later actions
+  const agentScout = new AgentScout({
+    llm, runtimeDir, registry, orchestrator,
+    // an injected whichFn owns discovery end to end (hermetic tests: pockets off)
+    ...(deps.agentWhichFn ? { whichFn: deps.agentWhichFn, extraBins: [] } : {}),
+    spend: (u) => budget.spend(u),
+  });
   // first boot: build the verified tool inventory once, in the background —
   // later refreshes come from jex's own toolscout actions
   if (!existsSync(join(runtimeDir, "TOOLS.md"))) {
@@ -176,6 +189,7 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
     scout,
     tentacles,
     builtinTools,
+    policy: resolvePolicy(cfg.policy),
   };
   const loop = deps.loopFactory ? deps.loopFactory(loopDeps) : new SchedulerLoop(loopDeps);
   // operator surface: HTTP+WS api (default :7620); the web bundle is served
@@ -215,7 +229,26 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
   // (dormant = 0 = no interval, chat still answers).
   const gearTick = getGearDef(gearController.current())?.tickMs ?? 60_000;
   loop.start(Number(cfg.tickMs) > 0 ? Number(cfg.tickMs) : gearTick);
-  return { loop, api, stop: makeShutdownHandler(loop, orchestrator, deps.exit, api) };
+  // agent recon, parallel to the ToolScout first pass: register whatever is
+  // installed, then wake jex — a butler's first asset is knowing its staff.
+  // Runs on every boot (the installed set changes with the machine); AGENTS.md
+  // reflects reality, an empty fleet is a valid finding.
+  void agentScout.run()
+    .then((r) => { loop.push(`agents discovered: ${r.discovered.length ? r.discovered.map((d) => d.agent.name).join(", ") : "(none)"}`); })
+    .catch((e: unknown) => console.error(`[ceo] agent-scout failed: ${e instanceof Error ? e.message : String(e)}`));
+  // boot recon (SPEC-BUTLER §3): ~3s after start jex surveys the system and
+  // its agents instead of waiting for the first full tick — desktop launch to
+  // working butler in three seconds. Dormant stays asleep (checked at fire
+  // time, so a hot gear switch within the window is honored).
+  const bootRecon = setTimeout(() => {
+    if ((getGearDef(gearController.current())?.tickMs ?? 60_000) === 0) return; // dormant: no work wake
+    loop.push("boot: 刚启动——盘点系统与可用代理（读 TOOLS/AGENTS），更新环境认知；若无待办则建立或审视今日目标");
+  }, deps.bootReconMs ?? 3000);
+  bootRecon.unref();
+  // the boot wake must not fire into a shut-down loop (embedded deployments
+  // keep the process alive after stop)
+  const shutdown = makeShutdownHandler(loop, orchestrator, deps.exit, api);
+  return { loop, api, stop: () => { clearTimeout(bootRecon); shutdown(); } };
 }
 
 function main(): void {

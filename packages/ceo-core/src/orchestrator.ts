@@ -32,6 +32,14 @@ export class AgentOrchestrator {
 
   getRegistry(): AgentRegistry | null { return this.registry; }
 
+  /** Register a spawn override for one agent (agent-scout discovery path).
+   *  A template containing {prompt} carries its own prompt slot; a bare
+   *  command keeps the legacy form of the prompt appended at the end. */
+  setCmd(framework: string, template: string): void {
+    if (!this.opts.cmds) this.opts.cmds = {};
+    this.opts.cmds[framework] = template;
+  }
+
   // ---- pid ledger: survives a jex crash on disk so a fresh jex can reap orphans ----
   private ledgerPath(): string { return join(this.opts.runtimeDir, "pids.json"); }
   private updateLedger(fn: (pids: number[]) => number[]): void {
@@ -53,12 +61,13 @@ export class AgentOrchestrator {
     const id = randomUUID().slice(0, 8);
     const logPath = join(this.opts.runtimeDir, "runs", `${id}.log`);
     const override = this.opts.cmds?.[fw as string];
-    // 1) explicit override (opts.cmds) — raw command string, prompt shell-quoted
+    // 1) explicit override (opts.cmds) — raw command string, prompt shell-quoted;
+    //    a discovery template owns a {prompt} slot that gets the quoted prompt
     // 2) DEFAULT_CMDS (hermes/claude-code) — functions that shell-quote the prompt
     // 3) registry lookup — template with {prompt} placeholder, shell-quoted at substitution
     let full: string;
     if (override !== undefined) {
-      full = `${override} ${shq(prompt)}`;
+      full = override.includes("{prompt}") ? override.replace("{prompt}", shq(prompt)) : `${override} ${shq(prompt)}`;
     } else if (DEFAULT_CMDS[fw]) {
       full = DEFAULT_CMDS[fw](prompt);
     } else if (this.registry) {

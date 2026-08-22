@@ -50,24 +50,39 @@ test("triage prompt mandates acting on tool result events (back-fill reaches dec
   // and with the rule, this wake reached the decide layer (reply action ran)
   expect(chat).toHaveBeenCalledWith("decide", expect.anything(), expect.anything());
 });
-test("end to end: mission -> decide -> spawn -> audit -> rubric evolves", async () => {
+test("end to end: mission -> decide -> spawn -> audit -> rubric evolves (acceptance loop closed by verify)", async () => {
   const runtimeDir = makeRuntime();
   execSync("git init -q", { cwd: runtimeDir });
   execSync("git -c user.email=t@t -c user.name=t add -A && git -c user.email=t@t -c user.name=t commit -qm init", { cwd: runtimeDir });
 
-  // scripted fake LLM: patrol says act; decide spawns; audit review returns patches
-  let phase = 0;
-  const chat = vi.fn(async (slot: string) => {
-    if (slot === "patrol") return { content: phase === 0 ? '{"action":"act"}' : '{"action":"none"}', usage: { promptTokens: 10, completionTokens: 2 } };
-    // decide slots: first is the decision, then sub-agent summary, then audit review
-    phase++;
-    if (phase === 1) return { content: JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "stub job", prompt: "run checks" }] }) , usage: { promptTokens: 50, completionTokens: 20 } };
-    if (phase === 2) return { content: "stub job finished ok", usage: { promptTokens: 5, completionTokens: 5 } };
-    return { content: "RUBRIC PATCH: - verify spawn results before new spawns\nMEMORY PATCH: + stub agent reliable\nMISSION NOTE: none", usage: { promptTokens: 30, completionTokens: 10 } };
+  const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
+  // scripted fake LLM keyed on content, not call order: patrol acts on tick and
+  // verify_due wakes (agent_done wakes cheap-exit); decide spawns once, then
+  // verifies the settled card — SPEC-BUTLER §6 keeps unverified settles blocked
+  let spawned = false;
+  const chat = vi.fn(async (slot: string, msgs: Array<{ role: string; content: string }>) => {
+    const user = String(msgs[1]?.content ?? "");
+    if (slot === "patrol") {
+      // the FIRST tick wakes the decide pass; later ticks cheap-exit (like the
+      // original scripted rig) so the ledger below stays deterministic
+      const mustAct = (!spawned && /NEW EVENTS SINCE LAST WAKE\ntick/.test(user)) || /NEW EVENTS SINCE LAST WAKE\nverify_due/.test(user);
+      return { content: mustAct ? '{"action":"act"}' : '{"action":"none"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    }
+    if (user.includes("verify_due")) {
+      const card = board.list().find((t) => t.title === "stub job")!;
+      return { content: JSON.stringify({ actions: [{ type: "verify", task_id: card.id, progress: 100, verdict: "pass", note: "checks green" }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+    }
+    if (!spawned && user.includes("# TASK BOARD")) {
+      spawned = true;
+      return { content: JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "stub job", prompt: "run checks" }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+    }
+    if (user.includes("# CURRENT RUBRIC")) {
+      return { content: "RUBRIC PATCH: - verify spawn results before new spawns\nMEMORY PATCH: + stub agent reliable\nMISSION NOTE: none", usage: { promptTokens: 30, completionTokens: 10 } };
+    }
+    return { content: "stub job finished ok", usage: { promptTokens: 5, completionTokens: 5 } };
   });
   const llm = { chat } as unknown as LLMClient;
 
-  const board = new TaskBoard(join(runtimeDir, "board.sqlite"));
   const orchestrator = new AgentOrchestrator({ llm, runtimeDir, cmds: { hermes: "packages/ceo-core/test/fixtures/stub-agent.sh" } });
   const auditor = new Auditor({ runtimeDir, reviewEvery: 1 });
   const budget = new BudgetGovernor("burn");
@@ -77,18 +92,24 @@ test("end to end: mission -> decide -> spawn -> audit -> rubric evolves", async 
 
   await loop.runOnce("tick");       // patrol=act -> decide=spawn (fired in background) -> trace + review#1
   await loop.runOnce("tick");       // patrol=none -> cheap exit; audit due -> review#2 applies patches
-  // spawn is backgrounded: the card settles only when the sub-agent exits
+  // spawn is backgrounded: the card settles only when the sub-agent exits —
+  // with the fallback acceptance line, a clean exit is held blocked
+  await until(() => board.list()[0]?.status === "blocked");
+  expect(board.list()[0]?.resultSummary).toMatch(/\[awaiting acceptance/);
+  await loop.runOnce("verify_due: stub job"); // decide verifies -> verdict pass promotes the card
   await until(() => board.list()[0]?.status === "done");
   loop.stop();                      // cancels the agent_done debounce: no stray cycle may spend tokens
 
   const tasks = board.list();
   expect(tasks.length).toBe(1);
   expect(tasks[0].status).toBe("done");
+  expect(tasks[0].verdict).toBe("pass");
   expect(readFileSync(join(runtimeDir, "RUBRIC.md"), "utf8")).toContain("verify spawn results");
   expect(readFileSync(join(runtimeDir, "MEMORY.md"), "utf8")).toContain("stub agent reliable");
-  // full token ledger: run1 = patrol 12 + decide 70 + review#1 10; run2 = patrol 12
-  // + review#2 40; sub-agent summary 12 booked when the card settles -> 156 total
-  expect(budget.line()).toContain("spent 156 tokens");
+  // full token ledger: run1 = patrol 12 + decide 70 + review#1 40; run2 = patrol 12
+  // + review#2 40; run3(verify) = patrol 12 + decide 70 + review#3 40; sub-agent
+  // summary 12 booked when the card settles -> 308 total
+  expect(budget.line()).toContain("spent 308 tokens");
 }, 30_000);
 
 test("invalid spawn action: task created and blocked, later actions still run", async () => {
@@ -278,9 +299,11 @@ test("spawn is backgrounded: the cycle returns immediately, the card settles lat
   await second;
   expect(board.list().length).toBe(1);  // the second cycle spawned nothing new
 
-  release();                     // sub-agent finishes -> card settles, completion re-wakes jex
-  await until(() => board.list()[0]?.status === "done");
-  expect(board.list()[0]?.resultSummary).toBe("all good");
+  release();                     // sub-agent finishes -> card settles (held for acceptance), completion re-wakes jex
+  await until(() => board.list()[0]?.status === "blocked");
+  // SPEC-BUTLER §6: the spawn carried no accept, so the fallback acceptance
+  // line holds the clean exit blocked until a verify lands
+  expect(board.list()[0]?.resultSummary).toMatch(/^all good \[awaiting acceptance/);
   await until(() => loop.wakeCount() === 3); // agent_done event drove one more cycle
   loop.stop();
 }, 10_000);
@@ -443,7 +466,8 @@ test("ws: error degrades to CLI, reconnect re-attaches listeners, backoff resets
   } finally {
     vi.useRealTimers();
   }
-});
+}, 15_000); // the steps are fake-timer driven; the wall budget only absorbs
+            // worker starvation when the whole suite runs in parallel
 
 test("ws: cdp action from decide signals the socket; drop is logged when the link is down", async () => {
   const dir = makeRuntime();
@@ -934,9 +958,13 @@ test("spawn parent/schedule parsing: valid fields reach the board; bad ISO or un
     const byTitle = Object.fromEntries(board.list().map((t) => [t.title, t]));
     expect(byTitle.good).toMatchObject({ parentId: epic.id, scheduledAt: Date.parse("2026-08-21T09:30:00Z"), dueAt: Date.parse("2026-08-21T12:00:00Z") }); // Z-suffixed parses as UTC (Z is never stripped)
     expect(byTitle["bad time"].scheduledAt).toBe(null);   // unparseable time: dropped, spawn alive
-    expect(byTitle["bad time"].status).not.toBe("blocked");
     expect(byTitle["bad parent"].parentId).toBe(null);    // unknown parent: dropped, spawn alive
-    expect(byTitle["bad parent"].status).not.toBe("blocked");
+    // parse problems never block the action: the settle (if it landed) says
+    // "awaiting acceptance", never "invalid spawn action"
+    for (const t of [byTitle["bad time"], byTitle["bad parent"]]) {
+      expect(t.resultSummary).not.toContain("invalid spawn");
+      expect(t.acceptance.length).toBeGreaterThan(0); // SPEC-BUTLER §6 fallback line applied
+    }
     // the good spawn's scheduledAt may sit in the future or past depending on
     // the test machine's timezone: future defers to the gantt pump (stays
     // todo, only 2 immediate launches), past launches now (3)
@@ -969,4 +997,84 @@ test("decide system prompt documents the optional spawn parent/scheduledAt/dueAt
   expect(system).toContain('"scheduledAt"');
   expect(system).toContain('"dueAt"');
   expect(system).toContain("ISO 8601");
+});
+
+// ---- SPEC-BUTLER: reflect action, AGENTS.md injection, boot/delegation doctrine ----
+
+test("reflect action appends a timestamped entry to MEMORY.md and pushes a reflected: event", async () => {
+  const runtimeDir = makeRuntime();
+  const events: string[] = [];
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return { content: JSON.stringify({ actions: [{ type: "reflect", text: "今日教训：派活前先看 AGENTS 清单，别把浏览器任务派给纯编码代理。" }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  const origPush = loop.push.bind(loop);
+  loop.push = (e: string) => { events.push(e); origPush(e); };
+  await loop.runOnce("tick");
+  const memory = readFileSync(join(runtimeDir, "MEMORY.md"), "utf8");
+  expect(memory).toMatch(/\n## \d{4}-\d{2}-\d{2} \d{2}:\d{2}\n今日教训：派活前先看 AGENTS 清单，别把浏览器任务派给纯编码代理。\n$/);
+  expect(memory.startsWith("# MEMORY\n")).toBe(true); // seed header intact
+  expect(events.some((e) => e.startsWith("reflected: 今日教训"))).toBe(true);
+  loop.stop();
+});
+
+test("reflect action: missing file is created with the header; invalid texts error but never kill the cycle", async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "robojex-reflect2-"));
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const chat = vi.fn(async (slot: string) => {
+      if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+      return { content: JSON.stringify({ actions: [
+        { type: "reflect", text: "ok entry" },
+        { type: "reflect", text: "" },            // empty: invalid
+        { type: "reflect", text: "x".repeat(5000) }, // over 4KB: invalid
+      ] }), usage: { promptTokens: 50, completionTokens: 20 } };
+    });
+    const loop = new SchedulerLoop({
+      llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+      orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+    });
+    await loop.runOnce("tick"); // no MEMORY.md existed: reflect creates it with the header
+    const memory = readFileSync(join(runtimeDir, "MEMORY.md"), "utf8");
+    expect(memory).toContain("# MEMORY");
+    expect(memory).toContain("ok entry");
+    expect(memory).not.toContain("xxxx");
+    expect(err.mock.calls.filter((c) => String(c[0]).includes("reflect"))).toHaveLength(2); // both invalids logged, cycle lived
+    loop.stop();
+  } finally { err.mockRestore(); }
+});
+
+test("decide prompt carries the AGENTS.md inventory block; patrol stays lean; blank/missing injects nothing", async () => {
+  const runtimeDir = makeRuntime();
+  writeFileSync(join(runtimeDir, "AGENTS.md"), "claude-code — coding agent [verified]\ngoose — extensible agent [verified]\n");
+  const users: { slot: string; content: string }[] = [];
+  const chat = vi.fn(async (slot: string, msgs: { role: string; content: string }[]) => {
+    if (msgs[1]) users.push({ slot, content: String(msgs[1].content) });
+    return slot === "patrol"
+      ? { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } }
+      : { content: '{"actions":[]}', usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  await loop.runOnce("tick");
+  const decide = users.find((u) => u.slot === "decide")!.content;
+  expect(decide).toContain("# AGENTS (verified on this system)");
+  expect(decide).toContain("claude-code — coding agent [verified]");
+  expect(users.find((u) => u.slot === "patrol")!.content).not.toContain("# AGENTS");
+
+  // blank inventory reads as absent: no empty AGENTS tail is ever served
+  writeFileSync(join(runtimeDir, "AGENTS.md"), "\n");
+  users.length = 0;
+  await loop.runOnce("tick");
+  expect(users.find((u) => u.slot === "decide")!.content).not.toContain("# AGENTS (verified");
+  loop.stop();
 });

@@ -30,6 +30,8 @@ export interface ApiLoopHandle {
   mode?(): string;
   tickN?(): number;                     // decision-cycle count for HUD lag detection; absent = 0
   resolveToolApproval?(id: string, ok: boolean): Promise<string | null>; // settles a pending assist-mode tool write
+  setPolicy?(policy: string): void;     // hot autonomy-policy switch (butler|conservative)
+  policy?(): string;                    // current policy for state snapshots; absent = butler
 }
 
 export interface ApiDeps {
@@ -240,6 +242,7 @@ export class ApiServer implements LoopOutlet {
       mode: this.d.loop.mode?.() ?? "observe",
       tickN: this.d.loop.tickN?.() ?? 0,
       gear: this.d.gear?.current() ?? "balanced",
+      policy: this.d.loop.policy?.() ?? "butler",
       mission: read("MISSION.md"), rubric: read("RUBRIC.md"), memory: read("MEMORY.md"),
       chat: this.ring.slice(),
       version: this.d.version ?? VERSION,
@@ -485,7 +488,7 @@ export class ApiServer implements LoopOutlet {
   // -- Settings CRUD -----------------------------------------------------
   // Safe subset of Config keys the UI may read/write. API key is masked on read.
   private static SETTINGS_KEYS = ["baseUrl", "apiKey", "patrolModel", "decideModel",
-    "budgetMode", "dailyTokens", "tickMs", "takeoverUrl", "apiPort", "apiHost", "autonomyGear"] as const;
+    "budgetMode", "dailyTokens", "tickMs", "takeoverUrl", "apiPort", "apiHost", "autonomyGear", "policy"] as const;
 
   private getSettings(res: ServerResponse): void {
     const cfgPath = join(this.d.runtimeDir, "config.json");
@@ -494,6 +497,7 @@ export class ApiServer implements LoopOutlet {
     const safe: Record<string, unknown> = {};
     for (const k of ApiServer.SETTINGS_KEYS) {
       if (k in cfg) safe[k] = k === "apiKey" ? maskKey(String(cfg[k])) : cfg[k];
+      else if (k === "policy") safe.policy = "butler"; // effective default — the UI badge needs it even when unset
     }
     json(res, 200, safe);
   }
@@ -512,7 +516,7 @@ export class ApiServer implements LoopOutlet {
         json(res, 400, { error: `${numKey} must be a number` }); return;
       }
     }
-    for (const strKey of ["baseUrl", "apiKey", "patrolModel", "decideModel", "takeoverUrl", "apiHost", "budgetMode", "autonomyGear"] as const) {
+    for (const strKey of ["baseUrl", "apiKey", "patrolModel", "decideModel", "takeoverUrl", "apiHost", "budgetMode", "autonomyGear", "policy"] as const) {
       const v = body[strKey];
       if (v !== undefined && v !== null && typeof v !== "string") {
         json(res, 400, { error: `${strKey} must be a string` }); return;
@@ -520,6 +524,9 @@ export class ApiServer implements LoopOutlet {
     }
     if (body.budgetMode && body.budgetMode !== "burn" && body.budgetMode !== "budgeted") {
       json(res, 400, { error: "budgetMode must be burn|budgeted" }); return;
+    }
+    if (body.policy !== undefined && body.policy !== null && body.policy !== "butler" && body.policy !== "conservative") {
+      json(res, 400, { error: "policy must be butler|conservative" }); return;
     }
     if (body.autonomyGear !== undefined && body.autonomyGear !== null && !isGearId(body.autonomyGear)) {
       json(res, 400, { error: `autonomyGear must be one of ${GEAR_IDS.join("|")}` }); return;
@@ -537,6 +544,11 @@ export class ApiServer implements LoopOutlet {
     let note = "Restart ceo-core to apply changes";
     if (isGearId(body.autonomyGear) && this.d.gear && this.d.gear.current() !== body.autonomyGear) {
       try { this.gearSwitch(body.autonomyGear); note = `gear switched to ${body.autonomyGear}`; } catch { /* config already written */ }
+    }
+    // policy hot-applies the same way: the loop's tool gate flips immediately
+    // (butler = full + blacklist, conservative = mode-driven), no restart
+    if ((body.policy === "butler" || body.policy === "conservative") && this.d.loop.setPolicy) {
+      this.d.loop.setPolicy(body.policy);
     }
     json(res, 200, { ok: true, note });
   }

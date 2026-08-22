@@ -458,17 +458,20 @@ test("cycle frame fires every decision cycle (even patrol-none); tasks frames fo
   expect(first.cost).toBe(12); // patrol only
 
   await loop.runOnce("tick"); // decide spawns; the card settles in the background
-  await until(() => rig.board.list()[0]?.status === "done");
+  await until(() => rig.board.list()[0]?.status === "blocked");
   await until(() => {
     const tf = c.frames.filter((f) => f.t === "tasks");
-    return tf.length > 0 && Array.isArray(tf[tf.length - 1]!.tasks) && (tf[tf.length - 1]!.tasks![0] as { status?: string }).status === "done";
+    return tf.length > 0 && Array.isArray(tf[tf.length - 1]!.tasks) && (tf[tf.length - 1]!.tasks![0] as { status?: string }).status === "blocked";
   });
   const cycles = c.frames.filter((f) => f.t === "cycle");
   expect(cycles.length).toBeGreaterThanOrEqual(2);
   expect(cycles[1]!.actions).toHaveLength(1);
   const tasksFrames = c.frames.filter((f) => f.t === "tasks");
-  expect(tasksFrames.length).toBeGreaterThanOrEqual(2); // created/running + settled done
-  expect(tasksFrames[tasksFrames.length - 1]!.tasks![0]).toMatchObject({ title: "stub job", status: "done", resultSummary: "all good" });
+  expect(tasksFrames.length).toBeGreaterThanOrEqual(2); // created/running + settled blocked
+  // SPEC-BUTLER §6: no accept was given, so the fallback acceptance line holds
+  // the card blocked until a verify lands — the settle message says so
+  expect(tasksFrames[tasksFrames.length - 1]!.tasks![0]).toMatchObject({ title: "stub job", status: "blocked" });
+  expect(String((tasksFrames[tasksFrames.length - 1]!.tasks![0] as { resultSummary?: string }).resultSummary)).toMatch(/^all good \[awaiting acceptance/);
   loop.stop(); // cancels the agent_done debounce before it spends tokens
 });
 
@@ -507,6 +510,7 @@ test("POST /api/mode with takeover link down (desktop-less loop): local fallback
     llm: { chat } as unknown as LLMClient, board: rig.board, ctx: new ContextAssembler(),
     orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir: rig.runtimeDir, reviewEvery: 1000 }), budget: rig.budget, runtimeDir: rig.runtimeDir,
+    policy: "conservative", // this suite pins the mode-driven gate; butler's full gate has its own suite
     // no takeoverUrl: desktop-less jex, sendCtrl can never succeed
   });
   const api = makeApi(rig, loop);

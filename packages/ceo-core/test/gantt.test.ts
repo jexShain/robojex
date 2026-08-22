@@ -177,3 +177,71 @@ describe("pumpGantt", () => {
     expect(patrolSys).toContain("due_spawn");
   });
 });
+
+// SPEC-BUTLER §6: the chase pump — live tasks past dueAt get a "task due:"
+// nudge every >=60s (and at least one tick), settled tasks stop nudging.
+describe("task_due pump", () => {
+  it("nudges a running task past its dueAt once per debounce window", () => {
+    const events: string[] = [];
+    const b2 = new TaskBoard(join(dir, "td1.sqlite"));
+    const t = b2.add({ title: "late job", dueAt: NOW - 1000 });
+    b2.update(t.id, { status: "running" });
+    const { loop } = ganttRig(b2, dir, events);
+    loop.pumpGantt(NOW);
+    loop.pumpGantt(NOW + 30_000); // inside the 60s window: throttled
+    const nudges = events.filter((e) => e.startsWith("task due:"));
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0]).toContain("late job");
+    expect(nudges[0]).toContain("检查进度");
+    loop.pumpGantt(NOW + 61_000); // past the window: chase again
+    expect(events.filter((e) => e.startsWith("task due:"))).toHaveLength(2);
+  });
+
+  it("todo tasks past due are chased too; done/blocked and future-due tasks are not", () => {
+    const events: string[] = [];
+    const b2 = new TaskBoard(join(dir, "td2.sqlite"));
+    const todo = b2.add({ title: "todo-late", dueAt: NOW - 1 });
+    void todo;
+    b2.add({ title: "done-late", dueAt: NOW - 1 });
+    b2.add({ title: "blocked-late", dueAt: NOW - 1 });
+    b2.add({ title: "future", dueAt: NOW + 60_000 });
+    b2.add({ title: "no-due" });
+    const ids = b2.list();
+    b2.update(ids.find((t) => t.title === "done-late")!.id, { status: "done" });
+    b2.update(ids.find((t) => t.title === "blocked-late")!.id, { status: "blocked" });
+    const { loop } = ganttRig(b2, dir, events);
+    loop.pumpGantt(NOW);
+    const nudges = events.filter((e) => e.startsWith("task due:"));
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0]).toContain("todo-late");
+  });
+
+  it("a settled task releases its debounce slot; a re-opened one is chased again", () => {
+    const events: string[] = [];
+    const b2 = new TaskBoard(join(dir, "td3.sqlite"));
+    const t = b2.add({ title: "flappy", dueAt: NOW - 1 });
+    b2.update(t.id, { status: "running" });
+    const { loop } = ganttRig(b2, dir, events);
+    loop.pumpGantt(NOW); // first nudge
+    b2.update(t.id, { status: "done" });
+    loop.pumpGantt(NOW + 1000); // settled: no nudge, slot released
+    b2.update(t.id, { status: "todo" }); // re-opened
+    loop.pumpGantt(NOW + 2000); // fresh slot: chased immediately even inside 60s
+    const nudges = events.filter((e) => e.startsWith("task due:"));
+    expect(nudges).toHaveLength(2);
+  });
+
+  it("the debounce floor is max(60s, one tick): a turbo tick cannot flood the queue", () => {
+    const events: string[] = [];
+    const b2 = new TaskBoard(join(dir, "td4.sqlite"));
+    const t = b2.add({ title: "turbo job", dueAt: NOW - 1 });
+    b2.update(t.id, { status: "running" });
+    const { loop } = ganttRig(b2, dir, events);
+    loop.setTickMs(15_000); // turbo cadence
+    loop.pumpGantt(NOW);
+    loop.pumpGantt(NOW + 15_000); // one turbo tick later: still inside the 60s floor
+    loop.pumpGantt(NOW + 30_000);
+    expect(events.filter((e) => e.startsWith("task due:"))).toHaveLength(1);
+    loop.stop();
+  });
+});

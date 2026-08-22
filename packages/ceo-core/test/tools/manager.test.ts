@@ -1,10 +1,10 @@
 // packages/ceo-core/test/tools/manager.test.ts
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ToolRegistry, type ToolCtx, type ToolEntry } from "../../src/tools/registry.js";
-import { ToolManager, P1_TOOLS } from "../../src/tools/manager.js";
+import { ToolManager, P1_TOOLS, commandHead } from "../../src/tools/manager.js";
 
 let dir: string; let reg: ToolRegistry; let mgr: ToolManager; let ctx: ToolCtx;
 
@@ -135,6 +135,51 @@ describe("sensitive paths", () => {
       const r = await mgr.call("write_file", { path: p }, "full");
       expect(r).toMatch(/blocked.*sensitive/i);
     }
+  });
+});
+
+describe("hard blacklist (SPEC-BUTLER §1: every gate, every policy)", () => {
+  beforeEach(() => {
+    for (const e of P1_TOOLS()) reg.register(e); // the real terminal + file tools
+    mgr = new ToolManager({ registry: reg, ctx });
+  });
+  it("commandHead: absolute path basenames, case and .exe folded away", () => {
+    expect(commandHead("rm -rf /")).toBe("rm");
+    expect(commandHead("/bin/rm -rf /")).toBe("rm");
+    expect(commandHead("C:\\tools\\RM.EXE -rf x")).toBe("rm");
+    expect(commandHead("  Remove-Item -Recurse x ")).toBe("remove-item");
+    expect(commandHead("grep -c foo bar")).toBe("grep");
+  });
+  it("terminal refuses deletion-class heads under full (butler's gate)", async () => {
+    for (const cmd of ["rm -rf /tmp/x", "rmdir /tmp/x", "del x.txt", "erase x.txt", "shred secret.txt", "unlink link", "Remove-Item -Recurse dir", "/bin/rm -f x"]) {
+      const r = await mgr.call("terminal", { command: cmd, timeout: 5 }, "full");
+      expect(r, cmd).toMatch(/error: blocked destructive command/);
+    }
+    expect(mgr.pendingApprovals()).toHaveLength(0); // refused, never queued
+  });
+  it("terminal runs ordinary commands untouched", async () => {
+    const r = await mgr.call("terminal", { command: "echo hello-blacklist", timeout: 10 }, "full");
+    expect(r).toContain("hello-blacklist");
+    expect(r).not.toMatch(/blocked/);
+  });
+  it("write_file/patch refuse targets inside system directories (posix + windows forms, case-insensitive)", async () => {
+    for (const p of ["/etc/passwd", "/usr/local/bin/tool", "/bin/ls-hack", "/sbin/x", "/boot/grub/x", "/sys/x", "/proc/x", "/dev/x",
+      "C:\\Windows\\System32\\drivers\\etc\\hosts", "c:/windows/system32/x", "C:\\Program Files\\App\\config.ini", "c:\\PROGRAM FILES (x86)\\App\\x"]) {
+      const w = await mgr.call("write_file", { path: p, content: "x" }, "full");
+      expect(w, p).toMatch(/error: blocked system path/);
+      const pt = await mgr.call("patch", { mode: "replace", path: p, old_string: "a", new_string: "b" }, "full");
+      expect(pt, p).toMatch(/error: blocked system path/);
+    }
+  });
+  it("write_file to user paths stays open (a project 'etc-notes' dir is not /etc)", async () => {
+    const target = join(dir, "etc-notes", "x.txt");
+    const r = await mgr.call("write_file", { path: target, content: "fine" }, "full");
+    expect(r).toMatch(/^wrote \d+ bytes to /);
+    expect(readFileSync(target, "utf8")).toBe("fine");
+  });
+  it("reads of system paths are NOT blocked (looking is always allowed; only writes are)", async () => {
+    const r = await mgr.call("read_file", { path: "/etc/hostname" }, "full");
+    expect(r).not.toMatch(/blocked system path/); // may be file-not-found on exotic hosts, never blacklisted
   });
 });
 

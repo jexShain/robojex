@@ -47,7 +47,9 @@ interface Rig {
 
 // Full-chain rig: real board/auditor/budget/context assembler + real
 // ToolManager over P1_TOOLS; only the LLM and the takeover socket are faked.
-function makeRig(decide: unknown, opts: { ws?: boolean } = {}): Rig {
+// policy defaults to conservative so this suite keeps pinning the mode-driven
+// gate; butler has its own describe below.
+function makeRig(decide: unknown, opts: { ws?: boolean; policy?: "butler" | "conservative" } = {}): Rig {
   const dir = makeRuntime();
   const board = new TaskBoard(join(dir, "board.sqlite"));
   const registry = new ToolRegistry();
@@ -75,7 +77,7 @@ function makeRig(decide: unknown, opts: { ws?: boolean } = {}): Rig {
     llm: { chat } as unknown as LLMClient, board, ctx: new ContextAssembler(),
     orchestrator: { spawn: vi.fn(async () => ({ exitCode: 0, summary: "" })), getRegistry: () => null } as unknown as AgentOrchestrator,
     auditor: new Auditor({ runtimeDir: dir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"),
-    runtimeDir: dir, builtinTools: mgr,
+    runtimeDir: dir, builtinTools: mgr, policy: opts.policy ?? "conservative",
     ...(ws ? { takeoverUrl: "ws://fake.local", wsFactory: () => ws as unknown as WsLike } : {}),
   });
   const events: string[] = [];
@@ -193,6 +195,54 @@ describe("effective tool gate (gateForTools)", () => {
     expect(rig.events.some((e) => e.includes("created") && e.includes("ship the demo"))).toBe(true);
     await until(() => rig.events.some((e) => e.includes("needs-approval"))); // effective assist: queued, not executed
     expect(existsSync(tmpNote)).toBe(false);
+    rig.loop.stop();
+  });
+});
+
+describe("butler policy (SPEC-BUTLER §1)", () => {
+  it("gateForTools is full under every mode — even observe with a live takeover link", () => {
+    const rig = makeRig({ actions: [] }, { ws: true, policy: "butler" });
+    rig.loop.start(60_000);
+    expect(rig.loop.mode()).toBe("observe");           // takeover semantics untouched...
+    expect(rig.loop.gateForTools()).toBe("full");      // ...but jex's tools run at full
+    rig.ws!.emit("message", JSON.stringify({ t: "evt", type: "mode_changed", mode: "observe" }));
+    expect(rig.loop.gateForTools()).toBe("full");      // observe + live link still full under butler
+    rig.ws!.readyState = 3;                            // link dropped: full stays full
+    expect(rig.loop.gateForTools()).toBe("full");
+    rig.loop.stop();
+  });
+
+  it("butler executes non-internal writes with no approval round (blacklist still refuses)", async () => {
+    const tmpOk = join(tmpdir(), `rjbutler-${process.pid}-${Date.now()}-ok.txt`);
+    const rig = makeRig({ actions: [
+      { type: "tool_call", tool: "write_file", args: { path: tmpOk, content: "直通" } },
+      { type: "tool_call", tool: "terminal", args: { command: "rm -rf /tmp/x", timeout: 5 } },
+    ] }, { policy: "butler" });
+    expect(rig.loop.mode()).toBe("observe"); // desktop-less boot: observe would freeze conservative jex
+    await rig.loop.runOnce("boot");
+    await until(() => rig.events.some((e) => e.startsWith("tool write_file ->")));
+    expect(readFileSync(tmpOk, "utf8")).toBe("直通");   // wrote with zero approval prompts
+    expect(rig.mgr.pendingApprovals()).toHaveLength(0); // nothing ever queued
+    await until(() => rig.events.some((e) => e.startsWith("tool terminal ->")));
+    expect(rig.events.some((e) => e.startsWith("tool terminal -> error: blocked destructive command"))).toBe(true); // hard blacklist
+    rig.loop.stop();
+  });
+
+  it("setPolicy hot-switches: conservative approval queue -> butler full, frame + wake event emitted", async () => {
+    const tmp = join(tmpdir(), `rjbutler-${process.pid}-${Date.now()}-hot.txt`);
+    const rig = makeRig({ actions: [{ type: "tool_call", tool: "write_file", args: { path: tmp, content: "x" } }] }, { policy: "conservative" });
+    const frames: Record<string, unknown>[] = [];
+    rig.loop.setOutlet({ chatOut: () => {}, frame: (f) => frames.push(f) });
+    expect(rig.loop.gateForTools()).toBe("assist"); // desktop-less conservative: degraded assist
+    rig.loop.setPolicy("butler");
+    expect(rig.loop.policy()).toBe("butler");
+    expect(rig.loop.gateForTools()).toBe("full");
+    expect(frames.some((f) => f.t === "policy" && f.policy === "butler")).toBe(true);
+    rig.loop.setPolicy("galactic"); // unknown: ignored
+    expect(rig.loop.policy()).toBe("butler");
+    await rig.loop.runOnce("boot");
+    await until(() => rig.events.some((e) => e.startsWith("tool write_file -> wrote")));
+    expect(existsSync(tmp)).toBe(true);
     rig.loop.stop();
   });
 });

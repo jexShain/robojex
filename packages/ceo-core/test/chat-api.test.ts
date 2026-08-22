@@ -10,7 +10,7 @@ import { BudgetGovernor } from "../src/budget.js";
 import { LLMClient, type Slot } from "../src/llm.js";
 import { TaskBoard } from "../src/board.js";
 import { seedRuntimeFiles } from "../src/index.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
@@ -173,6 +173,34 @@ test("PUT /api/settings accepts autonomyGear and hot-applies it", async () => {
   expect(bad.status).toBe(400);
   const settings = await (await fetch(`${base(rig.api)}/api/settings`)).json() as Record<string, unknown>;
   expect(settings.autonomyGear).toBe("eco");
+});
+
+test("PUT /api/settings accepts policy (butler|conservative): passthrough GET, hot apply, invalid 400; state carries policy", async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "robojex-chatapi-"));
+  seedRuntimeFiles(runtimeDir);
+  writeFileSync(join(runtimeDir, "config.json"), JSON.stringify({ policy: "conservative" }, null, 2));
+  const setPolicy = vi.fn();
+  const api = new ApiServer({
+    port: 0, board: new TaskBoard(join(runtimeDir, "board.sqlite")), budget: new BudgetGovernor("burn"),
+    runtimeDir, loop: { push: vi.fn(), setPolicy, policy: () => "conservative" },
+  });
+  servers.push(api);
+  await api.start();
+
+  const s0 = await (await fetch(`${base(api)}/api/settings`)).json() as Record<string, unknown>;
+  expect(s0.policy).toBe("conservative"); // whitelisted passthrough
+
+  const res = await fetch(`${base(api)}/api/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ policy: "butler" }) });
+  expect(res.status).toBe(200);
+  expect(setPolicy).toHaveBeenCalledWith("butler"); // hot-applied, no restart
+  const cfg = JSON.parse(readFileSync(join(runtimeDir, "config.json"), "utf8")) as Record<string, unknown>;
+  expect(cfg.policy).toBe("butler"); // and persisted
+
+  const bad = await fetch(`${base(api)}/api/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ policy: "anarchy" }) });
+  expect(bad.status).toBe(400);
+
+  const state = await (await fetch(`${base(api)}/api/state`)).json() as { policy?: string };
+  expect(state.policy).toBe("conservative"); // state reports the live loop, not the file
 });
 
 test("unwired routes answer 503 instead of crashing", async () => {

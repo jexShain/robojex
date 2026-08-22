@@ -27,6 +27,31 @@ const SENSITIVE = [
 
 export type Gate = "observe" | "assist" | "full";
 
+/* ───────────── hard blacklist (SPEC-BUTLER §1) ─────────────
+ * Policy buys autonomy, never the right to delete files or rewrite the OS.
+ * These refusals apply at EVERY gate under EVERY policy, before any approval
+ * logic — butler's full gate still answers "no" here. */
+
+// deletion-class commands: the first token of a terminal command (basename of
+// an absolute path, case-insensitive, .exe stripped) must never be one of these
+const DELETE_COMMANDS = new Set(["rm", "rmdir", "del", "erase", "shred", "unlink", "remove-item"]);
+
+/** First token of a shell command line: /bin/rm -> rm, C:\tools\rm.exe -> rm.
+ *  Env assignments and options are not special-cased — the head is the head. */
+export function commandHead(command: string): string {
+  const first = command.trim().split(/\s+/)[0] ?? "";
+  const base = first.split(/[\\/]/).pop() ?? first;
+  return base.toLowerCase().replace(/\.exe$/i, "");
+}
+
+// system directories no jex write may touch: unix FHS + the Windows twins.
+// Matched on forward-slash, lowercased forms with a path-boundary check.
+const SYSTEM_DIRS = ["/etc", "/usr", "/bin", "/sbin", "/boot", "/sys", "/proc", "/dev", "c:/windows", "c:/program files", "c:/program files (x86)"];
+
+function inSystemDir(fwdLower: string): boolean {
+  return SYSTEM_DIRS.some((d) => fwdLower === d || fwdLower.startsWith(d + "/"));
+}
+
 export function P1_TOOLS(): ToolEntry[] {
   return [...fileTools(), ...terminalTools(), ...boardTools(), ...miscBridges()];
 }
@@ -88,6 +113,27 @@ export class ToolManager {
     return null;
   }
 
+  // hard blacklist: destructive terminal heads and system-dir write targets
+  // are refused under every policy and every gate — autonomy never buys these.
+  // Both the raw and the resolved path are checked, so "C:\Windows\..." and
+  // "~/etc" style forms cannot dodge via separator or case games.
+  private hardBlacklist(name: string, args: Record<string, unknown>): string | null {
+    if (name === "terminal" && typeof args.command === "string") {
+      const head = commandHead(args.command);
+      if (head && DELETE_COMMANDS.has(head)) {
+        return `blocked destructive command: ${args.command.trim().split(/\s+/)[0]} (tool terminal refused; deletions are off-limits — delegate cleanup to the human)`;
+      }
+    }
+    if ((name === "write_file" || name === "patch") && typeof args.path === "string") {
+      for (const form of [args.path, this.normalizePath(args.path)]) {
+        if (inSystemDir(form.replaceAll("\\", "/").toLowerCase())) {
+          return `blocked system path: ${args.path} (tool ${name} refused; system directories are off-limits)`;
+        }
+      }
+    }
+    return null;
+  }
+
   async call(name: string, args: Record<string, unknown>, gate: Gate): Promise<string> {
     const e = this.opts.registry.get(name);
     if (!e) return `error: unknown tool '${name}' — available: ${this.opts.registry.names().join(", ")}`;
@@ -100,6 +146,8 @@ export class ToolManager {
     if (!this.available(e)) return `error: tool '${name}' is not available in this environment`;
     const blocked = this.guardPaths(name, args);
     if (blocked) return `error: ${blocked}`;
+    const hard = this.hardBlacklist(name, args);
+    if (hard) return `error: ${hard}`;
     // internal writes skip the assist approval round: they touch no user system
     if (e.writes && !e.internal && gate === "assist") {
       // dedupe: a loop stuck on one blocked task re-requests the same call

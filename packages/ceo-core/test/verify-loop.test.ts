@@ -70,6 +70,27 @@ describe("verify action", () => {
 });
 
 describe("done tightening", () => {
+  it("SPEC-BUTLER §6 fallback: a spawn without accept still gets an acceptance line (prompt head + verify mandate) and blocks until verified", async () => {
+    const { loop } = rig(() => JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "loose job", prompt: "整理桌面文件并汇报" }] }));
+    await loop.runOnce("chat: go");
+    await new Promise((r) => setTimeout(r, 800)); // spawn settles in background
+    const row = board.list().find((x) => x.title === "loose job")!;
+    expect(row).toBeTruthy();
+    expect(row.acceptance).toContain("整理桌面文件并汇报".slice(0, 80));
+    expect(row.acceptance).toContain("verify 并给出 verdict");
+    expect(row.status).toBe("blocked"); // clean exit held for the missing verify
+    expect(row.resultSummary).toMatch(/\[awaiting acceptance/);
+  });
+  it("fallback acceptance is capped at the prompt head (80 chars) and survives very long prompts", async () => {
+    const long = "长".repeat(200);
+    const { loop } = rig(() => JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "long job", prompt: long }] }));
+    await loop.runOnce("chat: go");
+    await new Promise((r) => setTimeout(r, 800));
+    const row = board.list().find((x) => x.title === "long job")!;
+    // 80 chars of prompt + the mandate tail — never the whole 200-char prompt
+    expect(row.acceptance.startsWith("长".repeat(80))).toBe(true);
+    expect(row.acceptance).not.toContain("长".repeat(81));
+  });
   it("sub-agent success with acceptance but verdict != pass blocks the task", async () => {
     const t = board.add({ title: "strict job", acceptance: "tests green" });
     const { loop } = rig(() => JSON.stringify({ actions: [{ type: "spawn", framework: "hermes", title: "strict job", prompt: "do it", accept: "tests green" }] }));

@@ -1,5 +1,5 @@
 // packages/ceo-core/src/loop.ts
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,20 @@ export interface WsLike {
 const WS_OPEN = 1;
 const RECONNECT_MAX_MS = 60_000;
 
+/* ───────────────── autonomy policy (SPEC-BUTLER §1) ───────────────── */
+
+export type PolicyId = "butler" | "conservative";
+
+/** Config validation: butler (max autonomy — full tool gate, hard blacklist
+ *  only) is the default; anything unparseable warns and degrades to it, the
+ *  same contract resolveBudgetConfig gives the other knobs. */
+export function resolvePolicy(raw: unknown): PolicyId {
+  if (raw === undefined || raw === null || raw === "") return "butler";
+  if (raw === "butler" || raw === "conservative") return raw;
+  console.warn(`[loop] invalid policy ${JSON.stringify(raw)}: falling back to butler`);
+  return "butler";
+}
+
 // Outlet into the operator-facing api surface: jex chat replies and lifecycle
 // frames (cycle/tasks/mode/budget + hud notices) ride one WS broadcast; ApiServer implements it.
 export interface LoopOutlet {
@@ -47,6 +61,7 @@ export interface LoopDeps {
   scout?: ToolScout | null;             // autonomous tool inventory; absent = wiring off
   tentacles?: TentacleManager | null;   // external connector system; absent = wiring off
   builtinTools?: ToolManager | null;    // direct-capability layer: tool_call actions
+  policy?: PolicyId;                    // autonomy doctrine; butler (default) forces the tool gate to full
   wsFactory?: (url: string) => WsLike;   // test seam: substitute sockets
   outlet?: LoopOutlet | null;               // api broadcast; absent = headless (frames dropped)
   reconnectBaseMs?: number;              // test seam: first reconnect delay
@@ -72,7 +87,11 @@ export class SchedulerLoop {
   private stopped = true; // no reconnect machinery may run before start()
   private running = false;
   private idleWaiters: (() => void)[] = [];
-  constructor(private d: LoopDeps) {}
+  // autonomy policy: butler runs the builtin tool layer at full (the hard
+  // blacklist in the tool manager guards the sharp edges); conservative keeps
+  // the mode-driven observe/assist gate
+  private policyNow: PolicyId = "butler";
+  constructor(private d: LoopDeps) { if (d.policy) this.policyNow = d.policy; }
 
   wakeCount(): number { return this.wakeN; }
 
@@ -119,6 +138,9 @@ export class SchedulerLoop {
   // verify pump idempotence: tasks already nudged for acceptance stay quiet
   // for 5 minutes; lost on restart, re-nudge is idempotent
   private verifyNudgedAt = new Map<string, number>();
+  // task_due pump debounce: one chase nudge per task per window (>=60s and at
+  // least one tick, so a turbo tick cannot flood the queue); lost on restart
+  private taskDueNudgedAt = new Map<string, number>();
 
   mode(): Gate { return this.modeNow; }
 
@@ -132,12 +154,31 @@ export class SchedulerLoop {
     return true;
   }
 
-  /** Effective gate for the builtin tool layer. observe exists to protect the
-   *  desktop takeoverd drives; with the link down there is no desktop to
-   *  protect, and a hard observe would only freeze jex's own reversible work
-   *  — so tools run at assist (writes still face the approval queue).
-   *  modeNow itself is untouched: towards takeoverd the mode stays observe. */
+  policy(): PolicyId { return this.policyNow; }
+
+  /** Hot policy switch (settings API / setModeLocal-style): butler forces the
+   *  builtin tool layer to full — no approval rounds, the hard blacklist in
+   *  the tool manager refuses deletions and system-dir writes; conservative
+   *  restores the mode-driven gate. Desktop takeover semantics (sendCtrl,
+   *  modeNow) are untouched. Unknown values are ignored, like setModeLocal. */
+  setPolicy(p: string): void {
+    if (p !== "butler" && p !== "conservative") return;
+    if (p === this.policyNow) return;
+    this.policyNow = p;
+    this.d.outlet?.frame({ t: "policy", policy: p });
+    this.push(`policy_changed -> ${p}`);
+  }
+
+  /** Effective gate for the builtin tool layer. Under butler the gate is
+   *  always full: autonomy is maximal and the tool manager's hard blacklist
+   *  (destructive commands, system-dir writes, sensitive paths) is the only
+   *  refusal layer. Under conservative, observe exists to protect the desktop
+   *  takeoverd drives; with the link down there is no desktop to protect, and
+   *  a hard observe would only freeze jex's own reversible work — so tools
+   *  run at assist (writes still face the approval queue). modeNow itself is
+   *  untouched: towards takeoverd the mode stays observe. */
   gateForTools(): Gate {
+    if (this.policyNow === "butler") return "full";
     if (this.modeNow === "observe" && !this.linked()) return "assist";
     return this.modeNow;
   }
@@ -212,6 +253,20 @@ export class SchedulerLoop {
       this.push(`verify_due: ${t.id.slice(0, 8)} ${t.title} accept: ${t.acceptance.slice(0, 120)}`);
       this.d.outlet?.hud?.("verify_due", t.id);
     }
+    // task_due chase pump (SPEC-BUTLER §6): every tick the board is scanned
+    // for live tasks past their dueAt — jex gets a nudge to check progress,
+    // chase the worker or reassign. Debounced per task to >=60s and at least
+    // one tick; settled tasks release their slot.
+    const dueDebounce = Math.max(60_000, this.tickMsNow);
+    for (const t of this.d.board.list()) {
+      if (t.status !== "todo" && t.status !== "running") { this.taskDueNudgedAt.delete(t.id); continue; }
+      if (t.dueAt === null || t.dueAt > now) continue;
+      const last = this.taskDueNudgedAt.get(t.id) ?? 0;
+      if (now - last < dueDebounce) continue;
+      this.taskDueNudgedAt.set(t.id, now);
+      this.push(`task due: ${t.title} — 检查进度，催办或重派`);
+      this.d.outlet?.hud?.("task_due", t.id);
+    }
   }
 
   // wire the api broadcast after construction (the api itself needs this loop)
@@ -281,7 +336,7 @@ export class SchedulerLoop {
       });
       // layer 1: cheap patrol triage
       const p = await this.d.llm.chat("patrol", [
-        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: always act on it. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, or needs its acceptance checked — always act)." },
+        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: always act on it. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
       let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
@@ -294,9 +349,14 @@ export class SchedulerLoop {
       const tentacles = this.d.tentacles?.listBlock() ?? ""; // connector inventory rides the same tail
       const builtin = this.d.builtinTools?.schemasBlock() ?? ""; // builtin tool schemas ride it too
       const agentsBlock = this.d.orchestrator.getRegistry()?.toPromptBlock() ?? "";
+      // the agent-scout's verified inventory (AGENTS.md) rides next to the
+      // registry block: registry = what could spawn, AGENTS = what is actually
+      // installed on this machine; blank or missing files inject nothing
+      let agentsDoc = "";
+      try { agentsDoc = readFileSync(join(this.d.runtimeDir, "AGENTS.md"), "utf8").trim(); } catch { /* not scouted yet */ }
       const decideMessages = [
-        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)","accept":"acceptance criteria (optional)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tool_call","tool":"<name from BUILTIN TOOLS>","args":{}} | {"type":"verify","task_id":"...","progress":0-100,"verdict":"pass|partial|fail","note":"one-line evidence"} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. tool_call runs one builtin tool directly (see # BUILTIN TOOLS in the context): small file, terminal, memory, or board work needs no sub-agent, and the result arrives as an event on the next wake. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself. You are an orchestrator and acceptance judge, never a worker: ALL productive work goes to coding agents via spawn; builtin tools are for LOOKING (verifying outputs, checking state), never for building.` },
-        { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") + (builtin ? `\n\n${builtin}` : "") },
+        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)","accept":"acceptance criteria: one objectively checkable success line (a fallback line is added when missing)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tool_call","tool":"<name from BUILTIN TOOLS>","args":{}} | {"type":"verify","task_id":"...","progress":0-100,"verdict":"pass|partial|fail","note":"one-line evidence"} | {"type":"reflect","text":"durable lesson distilled from this cycle, appended to MEMORY with a timestamp (non-empty, <=4KB)"} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. tool_call runs one builtin tool directly (see # BUILTIN TOOLS in the context): small file, terminal, memory, or board work needs no sub-agent, and the result arrives as an event on the next wake. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself. You are an orchestrator and acceptance judge, never a worker: ALL productive work goes to coding agents via spawn; builtin tools are for LOOKING (verifying outputs, checking state), never for building. reflect banks a durable lesson into MEMORY — the butler's idle-cycle move when no task is ready: reflect, catch up on unverified work, or refine MISSION, instead of inventing busywork.` },
+        { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (agentsDoc ? `\n\n# AGENTS (verified on this system)\n${agentsDoc}` : "") + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") + (builtin ? `\n\n${builtin}` : "") },
       ] satisfies ChatMsg[];
       const decideMax = gdef.decideMaxTokens; // the gear buys the decide budget
       let dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: decideMax }); // big contexts (tools+tentacles inventories) starve reasoning models below this
@@ -325,11 +385,16 @@ export class SchedulerLoop {
             const parentId = this.spawnParent(a.parent);
             const scheduledAt = this.spawnTime(a.scheduledAt, "scheduledAt");
             const dueAt = this.spawnTime(a.dueAt, "dueAt");
+            // SPEC-BUTLER §6: every spawned task carries an acceptance line —
+            // a decide model that forgot one gets the prompt head plus the
+            // verify mandate as the bar, so nothing settles unverified
+            const acceptGiven = typeof a.accept === "string" && a.accept.length > 0;
+            const acceptance = acceptGiven ? a.accept as string
+              : `${(promptOk ? a.prompt : typeof a.title === "string" && a.title ? a.title : "task").toString().slice(0, 80)}（完成后 jex 须用只读工具 verify 并给出 verdict）`;
             const t = this.d.board.add({
               title: a.title ?? (promptOk ? a.prompt.slice(0, 60) : "(spawn without prompt)"),
               assignee: fwOk ? a.framework : String(a.framework),
-              parentId, scheduledAt, dueAt,
-              ...(typeof a.accept === "string" && a.accept ? { acceptance: a.accept } : {}),
+              parentId, scheduledAt, dueAt, acceptance,
             });
             taskId = t.id;
             if (!fwOk || !promptOk) {
@@ -382,6 +447,19 @@ export class SchedulerLoop {
             // mission recoverable, then jex's write-through lands on top
             this.d.auditor.snapshotRuntime();
             writeFileSync(join(this.d.runtimeDir, "MISSION.md"), a.text);
+          } else if (a.type === "reflect") {
+            // SPEC-BUTLER §5: append-only experience entry into MEMORY.md —
+            // the butler's idle-cycle consolidation; the activity stream gets
+            // a visible "jex is reflecting" card
+            if (typeof a.text !== "string" || a.text.trim().length === 0) throw new Error("invalid reflect action: text must be a non-empty string");
+            if (Buffer.byteLength(a.text, "utf8") > 4096) throw new Error("invalid reflect action: text must be at most 4KB");
+            const p = join(this.d.runtimeDir, "MEMORY.md");
+            if (!existsSync(p)) writeFileSync(p, "# MEMORY\n"); // missing file: recreate with the canonical header
+            const d = new Date();
+            const pad = (n: number): string => String(n).padStart(2, "0");
+            const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            appendFileSync(p, `\n## ${stamp}\n${a.text.trim()}\n`);
+            this.push(`reflected: ${a.text.slice(0, 80)}`);
           } else if (a.type === "reply") {
             if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid reply action: text must be a non-empty string");
             this.d.outlet?.chatOut("jex", a.text); // conversational reply: no spawn, no board card
