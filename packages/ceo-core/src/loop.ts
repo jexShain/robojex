@@ -199,6 +199,11 @@ export class SchedulerLoop {
   // Real events (chat, tool results, due/verify pumps) still always wake.
   private lastBoardDigest: string | null = null; // null until the first full cycle banks one — the first wake always looks
   private lastCycleActed = false;
+  // R73 nag cap: verify_due nudges per card per "episode" (status:attempts:
+  // verdict:summary-length). Three nudges without the card moving = decide
+  // keeps not judging it — stop nagging (each nudge is a full paid cycle)
+  // until the card actually changes.
+  private verifyNudgeState = new Map<string, { key: string; n: number }>();
 
   mode(): Gate { return this.modeNow; }
 
@@ -310,10 +315,17 @@ export class SchedulerLoop {
       // (attempts >= 2) stays parked for the HUMAN — re-nudging it forever
       // would burn the whole night's cycles on a doomed verify loop.
       const awaiting = t.status === "blocked" && t.resultSummary.includes("[awaiting acceptance") && t.attempts < 2;
-      if (t.status !== "running" && !awaiting) this.verifyNudgedAt.delete(t.id);
+      if (t.status !== "running" && !awaiting) { this.verifyNudgedAt.delete(t.id); this.verifyNudgeState.delete(t.id); }
       if ((t.status !== "running" && !awaiting) || !t.acceptance) continue;
       const last = this.verifyNudgedAt.get(t.id) ?? 0;
       if (now - last < 5 * 60_000) continue;
+      // R73 nag cap: an unchanged card earns at most 3 nudges per episode
+      const nk = `${t.status}:${t.attempts}:${t.verdict}:${t.resultSummary.length}`;
+      const ns = this.verifyNudgeState.get(t.id) ?? { key: nk, n: 0 };
+      if (ns.key !== nk) { ns.key = nk; ns.n = 0; }
+      if (ns.n >= 3) continue;
+      ns.n++;
+      this.verifyNudgeState.set(t.id, ns);
       this.verifyNudgedAt.set(t.id, now);
       this.push(`verify_due: ${t.id.slice(0, 8)} ${t.title} accept: ${t.acceptance.slice(0, 120)}${awaiting ? " [awaiting acceptance since the agent finished — judge it now]" : ""}`);
       this.d.outlet?.hud?.("verify_due", t.id);
