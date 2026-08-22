@@ -838,6 +838,9 @@ export class SchedulerLoop {
       ? `${prompt0}\n\n# 验收标准（完成后 jex 将按此判定）\n${card.acceptance}`
       : prompt0;
     prompt = this.withMemory(prompt, title); // R53: related lessons ride along
+    // R66 output contract: a machine-greppable final line makes the summary
+    // settle cleanly and gives verify a concrete artifact to check against
+    prompt += "\n\n# 产出约定\n最后一行必须输出：RESULT: <一句话结果与关键事实>";
     void this.d.orchestrator.spawn(framework, prompt).then((r) => {
       if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
       const card = this.d.board.list().find((x) => x.id === taskId);
