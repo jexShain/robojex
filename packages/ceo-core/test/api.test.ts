@@ -457,7 +457,7 @@ test("cycle frame fires every decision cycle (even patrol-none); tasks frames fo
   expect(first.actions).toEqual([]);
   expect(first.cost).toBe(12); // patrol only
 
-  await loop.runOnce("tick"); // decide spawns; the card settles in the background
+  await loop.runOnce("chat: run the stub job please"); // real event (pure ticks quiet-skip on an unchanged board since R72): decide spawns; the card settles in the background
   await until(() => rig.board.list()[0]?.status === "blocked");
   await until(() => {
     const tf = c.frames.filter((f) => f.t === "tasks");

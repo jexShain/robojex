@@ -175,7 +175,7 @@ export class SchedulerLoop {
   // cycle count, recent failures. A butler that can say "I've been erroring,
   // something is wrong" behaves like a person noticing a headache.
   private bornAt = Date.now();
-  private vitals = { cycles: 0, errors: 0, lastError: "" };
+  private vitals = { cycles: 0, errors: 0, lastError: "", quietSkips: 0 };
   // R17 morning briefing: one digest per local day, fired by the gantt pump
   // inside the 08:00–11:00 window (a late boot still catches it). In-memory
   // only — a restart on the same morning may re-fire, which is idempotent
@@ -193,6 +193,12 @@ export class SchedulerLoop {
   // re-verifies stable tasks — the soak's own MEMORY audit flagged exactly
   // that as the top no-op burn. decide sees the last 5 lines.
   private recentCycles: string[] = [];
+  // R72 quiet skip: a pure-tick wake against an unchanged world (same board
+  // digest, no running task, previous cycle took no action) skips patrol AND
+  // decide — the soak measured ~2.8k burned per empty cycle, 20 in a row.
+  // Real events (chat, tool results, due/verify pumps) still always wake.
+  private lastBoardDigest: string | null = null; // null until the first full cycle banks one — the first wake always looks
+  private lastCycleActed = false;
 
   mode(): Gate { return this.modeNow; }
 
@@ -356,6 +362,13 @@ export class SchedulerLoop {
 
   private emitTasks(): void { this.d.outlet?.frame({ t: "tasks", tasks: this.d.board.list().map(taskView) }); }
 
+  /** R72: cheap change fingerprint of the board — id:status:progress:verdict
+   *  per card. An equal digest with nothing running means no new information
+   *  since the last cycle; a pure tick against that world skips entirely. */
+  private boardDigest(): string {
+    return this.d.board.list().map((t) => `${t.id}:${t.status}:${t.progress}:${t.verdict}`).join("|");
+  }
+
   push(event: string): void {
     this.queue.push(event);
     // merge events inside a 500ms window into one decision cycle
@@ -411,6 +424,20 @@ export class SchedulerLoop {
       const parts = eventSummary.split(";").map((s) => s.trim()).filter(Boolean);
       const pureTick = parts.length > 0 && parts.every((p) => p === "tick");
       if (pureTick && gdef.patrolEvery > 0 && this.tickCount % gdef.patrolEvery !== 0) return;
+      // R72 quiet skip: nothing about the world changed since the last cycle
+      // (same board digest, nothing running, last cycle took no action) and
+      // this wake carries no information of its own — skip patrol AND decide.
+      // Real events (chat, tool results, due/verify pumps, spawn settlements)
+      // never pass this gate: their summaries are not pure ticks.
+      if (pureTick) {
+        const digest = this.boardDigest();
+        const anyRunning = this.d.board.list().some((t) => t.status === "running");
+        if (!anyRunning && !this.lastCycleActed && digest === this.lastBoardDigest) {
+          this.vitals.quietSkips++;
+          return; // the finally block still emits the cycle heartbeat frame
+        }
+        this.lastBoardDigest = digest;
+      }
       const gearPrefix = loopPrompt(this.gearNow);
       const read = (f: string) => { try { return readFileSync(join(this.d.runtimeDir, f), "utf8"); } catch { return `(${f} missing)`; } };
       const context = this.d.ctx.build({
@@ -422,9 +449,9 @@ export class SchedulerLoop {
         { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; act on a chat: event unless it is a pure greeting or social chatter with no ask — a question about this machine or jex's work (hardware, system, files, processes, tasks, progress) ALWAYS acts (the direct-chat reply alone never settles it: it may be ungrounded), and any request or delegation always acts. When unsure, act — the human's words outrank thrift. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). A 'plan_created:' event means a goal was just decomposed into child steps on the board — always act: dispatch the ready steps (in the listed order when they depend on each other, in parallel when independent). A 'morning_briefing:' event is the daily digest mandate — always act: compose it and deliver with the reply action. An 'agents_rescan:' event means the agent inventory may be stale — act by running the toolscout action. A 'patrol_walk:' event is the quiet house round — act on it (LOOK with tools; reply ONLY if something genuinely needs the human). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
-      let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
-      if (gate === "patrol-only") { cost = await this.maybeAudit(p.usage, []); return; } // near the cap: no expensive decide pass
-      if (triage.action !== "act") { cost = await this.maybeAudit(p.usage, []); return; }
+      let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; } // patrol cost still booked on parse failure
+      if (gate === "patrol-only") { cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; } // near the cap: no expensive decide pass
+      if (triage.action !== "act") { cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; }
 
       // layer 2: strong decide pass — the only prompt that carries the framework manuals
       const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
@@ -441,7 +468,7 @@ export class SchedulerLoop {
       // R16 vitals line: uptime / cycles / recent errors — self-awareness the
       // model can act on (mention it, slow down, or ask for help)
       const upH = Math.floor((Date.now() - this.bornAt) / 3_600_000);
-      const vitals = `# VITALS（自我状态）: 运行 ${upH} 小时 · 决策周期 ${this.vitals.cycles} · 近期错误 ${this.vitals.errors} 次${this.vitals.lastError ? `（最近：${this.vitals.lastError.slice(0, 60)}）` : ""} — 若错误偏多，向用户说明并在回复中体现克制`;
+      const vitals = `# VITALS（自我状态）: 运行 ${upH} 小时 · 决策周期 ${this.vitals.cycles} · 静默跳拍 ${this.vitals.quietSkips} · 近期错误 ${this.vitals.errors} 次${this.vitals.lastError ? `（最近：${this.vitals.lastError.slice(0, 60)}）` : ""} — 若错误偏多，向用户说明并在回复中体现克制`;
       // R19 time sense: the model has no clock of its own — scheduling,
       // morning briefings and "深夜别吵" judgment all need one line of now.
       const nd = new Date();
@@ -482,6 +509,7 @@ export class SchedulerLoop {
           return "?";
         });
         this.recentCycles.push(`[${hh(cyc.getHours())}:${hh(cyc.getMinutes())}] wake=${eventSummary.slice(0, 60)} → ${kinds.length > 0 ? kinds.join(", ") : "no actions"} (decide ${dec.usage.completionTokens} tok)`);
+        this.lastCycleActed = kinds.length > 0; // R72: an acted cycle keeps the next tick awake
         if (this.recentCycles.length > 5) this.recentCycles.splice(0, this.recentCycles.length - 5);
       }
 
@@ -772,6 +800,7 @@ export class SchedulerLoop {
       // recurring errors become visible to the model itself, not just the log
       this.vitals.errors++;
       this.vitals.lastError = e instanceof Error ? e.message : String(e);
+      this.lastCycleActed = true; // R72: an errored cycle deserves a real retry next tick, not a quiet skip
       throw e; // the original contract (runOnceQueue logs it) is untouched
     } finally {
       // every cycle ends on the wire: the heartbeat frame plus the fresh budget line

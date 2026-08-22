@@ -1074,7 +1074,9 @@ test("decide prompt carries the AGENTS.md inventory block; patrol stays lean; bl
   // blank inventory reads as absent: no empty AGENTS tail is ever served
   writeFileSync(join(runtimeDir, "AGENTS.md"), "\n");
   users.length = 0;
-  await loop.runOnce("tick");
+  // an agents_rescan wake (not a pure tick — those quiet-skip on an
+  // unchanged idle board since R72) re-reads the now-blank inventory
+  await loop.runOnce("agents_rescan: inventory may be stale");
   expect(users.find((u) => u.slot === "decide")!.content).not.toContain("# AGENTS (verified");
   loop.stop();
 });
