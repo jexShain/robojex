@@ -123,6 +123,7 @@ type Action =
   | { type: 'stream-start'; convId: string }
   | { type: 'stream-meta'; convId: string; userMsgId: string; assistantMsgId: string; model: string }
   | { type: 'stream-delta'; convId: string; field: 'reasoning' | 'content'; delta: string }
+  | { type: 'stream-tool'; convId: string; name: string; args?: string; state: 'running' | 'done'; preview?: string }
   | { type: 'stream-usage'; convId: string; tokensIn: number; tokensOut: number }
   | { type: 'stream-done'; convId: string; title?: string }
   | { type: 'stream-error'; convId: string; message: string }
@@ -465,6 +466,38 @@ export function reducer(state: WebState, action: Action): WebState {
           messages[i] = { ...messages[i], [action.field]: (messages[i][action.field] || '') + action.delta }
           break
         }
+      }
+      return { ...state, messages }
+    }
+    case 'stream-tool': {
+      // SSE 'tool' frames → client-only toolSteps on the streaming assistant
+      // message. 'running' pushes a new step; 'done' flips the last same-name
+      // running step (orphan done → push an already-completed step, tolerant
+      // of frames racing a reload/switch).
+      if (state.activeConvId !== action.convId) return state
+      const messages = [...state.messages]
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i]
+        if (m.role !== 'assistant' || !m.streaming) continue
+        const steps = [...(m.toolSteps ?? [])]
+        if (action.state === 'running') {
+          steps.push({ name: action.name, args: action.args, state: 'running' })
+        } else {
+          let j = -1
+          for (let k = steps.length - 1; k >= 0; k--) {
+            if (steps[k].name === action.name && steps[k].state === 'running') {
+              j = k
+              break
+            }
+          }
+          if (j >= 0) {
+            steps[j] = { ...steps[j], state: 'done', preview: action.preview ?? steps[j].preview }
+          } else {
+            steps.push({ name: action.name, args: action.args, state: 'done', preview: action.preview })
+          }
+        }
+        messages[i] = { ...m, toolSteps: steps }
+        break
       }
       return { ...state, messages }
     }
@@ -975,6 +1008,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         break
       case 'content':
         dispatch({ type: 'stream-delta', convId, field: 'content', delta: ev.delta })
+        break
+      case 'tool':
+        dispatch({
+          type: 'stream-tool',
+          convId,
+          name: ev.name,
+          args: ev.args,
+          state: ev.state,
+          preview: ev.preview,
+        })
         break
       case 'usage':
         dispatch({ type: 'stream-usage', convId, tokensIn: ev.tokensIn, tokensOut: ev.tokensOut })

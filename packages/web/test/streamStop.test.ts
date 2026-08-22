@@ -64,6 +64,50 @@ describe('stream-done after an aborted stream', () => {
   })
 })
 
+describe('stream-tool (in-stream tool grounding cards)', () => {
+  const boot = () => {
+    let s = { ...initialState, conversations: [freshConv()], activeConvId: 'c1' }
+    s = reducer(s, { type: 'stream-start', convId: 'c1' })
+    s = reducer(s, { type: 'stream-meta', convId: 'c1', userMsgId: 'u1', assistantMsgId: 'a1', model: 'm' })
+    return s
+  }
+
+  test('running pushes a step; done flips the last same-name running step with preview', () => {
+    let s = boot()
+    s = reducer(s, { type: 'stream-tool', convId: 'c1', name: 'nvidia-smi', args: '--query-gpu=name', state: 'running' })
+    s = reducer(s, { type: 'stream-tool', convId: 'c1', name: 'nvidia-smi', state: 'done', preview: 'NVIDIA GeForce RTX 4090' })
+    const a = s.messages.find((m) => m.id === 'a1')
+    expect(a?.toolSteps).toEqual([
+      { name: 'nvidia-smi', args: '--query-gpu=name', state: 'done', preview: 'NVIDIA GeForce RTX 4090' },
+    ])
+  })
+
+  test('multiple tools accumulate in order; a done never touches other names', () => {
+    let s = boot()
+    s = reducer(s, { type: 'stream-tool', convId: 'c1', name: 'nvidia-smi', state: 'running' })
+    s = reducer(s, { type: 'stream-tool', convId: 'c1', name: 'uname', args: '-r', state: 'running' })
+    s = reducer(s, { type: 'stream-tool', convId: 'c1', name: 'uname', state: 'done', preview: '6.8.0' })
+    const steps = s.messages.find((m) => m.id === 'a1')?.toolSteps
+    expect(steps).toHaveLength(2)
+    expect(steps?.[0]).toMatchObject({ name: 'nvidia-smi', state: 'running' })
+    expect(steps?.[1]).toMatchObject({ name: 'uname', state: 'done', preview: '6.8.0' })
+  })
+
+  test('orphan done (no matching running step) lands as a completed step', () => {
+    let s = boot()
+    s = reducer(s, { type: 'stream-tool', convId: 'c1', name: 'df', args: '-h', state: 'done', preview: '/ 512G' })
+    expect(s.messages.find((m) => m.id === 'a1')?.toolSteps).toEqual([
+      { name: 'df', args: '-h', state: 'done', preview: '/ 512G' },
+    ])
+  })
+
+  test('frames aimed at another conversation never leak into the open one', () => {
+    let s = boot()
+    s = reducer(s, { type: 'stream-tool', convId: 'other', name: 'nvidia-smi', state: 'running' })
+    expect(s.messages.find((m) => m.id === 'a1')?.toolSteps).toBeUndefined()
+  })
+})
+
 describe('agent timeline cards', () => {
   test('append only into the live view of the target conversation', () => {
     let s = { ...initialState, conversations: [freshConv()], activeConvId: 'c1' }

@@ -202,6 +202,54 @@ function ThinkingBlock({ msg, wasLive }: { msg: Message; wasLive: boolean }): JS
   )
 }
 
+/* ── in-stream tool cards ── */
+
+/** Tool execution cards (client-only Message.toolSteps, fed by SSE 'tool'
+ * frames) between the thinking fold and the reply body. 🔍 + name + args on
+ * one line (args monospace, truncated with the full text on hover); spinner
+ * while running, a ≤3-line monospace preview once done. Process traces, not
+ * the main event — deliberately small, agent-card-styled. */
+function ToolSteps({ msg }: { msg: Message }): JSX.Element | null {
+  const { t } = useT()
+  const steps = msg.toolSteps ?? []
+  if (steps.length === 0) return null
+  return (
+    <div className="cv-tools" data-testid="tool-steps">
+      {steps.map((s, i) => {
+        const running = s.state === 'running'
+        return (
+          <div
+            key={`${s.name}-${i}`}
+            className={`tool-chip${running ? ' running' : ' done'}`}
+            data-testid="tool-chip"
+            data-tool={s.name}
+            data-state={s.state}
+            aria-label={`${s.name} — ${running ? t('chat.toolRunning') : t('chat.toolDone')}`}
+          >
+            <div className="tool-chip-head">
+              <span className="mag" aria-hidden="true">🔍</span>
+              <span className="tool-name">{s.name}</span>
+              {s.args ? (
+                <span className="tool-args" title={s.args}>
+                  {s.args}
+                </span>
+              ) : null}
+              <span className={running ? 'tool-spin' : 'tool-ok'} aria-hidden="true">
+                {running ? <span className="rj-spinner" /> : <CheckIcon />}
+              </span>
+            </div>
+            {!running && s.preview ? (
+              <div className="tool-preview" title={s.preview}>
+                {s.preview}
+              </div>
+            ) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 /* ── message rows ── */
 
 function UserRow({ msg, messages }: { msg: Message; messages: Message[] }): JSX.Element {
@@ -320,6 +368,7 @@ function AssistantRow({
         </div>
         <div className="cv-a-body">
           {msg.reasoning ? <ThinkingBlock msg={msg} wasLive={wasLive} /> : null}
+          <ToolSteps msg={msg} />
           <div className="cv-md" data-testid="stream-content">
             {msg.content ? (
               <Markdown text={msg.content} streaming={streaming} />

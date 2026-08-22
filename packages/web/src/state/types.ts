@@ -101,6 +101,16 @@ export interface Conversation {
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'notice'
 
+/** One in-stream tool execution (SSE 'tool' frames): a 'running' step arrives
+ * first (name + args), later completed by a same-name 'done' carrying a short
+ * preview of the real output. Never persisted — see Message.toolSteps. */
+export interface ToolStep {
+  name: string
+  args?: string
+  state: 'running' | 'done'
+  preview?: string
+}
+
 export interface Message {
   id: string
   convId: string
@@ -112,6 +122,10 @@ export interface Message {
   tokensOut?: number
   createdAt: number
   error?: string
+  /** client-only: in-stream tool executions rendered as cards between the
+   * thinking fold and the reply body. History loads from the server carry no
+   * toolSteps, so these vanish on refresh by design. */
+  toolSteps?: ToolStep[]
   /** client-only: message is currently streaming (deltas append). */
   streaming?: boolean
   /** client-only: elapsed stream seconds, for the “已思考 Xs” badge. */
@@ -127,6 +141,10 @@ export type ChatStreamEvent =
   | { type: 'meta'; conversationId: string; userMsgId: string; assistantMsgId: string; model: string }
   | { type: 'reasoning'; delta: string }
   | { type: 'content'; delta: string }
+  /** tool grounding: jex runs a local tool (e.g. nvidia-smi) mid-stream —
+   * 'running' first (name + args), then a same-name 'done' with preview.
+   * Arrives after meta, before the final content; ≤3 tools per stream. */
+  | { type: 'tool'; name: string; args?: string; state: 'running' | 'done'; preview?: string }
   | { type: 'usage'; tokensIn: number; tokensOut: number }
   | { type: 'title'; title: string }
   | { type: 'done' }

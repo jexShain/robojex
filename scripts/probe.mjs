@@ -603,6 +603,38 @@ scenarios['brief-unread'] = async ({ page }) => {
   await page.screenshot({ path: `${SHOTS}/brief-unread-01.png` })
 }
 
+scenarios['gpu-grounding'] = async ({ page }) => {
+  await openChat(page)
+  await page.getByTestId('sidebar-new-chat').click()
+  // the exact question that exposed the hallucination bug: the reply must be
+  // grounded in a real tool run, never invented from model memory
+  await page.getByTestId('chat-input').fill('我现在机器显卡是啥？给我真实数据')
+  await page.getByTestId('chat-send').click()
+  const tooled = await page
+    .waitForFunction(
+      () => document.querySelectorAll('[data-testid="tool-chip"]').length > 0,
+      null, { timeout: 90_000, polling: 1000 },
+    )
+    .then(() => true).catch(() => false)
+  ok('chat runs a live tool before answering (grounding chip)', tooled)
+  const done = await page
+    .waitForFunction(
+      () => !!document.querySelector('[data-testid="tool-chip"][data-state="done"]'),
+      null, { timeout: 120_000, polling: 1000 },
+    )
+    .then(() => true).catch(() => false)
+  ok('tool completes with real output preview', done)
+  await page.screenshot({ path: `${SHOTS}/gpu-grounding-01.png` })
+  const answered = await page
+    .waitForFunction(
+      () => (document.querySelector('[data-testid="msg-row"][data-role="assistant"] [data-testid="stream-content"]')?.textContent || '').length > 10,
+      null, { timeout: 120_000, polling: 1000 },
+    )
+    .then(() => true).catch(() => false)
+  ok('grounded answer streams after the tool rounds', answered)
+  await page.screenshot({ path: `${SHOTS}/gpu-grounding-02.png` })
+}
+
 /* ───────────────────────── driver ───────────────────────── */
 
 const names = process.argv.slice(2)

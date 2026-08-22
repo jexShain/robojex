@@ -52,6 +52,8 @@ export const zh: Record<string, string> = {
   'chat.thought': '已思考',
   'chat.agentDispatch': '→ 派发给 jex',
   'chat.agentJex': 'jex',
+  'chat.toolRunning': '正在执行工具',
+  'chat.toolDone': '工具执行完成',
   'chat.emptyTitle': '有什么可以帮您？',
   'chat.emptySub': '与 RoboJex 对话，或让它在 Agent 模式下自主工作',
   'chat.ex.know.title': '认识 RoboJex',

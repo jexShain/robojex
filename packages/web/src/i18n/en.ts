@@ -52,6 +52,8 @@ export const en: Record<string, string> = {
   'chat.thought': 'Thought',
   'chat.agentDispatch': '→ dispatched to jex',
   'chat.agentJex': 'jex',
+  'chat.toolRunning': 'Running tool',
+  'chat.toolDone': 'Tool finished',
   'chat.emptyTitle': 'What can I help you with?',
   'chat.emptySub': 'Talk to RoboJex, or let it work on its own in Agent mode',
   'chat.ex.know.title': 'Meet RoboJex',

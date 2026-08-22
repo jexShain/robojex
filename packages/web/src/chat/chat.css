@@ -462,6 +462,71 @@
   user-select: none;
 }
 
+/* ── in-stream tool cards (SSE 'tool' frames, client-only) ──
+ * process traces, not the main event: small agent-card-flavored chips. */
+.cv-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tool-chip {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-left: 2px solid color-mix(in srgb, var(--dsw-static-deepseek-400) 45%, transparent);
+  border-radius: var(--rj-radius-md);
+  background: var(--dsw-alias-interactive-bg-hover);
+  padding: 6px 10px;
+  animation: cv-rise 200ms var(--rj-ease-out) both;
+}
+.tool-chip-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.tool-chip .mag { flex: none; font-size: 12px; line-height: 1; }
+.tool-chip .tool-name {
+  flex: none;
+  font-family: var(--rj-font-mono);
+  font-size: var(--rj-font-size-xs);
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+}
+.tool-chip .tool-args {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--rj-font-mono);
+  font-size: var(--rj-font-size-xs);
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-chip .tool-spin { flex: none; display: grid; place-items: center; }
+/* reuse the global .rj-spinner (effects.css), sized down for the chip */
+.tool-chip .rj-spinner {
+  width: 11px;
+  height: 11px;
+  border-width: 1.5px;
+  border-top-color: var(--dsw-static-deepseek-400);
+}
+.tool-chip .tool-ok { flex: none; width: 12px; height: 12px; color: var(--dsw-static-green-400); }
+.tool-chip .tool-ok svg { width: 12px; height: 12px; }
+.tool-chip .tool-preview {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--dsw-alias-border-l2);
+  font-family: var(--rj-font-mono);
+  font-size: var(--rj-font-size-xs);
+  line-height: 1.6;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ── thinking fold ── */
 .think {
   border: 1px solid var(--dsw-alias-border-l1);
@@ -1111,7 +1176,8 @@
 /* reduced motion: everything lands instantly */
 @media (prefers-reduced-motion: reduce) {
   .cv-msg, .cv-notice, .cv-err, .cv-edit, .cv-prompt, .cv-jump,
-  .cv-orb, .cv-orb-glow, .ib-pop, .ib-at, .slm, .think-toggle.live .brain {
+  .cv-orb, .cv-orb-glow, .ib-pop, .ib-at, .slm, .think-toggle.live .brain,
+  .tool-chip, .tool-chip .rj-spinner {
     animation: none !important;
     opacity: 1 !important;
   }
