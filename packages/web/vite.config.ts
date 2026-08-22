@@ -12,7 +12,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:7620',
+        // e2e can run beside a live backend owning 7620 (MOCK_PORT re-routes)
+        target: `http://127.0.0.1:${process.env.MOCK_PORT || 7620}`,
         changeOrigin: true,
         ws: true,
       },

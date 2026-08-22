@@ -1,10 +1,10 @@
 // packages/web/src/frame/AppFrame.tsx — ChatGPT-desktop-style app shell.
-// 44px top bar: [collapse] ⚡RoboJex · view tabs (对话/任务板/日历/活动/驾驶舱,
-// gradient underline, icon-only <1100px) · HUD cluster · ⌘K · ⚙ · theme cycle
-// · details toggle. Main: Sidebar 240px (collapses to 0 with a width tween;
-// expand button appears in the top bar) | view 1fr (150ms crossfade) |
-// DetailsPanel 320px (closable column; right overlay drawer <900px).
-// Ctrl+K opens the command palette; Settings is a modal overlay.
+// 44px top bar: [collapse] ⚡RoboJex · view tabs (指挥中心/对话/任务板/日历/
+// 活动/驾驶舱, gradient underline, icon-only <1100px) · HUD cluster · ⌘K · ⚙
+// · theme cycle · details toggle. Main: Sidebar 240px (collapses to 0 with a
+// width tween; expand button appears in the top bar) | view 1fr (150ms
+// crossfade) | DetailsPanel 320px (closable column; right overlay drawer
+// <900px). Ctrl+K opens the command palette; Settings is a modal overlay.
 
 import { useCallback, useEffect, useState } from 'react'
 import { ChatView } from '../chat/ChatView'
@@ -13,6 +13,7 @@ import { Sidebar } from '../sidebar/Sidebar'
 import { useStore } from '../state/store'
 import type { ThemeApi, ThemePref } from '../state/theme'
 import { ActivityFeed } from '../views/ActivityFeed'
+import { CommandCenter } from '../views/CommandCenter'
 import { AgendaView } from '../views/AgendaView'
 import { BoardView } from '../views/BoardView'
 import { GearPanel } from '../views/GearPanel'
@@ -264,6 +265,7 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
               </div>
               {view !== 'chat' ? (
                 <div className="rj-view-page rj-fade" key={view}>
+                  {view === 'command' ? <CommandCenter /> : null}
                   {view === 'board' ? <BoardView /> : null}
                   {view === 'agenda' ? (
                     <AgendaView
@@ -291,6 +293,7 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
             </div>
             {view !== 'chat' ? (
               <div className="rj-view-page rj-fade" key={view}>
+                {view === 'command' ? <CommandCenter /> : null}
                 {view === 'board' ? <BoardView /> : null}
                 {view === 'agenda' ? (
                   <AgendaView

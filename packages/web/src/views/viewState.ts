@@ -2,13 +2,14 @@
 // persisted in localStorage like the theme pref. Pure loaders/savers keep
 // AppFrame free of storage concerns.
 
-export type ViewId = 'chat' | 'board' | 'agenda' | 'activity' | 'cockpit'
+export type ViewId = 'command' | 'chat' | 'board' | 'agenda' | 'activity' | 'cockpit'
 
 const KEY = 'robojex-view'
 const SIDEBAR_KEY = 'robojex-sidebar-collapsed'
 const DETAILS_KEY = 'robojex-details-open'
 
 const VALID: Record<ViewId, true> = {
+  command: true,
   chat: true,
   board: true,
   agenda: true,
@@ -24,7 +25,7 @@ export function loadView(): ViewId {
   } catch {
     // storage unavailable (private mode etc.) — default view
   }
-  return 'chat'
+  return 'command' // butler default: 指挥中心 (SPEC-BUTLER §7)
 }
 
 export function saveView(view: ViewId): void {

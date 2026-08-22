@@ -161,6 +161,9 @@ export interface Settings {
   takeoverUrl: string
   apiPort: number
   apiHost: string
+  /** autonomy policy (SPEC-BUTLER §1). Optional: cores predating the butler
+   * spec omit the field — readers must tolerate undefined. */
+  policy?: 'butler' | 'conservative'
 }
 
 /* ─────────────────────────── WS frames ─────────────────────────── */

@@ -1,6 +1,6 @@
-// packages/web/src/views/ViewSwitcher.tsx — five-view segmented control
-// (对话 / 任务板 / 日历 / 活动 / 驾驶舱) for the sidebar foot. The top bar
-// tabs in frame/AppFrame reuse VIEW_META (same icons + labels).
+// packages/web/src/views/ViewSwitcher.tsx — six-view segmented control
+// (指挥中心 / 对话 / 任务板 / 日历 / 活动 / 驾驶舱) for the sidebar foot.
+// The top bar tabs in frame/AppFrame reuse VIEW_META (same icons + labels).
 
 import type { ViewId } from './viewState'
 
@@ -10,6 +10,12 @@ export interface ViewMeta {
   icon: JSX.Element
 }
 
+const COMMAND_ICON = (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+    <path d="M5.5 8h4M8 5.5h3.5M5.5 10.5h2" />
+  </svg>
+)
 const CHAT_ICON = (
   <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
     <path d="M2.5 3.5h11v8H8l-3.2 2.6V11.5h-2.3z" />
@@ -44,6 +50,7 @@ const COCKPIT_ICON = (
 )
 
 export const VIEW_META: ViewMeta[] = [
+  { id: 'command', label: '指挥中心', icon: COMMAND_ICON },
   { id: 'chat', label: '对话', icon: CHAT_ICON },
   { id: 'board', label: '任务板', icon: BOARD_ICON },
   { id: 'agenda', label: '日历', icon: AGENDA_ICON },
