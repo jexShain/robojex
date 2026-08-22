@@ -23,6 +23,7 @@ import {
   groupForGantt,
 } from './ganttModel'
 import { dayColHead } from './timefmt'
+import { eventKindOf, eventPayload } from './thinkingModel'
 import './command.css'
 
 const NOW_TICK_MS = 30_000
@@ -31,7 +32,22 @@ const LOG_MAX_ENTRIES = 400
 
 /* ── think-log derivation (pure; same transcript source as ThinkingStream) ── */
 
-export type ThinkKind = 'cycle' | 'decide' | 'reflect' | 'spawn' | 'verify' | 'tool' | 'reply'
+export type ThinkKind =
+  | 'cycle'
+  | 'decide'
+  | 'reflect'
+  | 'spawn'
+  | 'verify'
+  | 'tool'
+  | 'reply'
+  /* backend event kinds (plan_created / loop_stalled / morning_briefing /
+   * verify_due+awaiting / identical-call warning) — classified by
+   * thinkingModel.eventKindOf, highlighted with their own bar + badge */
+  | 'plan'
+  | 'stall'
+  | 'morning'
+  | 'awaiting'
+  | 'stuck'
 
 export interface ThinkEntry {
   id: string
@@ -118,6 +134,20 @@ function toThinkEntries(item: TranscriptItem, t: (key: string) => string): Think
     return out
   }
   if (item.kind === 'msg' && item.from === 'jex') {
+    // backend events with a dedicated kind come first: the badge carries the
+    // type, the row shows the payload, the raw event stays on expand
+    const ev = eventKindOf(item.text)
+    if (ev) {
+      return [
+        {
+          id: `m${item.id}`,
+          ts: item.ts,
+          kind: ev,
+          text: eventPayload(item.text, ev).slice(0, 140),
+          detail: item.text,
+        },
+      ]
+    }
     // reflect pushes land as chat_out text with the reflected: prefix (SPEC §5)
     if (item.text.startsWith('reflected:')) {
       return [

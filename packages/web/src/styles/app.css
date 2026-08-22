@@ -991,6 +991,14 @@ body[data-ds-dark-theme] .chip.full {
   word-break: break-word;
 }
 
+/* one-line truncated kv value (e.g. the acceptance line) — the full text
+ * rides the hover title instead of stretching the panel */
+.kv .v.oneline {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .detail-hint {
   color: var(--dsw-alias-label-tertiary);
   font-size: 13px;
@@ -2149,6 +2157,13 @@ body[data-ds-dark-theme] .chip.full {
 .ts-entry.ts-spawn { border-left-color: #f59e0b; }
 .ts-entry.ts-reply { border-left-color: #a78bfa; }
 .ts-entry.ts-deciding { border-left-color: var(--dsw-alias-border-l2); }
+/* backend event kinds (thinkingModel.eventKindOf): plan blue · stall/stuck
+ * red · morning gold · awaiting amber */
+.ts-entry.ts-plan { border-left-color: var(--dsw-alias-state-business-primary); }
+.ts-entry.ts-stall { border-left-color: var(--dsw-alias-state-error-primary); }
+.ts-entry.ts-morning { border-left-color: var(--dsw-static-amber-400); }
+.ts-entry.ts-awaiting { border-left-color: var(--dsw-alias-state-warn-label); }
+.ts-entry.ts-stuck { border-left-color: var(--dsw-static-red-500); }
 
 .ts-main {
   display: flex;

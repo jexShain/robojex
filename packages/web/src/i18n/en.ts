@@ -214,6 +214,11 @@ export const en: Record<string, string> = {
   'cc.think.verify': 'Verify',
   'cc.think.tool': 'Tool',
   'cc.think.reply': 'Reply',
+  'cc.think.plan': '🧩 Plan',
+  'cc.think.stall': '⛔ Stalled',
+  'cc.think.morning': '🌅 Morning',
+  'cc.think.awaiting': '⚖️ Awaiting',
+  'cc.think.stuck': '🔁 Stuck',
   'cc.ringTitle': 'Progress {n}% · verdict {v}',
   'cc.due': 'Due',
   'cc.start': 'Start',
@@ -272,6 +277,11 @@ export const en: Record<string, string> = {
   'ts.spawnCount': '{n} spawn(s)',
   'ts.replyCount': '{n} reply',
   'ts.otherCount': '{n} other',
+  'ts.plan': '🧩 Plan — {text}',
+  'ts.stall': '⛔ Heartbeat stalled — self-recovery wake — {text}',
+  'ts.morning': '🌅 Morning briefing — {text}',
+  'ts.awaiting': '⚖️ Awaiting acceptance — {text}',
+  'ts.stuck': '🔁 Identical-call loop — {text}',
 
   /* board view */
   'board.newPlaceholder': '+ New task — Enter to create',

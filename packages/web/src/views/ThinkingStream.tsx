@@ -23,6 +23,12 @@ const ICONS: Record<ThinkingStep['kind'], string> = {
   decision: '✅',
   spawn: '⚡',
   reply: '💬',
+  // backend event kinds (thinkingModel.eventKindOf)
+  plan: '🧩',
+  stall: '⛔',
+  morning: '🌅',
+  awaiting: '⚖️',
+  stuck: '🔁',
 }
 
 function stepsForItem(item: TranscriptItem, t: (key: string) => string): ThinkingStep[] {

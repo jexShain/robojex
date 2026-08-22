@@ -14,6 +14,17 @@ type Tab = 'task' | 'files' | 'screen'
 /** Valid verdict keys (label lookup goes through the verdict.* dictionary). */
 const VERDICT_KEYS = ['pass', 'partial', 'fail', 'unchecked'] as const
 
+/** Verdicts that carry acceptance evidence in resultSummary (the verify note
+ * is appended there — the tail is the latest evidence). */
+const EVIDENCE_VERDICTS: ReadonlySet<string> = new Set(['pass', 'partial', 'fail'])
+
+/** Tail slice of a resultSummary shown on the verdict badge hover: the most
+ * recent verify note rides at the end, so the tail IS the evidence. */
+function evidenceTail(summary: string | undefined): string | undefined {
+  if (!summary || summary.length === 0) return undefined
+  return summary.length > 200 ? `…${summary.slice(-200)}` : summary
+}
+
 function CopyButton({ text, label }: { text: string; label: string }) {
   const { t } = useT()
   const [done, setDone] = useState(false)
@@ -77,7 +88,16 @@ function TaskDetail() {
     return <div className="detail-hint">{t('detail.selectHint')}</div>
   }
   const verdict = task.verdict ? task.verdict.toLowerCase() : null
-  const verdictKey = verdict && verdict in VERDICT_KEYS ? verdict : verdict ? 'unchecked' : null
+  const verdictKey =
+    verdict && (VERDICT_KEYS as readonly string[]).includes(verdict)
+      ? verdict
+      : verdict
+        ? 'unchecked'
+        : null
+  // verdict hover shows the evidence: the tail of resultSummary (the verify
+  // note is appended there, so the tail is the latest check's grounds)
+  const verdictTitle =
+    verdictKey !== null && EVIDENCE_VERDICTS.has(verdictKey) ? evidenceTail(task.resultSummary) : undefined
   const progress = typeof task.progress === 'number' ? Math.max(0, Math.min(100, Math.round(task.progress))) : null
   return (
     <div>
@@ -87,7 +107,11 @@ function TaskDetail() {
           {progress !== null ? (
             <span className={`db progress ${progress >= 100 ? 'ok' : ''}`}>{fill(t('detail.progress'), { n: progress })}</span>
           ) : null}
-          {verdictKey ? <span className={`db verdict v-${verdictKey}`}>{t(`verdict.${verdictKey}`)}</span> : null}
+          {verdictKey ? (
+            <span className={`db verdict v-${verdictKey}`} title={verdictTitle}>
+              {t(`verdict.${verdictKey}`)}
+            </span>
+          ) : null}
         </div>
       )}
       <div className="kv">
@@ -122,7 +146,9 @@ function TaskDetail() {
       {task.acceptance ? (
         <div className="kv">
           <span className="k">acceptance</span>
-          <span className="v summary">{task.acceptance}</span>
+          <span className="v summary oneline" title={task.acceptance}>
+            {task.acceptance}
+          </span>
         </div>
       ) : null}
       {task.resultSummary ? (

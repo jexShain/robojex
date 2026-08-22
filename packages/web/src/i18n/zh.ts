@@ -214,6 +214,11 @@ export const zh: Record<string, string> = {
   'cc.think.verify': '验收',
   'cc.think.tool': '工具',
   'cc.think.reply': '回复',
+  'cc.think.plan': '🧩 计划',
+  'cc.think.stall': '⛔ 停滞',
+  'cc.think.morning': '🌅 晨报',
+  'cc.think.awaiting': '⚖️ 悬置验收',
+  'cc.think.stuck': '🔁 死循环',
   'cc.ringTitle': '进度 {n}% · verdict {v}',
   'cc.due': '截止',
   'cc.start': '开始',
@@ -272,6 +277,11 @@ export const zh: Record<string, string> = {
   'ts.spawnCount': '{n} 个派发',
   'ts.replyCount': '{n} 条回复',
   'ts.otherCount': '{n} 个其他',
+  'ts.plan': '🧩 计划 — {text}',
+  'ts.stall': '⛔ 心跳停滞，自恢复唤醒 — {text}',
+  'ts.morning': '🌅 晨报 — {text}',
+  'ts.awaiting': '⚖️ 悬置验收 — {text}',
+  'ts.stuck': '🔁 死循环警告 — {text}',
 
   /* board view */
   'board.newPlaceholder': '＋ 新任务，回车创建',

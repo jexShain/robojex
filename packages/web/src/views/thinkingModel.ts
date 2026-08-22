@@ -4,12 +4,17 @@
 import type { ServerFrame } from '../state/types'
 import { fill } from '../i18n/event'
 
+/** Backend event kinds (vitals / watchdog / repeat-guard rounds) — the
+ * classifier below promotes matching event texts to their own step. */
+export type EventKind = 'plan' | 'stall' | 'morning' | 'awaiting' | 'stuck'
+
 export type ThinkingKind =
   | 'patrol'
   | 'deciding'
   | 'decision'
   | 'spawn'
   | 'reply'
+  | EventKind
 
 export interface ThinkingStep {
   id: number
@@ -25,6 +30,38 @@ export interface ThinkingStep {
 
 let _seq = 0
 function seqId(): number { return ++_seq }
+
+/* ── backend event highlighting ── */
+
+/** Wake-event prefixes that earn their own timeline kind (loop.ts push()):
+ * plan_created (计划制定) / loop_stalled (心跳停滞自恢复) /
+ * morning_briefing (晨报). First match wins. */
+const EVENT_PREFIX_KIND: ReadonlyArray<readonly [prefix: string, kind: EventKind]> = [
+  ['plan_created:', 'plan'],
+  ['loop_stalled:', 'stall'],
+  ['morning_briefing:', 'morning'],
+]
+
+/**
+ * Classify an event/chat text against the highlightable backend events.
+ * `verify_due:` only promotes to 'awaiting' (悬置验收) when the
+ * orphaned-acceptance marker rides along — a plain nudge stays a normal
+ * line; the identical-call death-spiral warning is appended to the tail of
+ * tool-result events, so it is matched anywhere. Returns null for plain
+ * text (reply/reflected/... keep their existing treatment).
+ */
+export function eventKindOf(text: string): EventKind | null {
+  for (const [prefix, kind] of EVENT_PREFIX_KIND) if (text.startsWith(prefix)) return kind
+  if (text.startsWith('verify_due:') && text.includes('[awaiting acceptance')) return 'awaiting'
+  if (text.includes('[WARNING: identical call')) return 'stuck'
+  return null
+}
+
+/** Payload half of a classified event: the prefix is redundant once the
+ * badge carries it. 'stuck' has no prefix (a tail marker) — full text. */
+export function eventPayload(text: string, kind: EventKind): string {
+  return kind === 'stuck' ? text : text.slice(text.indexOf(':') + 1).trim()
+}
 
 /** Extract thinking steps from a single WS frame. `t` localizes the fixed
  * labels (i18n ts.* keys carry emoji + {placeholders} already). */
@@ -80,6 +117,20 @@ export function frameToThinkingSteps(
     }
     case 'chat_out': {
       if (frame.from !== 'jex') return []
+      // backend events (plan/stall/morning/awaiting/stuck) get their own
+      // step kind before the generic reply treatment
+      const ev = eventKindOf(frame.text)
+      if (ev) {
+        const payload = eventPayload(frame.text, ev)
+        const brief = `${payload.slice(0, 60)}${payload.length > 60 ? '…' : ''}`
+        return [{
+          id: seqId(),
+          kind: ev,
+          ts: frame.ts,
+          label: fill(t(`ts.${ev}`), { text: brief }),
+          detail: frame.text,
+        }]
+      }
       const brief = `${frame.text.slice(0, 60)}${frame.text.length > 60 ? '…' : ''}`
       return [{
         id: seqId(),

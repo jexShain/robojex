@@ -620,6 +620,51 @@
   background: var(--rj-brand-gradient-soft);
 }
 
+/* backend event kinds (vitals / watchdog / repeat-guard rounds): toned pill
+ * + thin inset bar. Restrained by default — the full-row wash stays
+ * reflect's signature. plan = 蓝/info · stall & stuck = red · morning =
+ * gold/dawn · awaiting = amber. */
+.cc-item-kind.k-plan {
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-state-business-tertiary);
+}
+
+.cc-item-kind.k-stall,
+.cc-item-kind.k-stuck {
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+}
+
+.cc-item-kind.k-morning {
+  color: var(--dsw-alias-state-warn-secondary);
+  background: var(--dsw-alias-state-warn-tertiary);
+}
+
+.cc-item-kind.k-awaiting {
+  color: var(--dsw-alias-state-warn-label);
+  background: var(--dsw-alias-state-warn-tertiary);
+}
+
+.cc-item[data-kind='plan'] {
+  box-shadow: inset 2px 0 0 var(--dsw-alias-state-business-primary);
+}
+
+.cc-item[data-kind='stall'] {
+  box-shadow: inset 2px 0 0 var(--dsw-alias-state-error-primary);
+}
+
+.cc-item[data-kind='morning'] {
+  box-shadow: inset 2px 0 0 var(--dsw-alias-state-warn-secondary);
+}
+
+.cc-item[data-kind='awaiting'] {
+  box-shadow: inset 2px 0 0 var(--dsw-alias-state-warn-label);
+}
+
+.cc-item[data-kind='stuck'] {
+  box-shadow: inset 2px 0 0 var(--dsw-static-red-500);
+}
+
 .cc-item-text {
   flex: 1;
   min-width: 0;
