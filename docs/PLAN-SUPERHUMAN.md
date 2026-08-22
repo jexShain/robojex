@@ -53,3 +53,9 @@
 ## 每轮纪律
 
 vitest 全绿 + tsc 0 错 + 活体验证（能活体就活体）+ TODO.md 记账 + commit（不 push 到明早统一 push 或每轮 push 均可）。
+
+## 深夜取舍记录（02:0x，明晨汇报口径）
+
+- **H 沙箱三档（read-only/workspace-write/danger）→ 不移植**：robojex 的安全模型是"政策+硬黑名单+提权拦截"（butler/conservative 两档 × 删除/系统目录/敏感路径/提权四条红线 × terminal/jobs/file 三通道共享 commandBlackline），比 dsh 的文件系统沙箱更贴合"最大自主但两条红线"的用户需求；landlock/bwrap 在 WSL 也不可用。
+- **K 并行工具调度 → 不移植**：decide 是 JSON 单协议逐动作（0-3/周期），并行度由周期节奏+spawn 并发帽 4 提供；dsh 的 isConcurrencySafe 滚动池是为原生 function-calling 连发设计的，移植收益为零。
+- **M durable session 逐块重放 → 不移植**：任务板/战绩/聊天/traces 四处 SQLite+账本已持久化，循环队列瞬时是特性（重启=重新观察世界），不是缺陷。
