@@ -16,6 +16,7 @@ import type { ChatService } from "./chat-service.js";
 import type { GearController } from "./gears.js";
 import { isGearId, GEAR_IDS } from "./gears.js";
 import type { LLMClient } from "./llm.js";
+import { aggregateStats } from "./stats.js";
 
 export type ChatFrom = "user" | "jex" | "system";
 export interface ChatMessage { from: ChatFrom; ts: number; text: string; }
@@ -297,6 +298,7 @@ export class ApiServer implements LoopOutlet {
     if (path === "/api/gear" && req.method === "PUT") { await this.putGear(req, res); return; }
     if (path === "/api/models" && req.method === "GET") { await this.getModels(res); return; }
     if (path === "/api/usage" && req.method === "GET") { this.getUsage(req, res); return; }
+    if (path === "/api/stats" && req.method === "GET") { this.getStats(res); return; }
     if (path === "/api/mission" && req.method === "POST") { await this.postMission(req, res); return; }
     if (path === "/api/task" && req.method === "POST") { await this.postTask(req, res); return; }
     if (path === "/api/mode" && req.method === "POST") { await this.postMode(req, res); return; }
@@ -419,6 +421,16 @@ export class ApiServer implements LoopOutlet {
     if (!this.d.chat) { json(res, 503, { error: "chat not wired" }); return; }
     const q = new URL(req.url ?? "/", "http://local").searchParams.get("days");
     json(res, 200, { usage: this.d.chat.usage(q === null ? 7 : Number(q)) });
+  }
+
+  // R8 ledger read side: the tail of runtime/STATS.md (appendStat lines)
+  // folded into a per-agent track record for the command-center strip. A
+  // missing ledger (fresh runtime / pre-R8 core) answers { agents: [] } —
+  // 200, not 404, so the UI treats "no record yet" as ordinary state.
+  private getStats(res: ServerResponse): void {
+    let raw = "";
+    try { raw = readFileSync(join(this.d.runtimeDir, "STATS.md"), "utf8"); } catch { /* no ledger yet */ }
+    json(res, 200, { agents: aggregateStats(raw) });
   }
 
   private async postMission(req: IncomingMessage, res: ServerResponse): Promise<void> {

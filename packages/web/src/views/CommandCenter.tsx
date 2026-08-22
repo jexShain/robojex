@@ -24,6 +24,7 @@ import {
 } from './ganttModel'
 import { dayColHead } from './timefmt'
 import { eventKindOf, eventPayload } from './thinkingModel'
+import { statsTone } from './statsModel'
 import './command.css'
 
 const NOW_TICK_MS = 30_000
@@ -510,6 +511,23 @@ export function CommandCenter() {
     }
   }, [])
 
+  // agent-record strip (R8 ledger read side): GET /api/stats once on mount.
+  // Empty ledger → agents: [] → whole block hidden; a failed or absent route
+  // (older core) rejects → also hidden — stats are a bonus, never an error.
+  const [stats, setStats] = useState<api.AgentStats[] | null>(null)
+  useEffect(() => {
+    let alive = true
+    api
+      .fetchStats()
+      .then((agents) => {
+        if (alive) setStats(agents)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [])
+
   // aligned clock, re-rendered every 30s so relative times / the now-line drift
   const now = Date.now() + state.clockOffset
   useEffect(() => {
@@ -557,6 +575,26 @@ export function CommandCenter() {
           {fill(t('cc.taskCount'), { n: state.tasks.length })}
         </span>
       </header>
+
+      {stats && stats.length > 0 ? (
+        <div className="cc-stats" data-testid="agent-stats">
+          <span className="cc-stats-label">{t('cc.stats.title')}</span>
+          <div className="cc-stats-rows">
+            {stats.map((a) => (
+              <span
+                key={a.framework}
+                className={`cc-stats-row tone-${statsTone(a.passRate)}`}
+                title={a.recent.length > 0 ? fill(t('cc.stats.recent'), { titles: a.recent.join(' · ') }) : a.framework}
+              >
+                <b>{a.framework}</b>
+                <span className="cc-stats-rate">
+                  {fill(t('cc.stats.row'), { n: a.total, p: a.passRate, a: a.pass, b: a.partial, c: a.fail })}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="cc-body">
         <section className="cc-left" data-testid="gantt-board">

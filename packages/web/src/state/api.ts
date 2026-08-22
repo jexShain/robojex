@@ -426,3 +426,24 @@ export async function getSettings(): Promise<Settings> {
 export async function putSettings(patch: Partial<Settings>): Promise<{ ok: boolean; note?: string }> {
   return json<{ ok: boolean; note?: string }>(await post('/api/settings', patch, 'PUT'))
 }
+
+/* ───────────────────── agent stats ───────────────────── */
+
+/** Per-agent acceptance record, aggregated by the core from the
+ * runtime/STATS.md ledger tail (R8). `recent` = the agent's last 3 task
+ * titles, in ledger order. */
+export interface AgentStats {
+  framework: string
+  total: number
+  pass: number
+  partial: number
+  fail: number
+  passRate: number
+  recent: string[]
+}
+
+/** Command-center agent-record strip. Empty array = no ledger yet; a
+ * failed/absent route (older core) throws — callers hide the block. */
+export async function fetchStats(): Promise<AgentStats[]> {
+  return (await json<{ agents: AgentStats[] }>(await fetch('/api/stats'))).agents
+}

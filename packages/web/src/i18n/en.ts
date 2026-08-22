@@ -245,6 +245,9 @@ export const en: Record<string, string> = {
   'cc.policy.conservativeTitle': 'Conservative mode: write tools need approval',
   'cc.tasksTitle': 'Total tasks',
   'cc.taskCount': '{n} tasks',
+  'cc.stats.title': 'Agent record',
+  'cc.stats.row': '{n} runs · {p}% pass ({a}✓ {b}◐ {c}✗)',
+  'cc.stats.recent': 'Recent: {titles}',
 
   /* cockpit (GearPanel) */
   'cp.dialAria': 'Current gear {n}/4',

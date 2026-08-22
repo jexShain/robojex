@@ -245,6 +245,9 @@ export const zh: Record<string, string> = {
   'cc.policy.conservativeTitle': '保守模式：写类工具需审批',
   'cc.tasksTitle': '任务总数',
   'cc.taskCount': '{n} 任务',
+  'cc.stats.title': '代理战绩',
+  'cc.stats.row': '{n} 次 · 通过率 {p}%（{a}✓ {b}◐ {c}✗）',
+  'cc.stats.recent': '近期：{titles}',
 
   /* cockpit (GearPanel) */
   'cp.dialAria': '当前挡位 {n}/4',

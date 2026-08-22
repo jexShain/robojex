@@ -104,6 +104,56 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* ── agent-record strip (R8 ledger): per-agent acceptance pass rates ── */
+
+.cc-stats {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 4px var(--rj-space-3);
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rj-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.cc-stats-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.cc-stats-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 16px;
+}
+
+.cc-stats-row {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  font-family: var(--rj-font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.cc-stats-row b {
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* pass-rate tone (statsModel.statsTone): ≥70 green · 40–69 amber · <40 red
+ * — same trio the verdict glyphs use */
+.cc-stats-row.tone-good .cc-stats-rate { color: var(--dsw-alias-state-success-primary); }
+.cc-stats-row.tone-mid .cc-stats-rate { color: var(--dsw-alias-state-warn-primary); }
+.cc-stats-row.tone-bad .cc-stats-rate { color: var(--dsw-alias-state-error-primary); }
+
 /* ── body split ── */
 
 .cc-body {
