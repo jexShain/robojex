@@ -163,6 +163,14 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
   const chatService = new ChatService({
     store: chatStore, llm, gear: gearController, budget, runtimeDir,
     onAgentEvent: (text) => { loop.push(text); }, // mode:'agent' chats also reach the orchestration loop
+    // live-lookup grounding: the direct chat runs builtin tools through the
+    // sentinel protocol. Both close over objects built a few lines below (the
+    // tool manager, the loop) — same deferred-reference pattern as onAgentEvent.
+    tools: {
+      call: (name, args, gate) => builtinTools.call(name, args, gate),
+      schemasBlock: () => builtinTools.schemasBlock(),
+    },
+    gate: () => loopRef?.gateForTools() ?? "full",
   });
   // builtin capability layer: hermes-core tools bridged onto jex subsystems.
   // takeoverSend/chatOut need the loop/api objects while both of those need

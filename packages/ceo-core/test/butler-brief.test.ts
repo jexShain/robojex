@@ -157,14 +157,16 @@ describe("butler briefs (管家节点简报)", () => {
 });
 
 describe("patrol triage: chat errand rule", () => {
-  it("the patrol system prompt separates chat errands from already-answered chatter", async () => {
+  it("the patrol system prompt separates chat errands from pure chatter and always acts on machine questions", async () => {
     const { loop, systems } = rig(() => '{"actions":[]}');
     await loop.runOnce("chat: 你好");
     const patrol = systems.find((s) => s.slot === "patrol")!.content;
     expect(patrol).toContain("'chat:' event is the human talking to jex");
     expect(patrol).toContain("errand or delegation");
     expect(patrol).toContain("帮我/做/建/写/修/查/安排");
-    expect(patrol).toContain("may be 'none'");
+    expect(patrol).toContain("pure greeting or social chatter with no ask");
+    expect(patrol).toContain("ALWAYS acts"); // machine questions never settle in the direct chat alone
+    expect(patrol).not.toContain("may be 'none'"); // the old escape hatch is gone
     expect(patrol).toContain("When unsure, act");
     loop.stop();
   });

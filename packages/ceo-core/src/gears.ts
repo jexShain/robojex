@@ -52,8 +52,9 @@ const LOOP_CHAT_ERRAND = "看到 chat: 委托事件优先处理：接下委托�
 // Butler positioning shared by every direct-chat persona: the user never needs
 // a command prefix to hand jex an errand — important asks auto-become
 // delegated tasks (the chat stream is dual-channel by default), and the reply
-// language follows the user's.
-const CHAT_BUTLER_OPENING = "用户直接说话即可交代事情——重要委托你会自动建任务派发，无需任何命令前缀；回复语言跟随用户。";
+// language follows the user's. The grounding clause keeps machine facts
+// honest: live data comes from the chat-side lookup tools, never memory.
+const CHAT_BUTLER_OPENING = "用户直接说话即可交代事情——重要委托你会自动建任务派发，无需任何命令前缀；回复语言跟随用户。你可以当场调用查询工具获取本机实时信息（硬件、文件、进程、任务进度）——查到才答，绝不编造系统数据；涉及委派的活你会自动建任务派发并在时间线简报进展。";
 
 // Autonomy prefix prepended to the patrol/decide system prompts. dormant is
 // never used (the cycle returns before any LLM call); the other four share the

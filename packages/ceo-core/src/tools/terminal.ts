@@ -9,6 +9,11 @@ import type { ToolEntry } from "./registry.js";
 const OUT_BUDGET = 8192;
 const TIMEOUT_CAP = 600;
 
+// Model-friendly environment overrides (pattern borrowed from deepseek-harness
+// bash-local): colors and pagers pollute tool output with ANSI/alt-screen
+// escape sequences the LLM pays tokens for and misreads.
+const ENV_OVERRIDES: Record<string, string> = { NO_COLOR: "1", TERM: "dumb", PAGER: "cat", GIT_PAGER: "cat" };
+
 function shellWrap(command: string): { file: string; args: string[] } {
   if (process.platform === "win32") return { file: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-Command", command] };
   return { file: "/bin/bash", args: ["-lc", command] };
@@ -16,10 +21,11 @@ function shellWrap(command: string): { file: string; args: string[] } {
 
 function run(file: string, args: string[], opts: { timeoutMs: number; workdir?: string }): Promise<{ out: string; code: number | null; timedOut: boolean }> {
   return new Promise((resolve) => {
-    const child = spawn(file, args, { 
-      cwd: opts.workdir, 
-      stdio: ["ignore", "pipe", "pipe"], 
-      detached: process.platform !== "win32" 
+    const child = spawn(file, args, {
+      cwd: opts.workdir,
+      env: { ...process.env, ...ENV_OVERRIDES },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32"
     });
     let out = ""; let settled = false;
     const timer = setTimeout(() => {
