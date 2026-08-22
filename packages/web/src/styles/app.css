@@ -2424,3 +2424,17 @@ body[data-ds-dark-theme] .chip.full {
 .activity-skeleton .rj-skeleton:nth-child(3n) {
   width: 88%;
 }
+
+/* ── global density + font-size prefs (settings › appearance) ──
+ * SettingsView stamps body[data-density]/[data-fontsize]; the settings
+ * sheet carries its own local overrides — these make both prefs app-wide. */
+body[data-density='compact'] {
+  --rj-space-4: 12px;
+  --rj-space-5: 16px;
+  --rj-space-6: 20px;
+  --rj-space-7: 26px;
+  --rj-space-8: 32px;
+}
+body[data-fontsize='lg'] {
+  font-size: 15.5px;
+}

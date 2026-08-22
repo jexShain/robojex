@@ -4,29 +4,23 @@
 // popovers, char/token estimate, stop/send swap while streaming. `/`-prefixed
 // text routes to runCommand; `@<gear>` tokens apply the gear on send.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
 } from 'react'
 import { useStore } from '../state/store'
-import type { GearDef, GearId } from '../state/types'
+import { useT } from '../i18n'
+import { fill } from '../i18n'
+import type { GearId } from '../state/types'
+import { gearsOrFallback, localizeGears } from '../views/gearDefs'
 import { filterSlash, SlashMenu } from './SlashMenu'
 import type { SlashEntry } from './SlashMenu'
 import { extractGearTokens, trailingMention } from './gearTokens'
 import './chat.css'
 
 const MAX_HEIGHT = 264 // ~10 rows at 1.6 × 16.5px
-
-/** Gear fallback until GET /api/gear lands (matches ceo-core gears.ts). */
-const FALLBACK_GEARS: GearDef[] = [
-  { id: 'dormant', level: 0, name: '休眠', emoji: '😴', tickMs: 0, decideMaxTokens: 0, patrolEvery: 0, desc: '不巡逻不决策，只响应直聊', cost: '零消耗' },
-  { id: 'eco', level: 1, name: '省电', emoji: '🌱', tickMs: 300_000, decideMaxTokens: 2048, patrolEvery: 5, desc: '极省 token，只看关键事件', cost: '极低' },
-  { id: 'balanced', level: 2, name: '均衡', emoji: '⚖️', tickMs: 60_000, decideMaxTokens: 4096, patrolEvery: 1, desc: '正常自主，平衡成本', cost: '适中' },
-  { id: 'focused', level: 3, name: '专注', emoji: '🎯', tickMs: 30_000, decideMaxTokens: 8192, patrolEvery: 1, desc: '主动推进任务板，深入思考', cost: '较高' },
-  { id: 'turbo', level: 4, name: '狂暴', emoji: '🚀', tickMs: 15_000, decideMaxTokens: 16384, patrolEvery: 1, desc: '最大自主，全速燃烧', cost: '高昂' },
-]
 
 /** Complete a palette pick against the typed text: finish a partial prefix
  * (typing `/gear tu` + Enter submits `/gear turbo`), keep any typed argument
@@ -49,6 +43,7 @@ function CheckIcon(): JSX.Element {
 
 export function InputBar() {
   const { state, sendMessage, stopStream, runCommand, changeGear, setModel, refreshModels } = useStore()
+  const { t } = useT()
   const [value, setValue] = useState('')
   const [dismissed, setDismissed] = useState(false) // slash palette Esc-dismissed
   const [selIdx, setSelIdx] = useState(0)
@@ -62,7 +57,8 @@ export function InputBar() {
   const histIdx = useRef(-1)
   const draft = useRef('')
 
-  const gears = state.gears.length > 0 ? state.gears : FALLBACK_GEARS
+  // localized display table: dict names/descs/costs over live-or-fallback data
+  const gears = useMemo(() => localizeGears(gearsOrFallback(state.gears), t), [state.gears, t])
   const gearDef = gears.find((g) => g.id === state.gear) ?? gears[2]!
   const streaming = state.stream.status === 'streaming' || state.stream.status === 'stopping'
   const trimmed = value.trim()
@@ -206,7 +202,15 @@ export function InputBar() {
         return
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Enter-to-send preference (settings › chat): '0' flips the mapping —
+    // plain Enter newlines, Ctrl/Cmd+Enter submits
+    const enterSend = (() => {
+      try { return localStorage.getItem('robojex-enter-send') !== '0' } catch { return true }
+    })()
+    const submitKey = enterSend
+      ? (e.key === 'Enter' && !e.shiftKey)
+      : (e.key === 'Enter' && (e.ctrlKey || e.metaKey))
+    if (submitKey) {
       e.preventDefault()
       submit(value)
       return
@@ -280,8 +284,8 @@ export function InputBar() {
       ) : null}
 
       {atOpen && atEntries.length > 0 ? (
-        <div className="ib-at" data-testid="gear-mention" role="listbox" aria-label="挡位提及">
-          <div className="ib-at-title">@ 挡位</div>
+        <div className="ib-at" data-testid="gear-mention" role="listbox" aria-label={t('input.atAria')}>
+          <div className="ib-at-title">{t('input.atTitle')}</div>
           {atEntries.map((g, i) => (
             <button
               key={g.id}
@@ -309,8 +313,8 @@ export function InputBar() {
       ) : null}
 
       {gearOpen ? (
-        <div className="ib-pop" data-testid="gear-popover" role="listbox" aria-label="自主挡位">
-          <div className="ib-pop-title">自主挡位</div>
+        <div className="ib-pop" data-testid="gear-popover" role="listbox" aria-label={t('input.gearPopAria')}>
+          <div className="ib-pop-title">{t('input.gearPopTitle')}</div>
           {gears.map((g) => (
             <button
               key={g.id}
@@ -338,10 +342,10 @@ export function InputBar() {
       ) : null}
 
       {modelOpen ? (
-        <div className="ib-pop right" role="listbox" aria-label="模型选择">
-          <div className="ib-pop-title">模型</div>
+        <div className="ib-pop right" role="listbox" aria-label={t('input.modelPopAria')}>
+          <div className="ib-pop-title">{t('input.modelPopTitle')}</div>
           {state.models.length === 0 ? (
-            <div className="ib-pop-empty">模型列表加载中或不可用 — 可用 /model &lt;名称&gt; 手动指定</div>
+            <div className="ib-pop-empty">{t('input.modelEmpty')}</div>
           ) : (
             state.models.map((m) => (
               <button
@@ -369,7 +373,7 @@ export function InputBar() {
           rows={1}
           data-testid="chat-input"
           value={value}
-          placeholder={streaming ? 'RoboJex 正在回复…（可继续输入）' : '给 RoboJex 发送消息 — 输入 / 查看命令'}
+          placeholder={streaming ? t('input.placeholderStreaming') : t('input.placeholder')}
           spellCheck={false}
           autoFocus
           onChange={(e) => onChange(e.target.value)}
@@ -381,8 +385,8 @@ export function InputBar() {
               type="button"
               className="ib-chip"
               data-testid="gear-chip"
-              title={`自主挡位 · ${gearDef.name} — ${gearDef.desc}`}
-              aria-label="切换自主挡位"
+              title={fill(t('input.gearChipTitle'), { name: gearDef.name, desc: gearDef.desc })}
+              aria-label={t('input.gearChipAria')}
               aria-expanded={gearOpen}
               onMouseDown={keepFocus}
               onClick={() => {
@@ -405,8 +409,8 @@ export function InputBar() {
               type="button"
               className="ib-chip"
               data-testid="model-chip"
-              title={`模型 · ${state.model}`}
-              aria-label="切换模型"
+              title={fill(t('input.modelChipTitle'), { name: state.model })}
+              aria-label={t('input.modelChipAria')}
               aria-expanded={modelOpen}
               onMouseDown={keepFocus}
               onClick={() => {
@@ -426,7 +430,7 @@ export function InputBar() {
           </div>
           {bodyLen > 0 ? (
             <div className="ib-count" data-testid="input-count">
-              {bodyLen} 字 · ~{Math.ceil(bodyLen / 1.6)} tok
+              {fill(t('input.count'), { n: bodyLen, m: Math.ceil(bodyLen / 1.6) })}
             </div>
           ) : null}
           <div className="ib-actions">
@@ -435,8 +439,8 @@ export function InputBar() {
                 type="button"
                 className="ib-stop"
                 data-testid="stream-stop"
-                title="停止生成"
-                aria-label="停止生成"
+                title={t('input.stop')}
+                aria-label={t('input.stop')}
                 onClick={stopStream}
               >
                 <span className="sq" />
@@ -446,8 +450,8 @@ export function InputBar() {
                 type="button"
                 className="ib-send"
                 data-testid="chat-send"
-                title="发送"
-                aria-label="发送消息"
+                title={t('input.send')}
+                aria-label={t('input.sendAria')}
                 disabled={trimmed.length === 0}
                 onClick={() => submit(value)}
               >
@@ -460,7 +464,7 @@ export function InputBar() {
         </div>
       </div>
       <div className="ib-hint">
-        Enter 发送<span className="sep">·</span>Shift+Enter 换行<span className="sep">·</span>
+        {t('input.hintSend')}<span className="sep">·</span>{t('input.hintNewline')}<span className="sep">·</span>
         <span className="model">{state.model}</span>
       </div>
     </div>

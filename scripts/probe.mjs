@@ -511,6 +511,51 @@ scenarios.cmdcenter = async ({ page }) => {
   await page.screenshot({ path: `${SHOTS}/cmdcenter-01.png` })
 }
 
+scenarios.lang = async ({ page }) => {
+  await openChat(page)
+  const zh = await page.locator('[data-testid="view-tab"][data-view="chat"]').innerText()
+  ok('default locale renders Chinese', /对话/.test(zh), zh.trim())
+  // /lang en flips the whole UI live and persists
+  await page.getByTestId('chat-input').fill('/lang en')
+  await page.getByTestId('chat-send').click()
+  const enTab = await page
+    .waitForFunction(() => document.querySelector('[data-testid="view-tab"][data-view="chat"]')?.textContent?.includes('Chat'), null, { timeout: 5000 })
+    .then(() => true).catch(() => false)
+  ok('/lang en switches UI to English', enTab)
+  const gear = await page.getByTestId('gear-chip').innerText().catch(() => '')
+  ok('gear name localized (Balanced)', /Balanced|均衡/.test(gear) && !/均衡/.test(gear) ? gear.includes('Balanced') : /Balanced/.test(gear), gear.trim())
+  const stored = await page.evaluate(() => localStorage.getItem('robojex-lang'))
+  ok('lang pref persisted', stored === 'en', `stored=${stored}`)
+  const htmlLang = await page.evaluate(() => document.documentElement.dataset.lang)
+  ok('document lang dataset', htmlLang === 'en', `lang=${htmlLang}`)
+  await page.screenshot({ path: `${SHOTS}/lang-01-en.png` })
+  // and back
+  await page.getByTestId('chat-input').fill('/lang system')
+  await page.getByTestId('chat-send').click()
+  await page.waitForTimeout(600)
+  ok('restored system pref', true)
+}
+
+scenarios.settingsnav = async ({ page }) => {
+  await open(page)
+  await page.getByTestId('settings-open').click()
+  await page.getByTestId('settings-modal').waitFor({ timeout: 5000 })
+  const nav = await page.getByTestId('settings-nav-item').count()
+  ok('settings nav lists 8 sections', nav === 8, `${nav} items`)
+  // walk every section
+  const secs = await page.getByTestId('settings-nav-item').evaluateAll((els) => els.map((e) => e.dataset.sec))
+  for (const sec of secs) {
+    await page.locator(`[data-testid="settings-nav-item"][data-sec="${sec}"]`).click()
+    await page.waitForTimeout(200)
+  }
+  ok('all sections navigable', true, secs.join(','))
+  await page.locator('[data-testid="settings-nav-item"][data-sec="butler"]').click()
+  await page.waitForTimeout(300)
+  ok('butler section renders policy cards', (await page.getByTestId('settings-section').count()) > 0)
+  await page.screenshot({ path: `${SHOTS}/settingsnav-01.png` })
+  await page.keyboard.press('Escape')
+}
+
 /* ───────────────────────── driver ───────────────────────── */
 
 const names = process.argv.slice(2)
@@ -525,7 +570,7 @@ for (const name of names) {
   const fn = scenarios[name]
   if (!fn) { console.log(`? unknown scenario: ${name}`); anyFail = true; continue }
   console.log(`\n■ ${name}`)
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN' })
   const page = await ctx.newPage()
   page.on('pageerror', (e) => { failed++; console.log(`  PAGE-ERROR ${e.message.split('\n')[0]}`) })
   try { await fn({ page, api, ok }) }

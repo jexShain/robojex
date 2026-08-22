@@ -19,6 +19,9 @@ const VALID: Record<ViewId, true> = {
 
 export function loadView(): ViewId {
   try {
+    // settings › general "start with": a pinned view wins over last-used
+    const start = window.localStorage.getItem('robojex-startview')
+    if (start === 'command' || start === 'chat') return start
     const raw = window.localStorage.getItem(KEY)
     if (raw === 'thinking') return 'cockpit' // pre-cockpit id migration
     if (raw && raw in VALID) return raw as ViewId

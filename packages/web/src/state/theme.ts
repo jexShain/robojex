@@ -63,6 +63,18 @@ export function useTheme(): ThemeApi {
     else delete document.body.dataset.dsDarkTheme
   }, [resolved])
 
+  // imperative switches (setThemePref from slash commands / settings) bypass
+  // React state — listen on the bridge so mounted useTheme() consumers
+  // re-render too
+  useEffect(() => {
+    const onBridge = (ev: Event): void => {
+      const detail = (ev as CustomEvent<ThemePref>).detail
+      if (detail === 'light' || detail === 'dark' || detail === 'system') setPrefState(detail)
+    }
+    window.addEventListener(THEME_EVENT, onBridge)
+    return () => window.removeEventListener(THEME_EVENT, onBridge)
+  }, [])
+
   const setPref = useCallback((next: ThemePref) => setPrefState(next), [])
 
   currentState = { pref, resolved }

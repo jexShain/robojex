@@ -20,6 +20,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     viewport: { width: 1360, height: 860 },
     trace: 'off',
+    locale: 'zh-CN', // the suite asserts Chinese copy; system-lang default must resolve zh
   },
   webServer: [
     {
