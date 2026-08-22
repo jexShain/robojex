@@ -1,7 +1,38 @@
-/* packages/web/src/styles/settings.css — settings modal (SettingsView).
- * Backdrop blur + left tab nav + right form; current gear card gets the
- * brand-gradient border via the padding-box/border-box paint trick. */
+/* packages/web/src/styles/settings.css — ChatGPT-style settings center
+ * (SettingsView). Left category nav + right grouped form cards. All colors
+ * ride the dsh/--rj token sheets (dual theme for free); density and font
+ * size read body[data-density] / body[data-fontsize] so the compact/large
+ * prefs apply instantly inside this modal and can go global later.
+ * Breakpoint 760px: below it the nav becomes a horizontal chip scroller. */
 
+/* ── density / font-size scale (settings-scoped defaults + overrides) ── */
+.st-modal {
+  --st-card-pad: 16px;
+  --st-card-gap: 12px;
+  --st-row-gap: 10px;
+  --st-section-gap: 14px;
+  --st-font: 13px;
+  --st-font-label: 12.5px;
+  --st-font-hint: 11.5px;
+}
+
+body[data-density='compact'] .st-modal {
+  --st-card-pad: 11px;
+  --st-card-gap: 8px;
+  --st-row-gap: 7px;
+  --st-section-gap: 10px;
+  --st-font: 12.5px;
+  --st-font-label: 12px;
+  --st-font-hint: 11px;
+}
+
+body[data-fontsize='large'] .st-modal {
+  --st-font: 14.5px;
+  --st-font-label: 14px;
+  --st-font-hint: 13px;
+}
+
+/* ── backdrop + modal shell ── */
 .st-backdrop {
   position: fixed;
   inset: 0;
@@ -27,8 +58,8 @@
 
 .st-modal {
   position: relative;
-  width: min(880px, 96vw);
-  height: min(600px, 90vh);
+  width: min(900px, 96vw);
+  height: min(640px, 90vh);
   display: flex;
   flex-direction: column;
   border: 1px solid var(--dsw-alias-border-l2);
@@ -90,14 +121,16 @@
   display: flex;
 }
 
+/* ── left category nav (>=760px) ── */
 .st-nav {
   flex: none;
-  width: 172px;
+  width: 176px;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 10px 8px;
   border-right: 1px solid var(--dsw-alias-border-l1);
+  overflow-y: auto;
 }
 
 .st-nav-item {
@@ -109,6 +142,7 @@
   font-size: 13px;
   color: var(--dsw-alias-label-secondary);
   text-align: left;
+  white-space: nowrap;
   transition: background var(--rj-duration-fast) var(--rj-ease-smooth),
     color var(--rj-duration-fast) var(--rj-ease-smooth);
 }
@@ -129,6 +163,7 @@
   font-size: 14px;
 }
 
+/* ── content column ── */
 .st-content {
   flex: 1;
   min-width: 0;
@@ -156,16 +191,63 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* ── grouped form cards ── */
+.st-card {
+  margin: 0 0 var(--st-section-gap);
+  padding: var(--st-card-pad);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--rj-radius-md);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.st-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--st-card-gap);
+}
+
+.st-card-title {
+  font-size: var(--st-font-label);
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.st-card-desc {
+  font-size: var(--st-font-hint);
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.st-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--st-row-gap);
+}
+
+/* informational card (butler "how to raise autonomy") */
+.st-card-note {
+  background: var(--rj-brand-gradient-soft);
+  border-color: transparent;
+}
+
+.st-note-body {
+  margin: 0;
+  font-size: var(--st-font);
+  line-height: 1.65;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── field / input primitives ── */
 .st-field {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  margin: 0 0 14px;
   max-width: 420px;
 }
 
 .st-label {
-  font-size: 12.5px;
+  font-size: var(--st-font-label);
   font-weight: 500;
   color: var(--dsw-alias-label-secondary);
 }
@@ -177,7 +259,7 @@
   border-radius: var(--rj-radius-sm);
   background: var(--dsw-specific-input-major);
   color: var(--dsw-alias-label-primary);
-  font: 13px/1 var(--rj-font-ui);
+  font: var(--st-font)/1 var(--rj-font-ui);
   transition: border-color var(--rj-duration-fast) var(--rj-ease-smooth);
 }
 
@@ -193,7 +275,8 @@
 }
 
 .st-hint {
-  font-size: 11.5px;
+  font-size: var(--st-font-hint);
+  line-height: 1.5;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -201,11 +284,53 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
-/* budget radios */
+/* ── chip rows (segmented pickers: language / theme / density / budget…) ── */
+.st-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.st-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rj-radius-full);
+  font-size: var(--st-font);
+  color: var(--dsw-alias-label-secondary);
+  transition: border-color var(--rj-duration-fast) var(--rj-ease-smooth),
+    background var(--rj-duration-fast) var(--rj-ease-smooth),
+    color var(--rj-duration-fast) var(--rj-ease-smooth);
+}
+
+.st-chip em {
+  font-style: normal;
+  font-size: var(--st-font-hint);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.st-chip:hover {
+  border-color: var(--dsw-alias-border-l3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.st-chip.on {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.st-chip.on em {
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── radio cards (policy) ── */
 .st-radios {
   display: flex;
   gap: 10px;
-  margin-bottom: 16px;
   flex-wrap: wrap;
 }
 
@@ -213,12 +338,15 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
+  flex: 1 1 200px;
+  max-width: 320px;
   padding: 10px 16px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: var(--rj-radius-md);
   font-size: 13.5px;
   font-weight: 600;
   color: var(--dsw-alias-label-primary);
+  text-align: left;
   transition: border-color var(--rj-duration-fast) var(--rj-ease-smooth),
     background var(--rj-duration-fast) var(--rj-ease-smooth);
 }
@@ -226,6 +354,7 @@
 .st-radio span {
   font-size: 11.5px;
   font-weight: 400;
+  line-height: 1.5;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -238,43 +367,73 @@
   background: var(--dsw-alias-interactive-bg-active);
 }
 
-/* connection-mode radios sit inside a st-field (no extra bottom margin) */
-.st-mode-radios {
-  margin-bottom: 0;
+/* ── switch (Enter to send) ── */
+.st-switch {
+  width: 38px;
+  height: 22px;
+  padding: 2px;
+  border-radius: var(--rj-radius-full);
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-interactive-bg-hover);
+  transition: background var(--rj-duration-fast) var(--rj-ease-smooth),
+    border-color var(--rj-duration-fast) var(--rj-ease-smooth);
 }
 
-/* browser-direct fallback block (SPEC §1) */
+.st-switch-knob {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--rj-radius-full);
+  background: var(--dsw-alias-label-secondary);
+  transition: transform var(--rj-duration-fast) var(--rj-ease-spring),
+    background var(--rj-duration-fast) var(--rj-ease-smooth);
+}
+
+.st-switch.on {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-button-info-fill);
+}
+
+.st-switch.on .st-switch-knob {
+  transform: translateX(16px);
+  background: var(--dsw-alias-label-primary-foreground);
+}
+
+/* ── desktop badge on read-only rows ── */
+.st-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: var(--rj-radius-full);
+  border: 1px solid var(--dsw-alias-border-l2);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary);
+  vertical-align: 1px;
+}
+
+/* ── browser-direct fallback block (SPEC §1) ── */
 .st-direct {
   display: flex;
   flex-direction: column;
-  padding: 12px 14px 4px;
-  margin-bottom: 14px;
+  gap: var(--st-row-gap);
+  padding: 12px 14px;
   border: 1px dashed var(--dsw-alias-border-l2);
   border-radius: var(--rj-radius-md);
 }
 
 .st-direct-note {
-  margin: 0 0 10px;
-  font-size: 11.5px;
+  margin: 0;
+  font-size: var(--st-font-hint);
   line-height: 1.6;
   color: var(--dsw-alias-state-warn-label);
 }
 
-/* small group heading above the gateway credential fields */
-.st-group-label {
-  display: block;
-  margin: 6px 0 10px;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--dsw-alias-label-secondary);
-}
-
-/* gear cards */
+/* ── gear picker cards (chat section) ── */
 .st-gear-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
   gap: 10px;
-  margin-top: 6px;
 }
 
 .st-gear-card {
@@ -342,19 +501,76 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-/* connection read-only rows */
+/* ── gear table (butler section, read-only) ── */
+.st-gear-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--rj-radius-sm);
+  overflow-x: auto;
+}
+
+.st-gear-tr {
+  display: grid;
+  grid-template-columns: 108px 72px 1fr 64px;
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 12px;
+  font-size: var(--st-font);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.st-gear-tr:last-child {
+  border-bottom: none;
+}
+
+.st-gear-tr.th {
+  font-size: var(--st-font-hint);
+  color: var(--dsw-alias-label-tertiary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.st-gear-tr.cur {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.st-gear-name {
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+}
+
+.st-gear-tick,
+.st-gear-cost {
+  font-family: var(--rj-font-mono);
+  font-size: 11.5px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.st-gear-desc {
+  font-size: var(--st-font-hint);
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── key/value read-only rows ── */
 .st-kv {
   display: flex;
   gap: 12px;
   padding: 6px 0;
-  font-size: 13px;
+  font-size: var(--st-font);
   border-bottom: 1px dashed var(--dsw-alias-border-l1);
   max-width: 420px;
 }
 
+.st-kv:last-child {
+  border-bottom: none;
+}
+
 .st-kv .k {
   flex: none;
-  width: 110px;
+  width: 128px;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -375,7 +591,35 @@
   color: var(--dsw-alias-state-warn-primary);
 }
 
-/* shortcut list (kbd keycaps, rows mirror the .st-kv rhythm) */
+/* ── danger buttons (data section) ── */
+.st-danger {
+  align-self: flex-start;
+  padding: 7px 16px;
+  border: 1px solid var(--dsw-alias-state-error-secondary);
+  border-radius: var(--rj-radius-sm);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: var(--st-font);
+  font-weight: 500;
+  transition: background var(--rj-duration-fast) var(--rj-ease-smooth),
+    color var(--rj-duration-fast) var(--rj-ease-smooth);
+}
+
+.st-danger:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+}
+
+.st-danger.armed {
+  background: var(--dsw-alias-state-error-primary);
+  border-color: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-label-primary-inverted);
+}
+
+.st-danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── shortcut list (kbd keycaps) ── */
 .st-keys {
   display: flex;
   flex-direction: column;
@@ -392,7 +636,7 @@
 }
 
 .st-key-desc {
-  font-size: 13px;
+  font-size: var(--st-font);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -416,7 +660,7 @@
   border-radius: 5px;
 }
 
-/* about */
+/* ── about ── */
 .st-about {
   display: flex;
   flex-direction: column;
@@ -451,9 +695,9 @@
 }
 
 .st-about-desc {
-  max-width: 400px;
+  max-width: 420px;
   margin: 4px 0 0;
-  font-size: 12.5px;
+  font-size: var(--st-font);
   line-height: 1.65;
   color: var(--dsw-alias-label-secondary);
 }
@@ -464,8 +708,21 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-.st-about a {
+.st-about-kv {
+  margin-top: 4px;
+}
+
+.st-about-kv .st-kv {
+  max-width: none;
+}
+
+.st-about-links {
+  display: flex;
+  gap: 18px;
   margin-top: 6px;
+}
+
+.st-about a {
   font-size: 12.5px;
   color: var(--dsw-alias-state-business-primary);
   text-decoration: none;
@@ -475,7 +732,7 @@
   text-decoration: underline;
 }
 
-/* footer */
+/* ── footer ── */
 .st-foot {
   flex: none;
   display: flex;
@@ -515,7 +772,7 @@
   cursor: not-allowed;
 }
 
-/* toast */
+/* ── toast ── */
 .st-toast {
   position: absolute;
   left: 50%;
@@ -546,6 +803,58 @@
   to {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ── narrow (<760px): nav collapses to a horizontal chip scroller ── */
+@media (max-width: 759px) {
+  .st-body {
+    flex-direction: column;
+  }
+
+  .st-nav {
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-right: none;
+    border-bottom: 1px solid var(--dsw-alias-border-l1);
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .st-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .st-nav-item {
+    flex: none;
+    padding: 6px 12px;
+    border: 1px solid transparent;
+    border-radius: var(--rj-radius-full);
+    font-size: 12.5px;
+  }
+
+  .st-nav-item.active {
+    border-color: var(--dsw-alias-state-business-primary);
+  }
+
+  .st-content {
+    padding: 14px 16px 22px;
+  }
+
+  .st-modal {
+    height: min(680px, 92vh);
+  }
+
+  .st-gear-tr {
+    grid-template-columns: 96px 64px 1fr;
+  }
+
+  .st-gear-cost {
+    display: none;
   }
 }
 
