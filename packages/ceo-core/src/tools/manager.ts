@@ -11,6 +11,7 @@ import type { ToolCtx, ToolEntry } from "./registry.js";
 import { ToolRegistry } from "./registry.js";
 import { fileTools } from "./file.js";
 import { terminalTools } from "./terminal.js";
+import { jobsTools } from "./jobs.js";
 import { boardTools, miscBridges } from "./bridges.js";
 
 export const OUT_LIMIT = 8192;
@@ -53,7 +54,7 @@ function inSystemDir(fwdLower: string): boolean {
 }
 
 export function P1_TOOLS(): ToolEntry[] {
-  return [...fileTools(), ...terminalTools(), ...boardTools(), ...miscBridges()];
+  return [...fileTools(), ...terminalTools(), ...jobsTools(), ...boardTools(), ...miscBridges()];
 }
 
 function truncate(s: string): string {

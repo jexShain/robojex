@@ -15,10 +15,10 @@ beforeEach(() => {
 });
 
 describe("registration", () => {
-  it("P1_TOOLS registers 27 entries with unique names", () => {
+  it("P1_TOOLS registers 31 entries with unique names", () => {
     for (const e of P1_TOOLS()) reg.register(e);
-    expect(reg.names()).toHaveLength(27);
-    expect(new Set(reg.names()).size).toBe(27);
+    expect(reg.names()).toHaveLength(31);
+    expect(new Set(reg.names()).size).toBe(31);
   });
   it("jex-own state tools are internal; system-touching tools are not", () => {
     for (const e of P1_TOOLS()) reg.register(e);
