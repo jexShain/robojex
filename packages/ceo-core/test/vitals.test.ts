@@ -105,3 +105,18 @@ describe("R18: blocked-awaiting tasks stay on the verify pump", () => {
     rig.loop.stop();
   });
 });
+
+describe("R18 escape: exhausted retry ladders go quiet", () => {
+  it("attempts>=2 blocked-awaiting cards earn no verify_due nudge", () => {
+    const rig = makeRig();
+    const board = (rig.loop as unknown as { d: { board: TaskBoard } }).d.board;
+    const dead = board.add({ title: "死任务", assignee: "hermes", acceptance: "无望" });
+    board.update(dead.id, { status: "blocked", resultSummary: "x [awaiting acceptance: verify]", attempts: 2, verdict: "fail" });
+    const fresh = board.add({ title: "新任务", assignee: "hermes", acceptance: "待验" });
+    board.update(fresh.id, { status: "blocked", resultSummary: "y [awaiting acceptance: verify]", attempts: 1 });
+    rig.loop.pumpGantt(Date.now());
+    expect(rig.events.some((e) => e.startsWith("verify_due:") && e.includes("新任务"))).toBe(true);
+    expect(rig.events.some((e) => e.startsWith("verify_due:") && e.includes("死任务"))).toBe(false);
+    rig.loop.stop();
+  });
+});

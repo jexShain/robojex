@@ -290,8 +290,11 @@ export class SchedulerLoop {
     // pump — the agent finished but nobody judged it yet, and a restart must
     // never orphan that pending verdict.
     for (const t of this.d.board.list()) {
-      // settled tasks release their nudge slot (the map is bounded by live work)
-      const awaiting = t.status === "blocked" && t.resultSummary.includes("[awaiting acceptance");
+      // settled tasks release their nudge slot (the map is bounded by live
+      // work). R18 escape hatch: a card that already burned its retry ladder
+      // (attempts >= 2) stays parked for the HUMAN — re-nudging it forever
+      // would burn the whole night's cycles on a doomed verify loop.
+      const awaiting = t.status === "blocked" && t.resultSummary.includes("[awaiting acceptance") && t.attempts < 2;
       if (t.status !== "running" && !awaiting) this.verifyNudgedAt.delete(t.id);
       if ((t.status !== "running" && !awaiting) || !t.acceptance) continue;
       const last = this.verifyNudgedAt.get(t.id) ?? 0;
