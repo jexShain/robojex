@@ -157,6 +157,16 @@ describe("hard blacklist (SPEC-BUTLER §1: every gate, every policy)", () => {
     }
     expect(mgr.pendingApprovals()).toHaveLength(0); // refused, never queued
   });
+  it("privilege escalation does not buy the red lines (sudo rm / sudo tee /etc)", async () => {
+    // escalated deletion: the head is sudo, the payload is rm — refused
+    expect(await mgr.call("terminal", { command: "sudo rm -rf /tmp/x", timeout: 5 }, "full")).toMatch(/error: blocked privileged deletion/);
+    // escalated system-config rewrite — refused
+    expect(await mgr.call("terminal", { command: "sudo tee /etc/hosts", timeout: 5 }, "full")).toMatch(/error: blocked privileged system-dir write/);
+    expect(await mgr.call("terminal", { command: "doas cp x /usr/bin/y", timeout: 5 }, "full")).toMatch(/error: blocked privileged system-dir write/);
+    // ordinary escalation stays within the autonomy grant (runs, whatever it prints)
+    const ok = await mgr.call("terminal", { command: "sudo -n true 2>/dev/null || echo needs-password", timeout: 10 }, "full");
+    expect(ok).not.toMatch(/error: blocked/);
+  });
   it("terminal runs ordinary commands untouched", async () => {
     const r = await mgr.call("terminal", { command: "echo hello-blacklist", timeout: 10 }, "full");
     expect(r).toContain("hello-blacklist");

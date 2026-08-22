@@ -37,6 +37,12 @@ export type Gate = "observe" | "assist" | "full";
 // an absolute path, case-insensitive, .exe stripped) must never be one of these
 const DELETE_COMMANDS = new Set(["rm", "rmdir", "del", "erase", "shred", "unlink", "remove-item"]);
 
+// privilege-escalation heads: `sudo rm …` slips past the head check (the head
+// is sudo, not rm) — an escalated deletion or an escalated touch on a system
+// directory is exactly the user's red line (no deletions, no system-config
+// rewrites), no matter how politely it is asked for
+const PRIVILEGE_HEADS = new Set(["sudo", "doas", "pkexec", "runas"]);
+
 /** First token of a shell command line: /bin/rm -> rm, C:\tools\rm.exe -> rm.
  *  Env assignments and options are not special-cased — the head is the head. */
 export function commandHead(command: string): string {
@@ -51,6 +57,33 @@ const SYSTEM_DIRS = ["/etc", "/usr", "/bin", "/sbin", "/boot", "/sys", "/proc", 
 
 function inSystemDir(fwdLower: string): boolean {
   return SYSTEM_DIRS.some((d) => fwdLower === d || fwdLower.startsWith(d + "/"));
+}
+
+/** Every terminal-command red line in one place (shared by the terminal tool
+ *  and job_start so background jobs cannot sidestep the foreground rules):
+ *  deletion-class heads, privilege-escalated deletions, and privilege-
+ *  escalated writes into system directories. Returns the refusal text, or
+ *  null when the command is within the autonomy grant. */
+export function commandBlackline(command: string): string | null {
+  const tokens = command.trim().split(/\s+/);
+  const head = commandHead(command);
+  if (head && DELETE_COMMANDS.has(head)) {
+    return `blocked destructive command: ${tokens[0]} (deletions are off-limits — delegate cleanup to the human)`;
+  }
+  if (head && PRIVILEGE_HEADS.has(head)) {
+    const next = commandHead(tokens.slice(1).join(" ") || "x"); // x: bare sudo never matches
+    if (DELETE_COMMANDS.has(next)) {
+      return `blocked privileged deletion: ${tokens[0]} ${tokens[1] ?? ""} (escalation does not buy the right to delete)`;
+    }
+    // scan with /dev/null elided — it is universal plumbing (2>/dev/null),
+    // not a system-dir write; every other system-path mention under an
+    // escalation head is treated as the config-rewrite red line
+    const fwdLower = command.replaceAll("\\", "/").toLowerCase().replaceAll("/dev/null", " ");
+    if (SYSTEM_DIRS.some((d) => fwdLower.includes(d + "/") || fwdLower.includes(d + " "))) {
+      return `blocked privileged system-dir write: ${tokens.slice(0, 3).join(" ")} (system config is off-limits even escalated)`;
+    }
+  }
+  return null;
 }
 
 export function P1_TOOLS(): ToolEntry[] {
@@ -120,10 +153,8 @@ export class ToolManager {
   // "~/etc" style forms cannot dodge via separator or case games.
   private hardBlacklist(name: string, args: Record<string, unknown>): string | null {
     if (name === "terminal" && typeof args.command === "string") {
-      const head = commandHead(args.command);
-      if (head && DELETE_COMMANDS.has(head)) {
-        return `blocked destructive command: ${args.command.trim().split(/\s+/)[0]} (tool terminal refused; deletions are off-limits — delegate cleanup to the human)`;
-      }
+      const refusal = commandBlackline(args.command);
+      if (refusal) return `${refusal} (tool terminal refused)`;
     }
     if ((name === "write_file" || name === "patch") && typeof args.path === "string") {
       for (const form of [args.path, this.normalizePath(args.path)]) {

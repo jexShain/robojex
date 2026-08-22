@@ -9,6 +9,7 @@ import { spawn, execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import type { ToolEntry } from "./registry.js";
+import { commandBlackline } from "./manager.js";
 
 const TAIL_BUDGET = 8192;        // per-stream in-memory tail window (dsh OutputCollector, spill dropped)
 const MAX_LIVE = 6;              // concurrent live jobs (dsh per-owner cap)
@@ -19,18 +20,6 @@ const KILL_GRACE_MS = 3_000;     // timeout ladder: SIGTERM → wait → SIGKILL
 const REAP_EVERY_MS = 15_000;    // retention sweep cadence
 
 const ENV_OVERRIDES: Record<string, string> = { NO_COLOR: "1", TERM: "dumb", PAGER: "cat", GIT_PAGER: "cat" };
-
-// manager.ts hardBlacklist refuses deletion-class heads for the `terminal`
-// tool (SPEC-BUTLER §1). A background job is the same user-system write path,
-// so the same heads are refused here rather than left as a side door — kept
-// local because the set is only exported for `terminal` (no shared import).
-const DELETE_HEADS = new Set(["rm", "rmdir", "del", "erase", "shred", "unlink", "remove-item"]);
-
-function isDeleteHead(command: string): boolean {
-  const first = command.trim().split(/\s+/)[0] ?? "";
-  const base = first.split(/[\\/]/).pop() ?? first;
-  return DELETE_HEADS.has(base.toLowerCase().replace(/\.exe$/i, ""));
-}
 
 function shellWrap(command: string): { file: string; args: string[] } {
   if (process.platform === "win32") return { file: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-Command", command] };
@@ -228,9 +217,11 @@ const registry = new JobRegistry();
 async function jobStart(args: Record<string, unknown>): Promise<string> {
   const command = args.command;
   if (typeof command !== "string" || command.length === 0) return "error: command (string) required";
-  if (isDeleteHead(command)) {
-    return `blocked destructive command: ${command.trim().split(/\s+/)[0]} (tool job_start refused; deletions are off-limits — delegate cleanup to the human)`;
-  }
+  // one shared command blackline with the foreground terminal tool (manager's
+  // hardBlacklist only watches the "terminal" tool name — jobs must not be a
+  // side door for privileged deletions or system-dir rewrites either)
+  const refusal = commandBlackline(command);
+  if (refusal) return `${refusal} (tool job_start refused)`;
   const timeout = Number(args.timeout ?? TIMEOUT_DEFAULT);
   if (!Number.isInteger(timeout) || timeout < 1) return "error: timeout must be a positive integer (seconds)";
   if (timeout > TIMEOUT_CAP) return `error: timeout ${timeout}s exceeds the ${TIMEOUT_CAP}s cap for background jobs`;
