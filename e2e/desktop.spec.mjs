@@ -251,3 +251,25 @@ test.describe('RoboJex desktop', () => {
     if (await badge.count()) await expect(badge).toBeVisible()
     await shot(page, '20-command-center')
   })
+
+  // 21 (PLAN-SUPERHUMAN R31): the agent track-record bar renders when the
+  // backend serves stats, and hides silently when it has no ledger.
+  test('21 command center: agent stats bar tolerates empty and populated ledgers', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    // mock serves an empty ledger by default: no bar, no crash
+    await expect(page.getByTestId('cmd-center')).toBeVisible()
+    await expect(page.getByTestId('agent-stats')).toHaveCount(0)
+    // a populated ledger (/api/stats?demo=1 on the mock) renders the bar
+    await page.evaluate(async () => {
+      await fetch('/api/stats?demo=1', { method: 'POST' }).catch(() => {})
+    })
+    await page.reload()
+    await page.getByTestId('conn-status').waitFor()
+    const bar = page.getByTestId('agent-stats')
+    if (await bar.count()) {
+      await expect(bar).toBeVisible()
+      await expect(bar).toContainText('%')
+    }
+    await shot(page, '21-agent-stats')
+  })

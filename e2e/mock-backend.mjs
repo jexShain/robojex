@@ -17,6 +17,7 @@ const WEB_DIR = process.env.MOCK_WEB_DIR || path.resolve('packages/web/dist')
 const uid = () => crypto.randomUUID()
 
 /* ── gears (mirrors ceo-core gears.ts / web types.ts) ── */
+let statsDemo = false // armed by POST /api/stats?demo=1 (e2e scenario 21)
 const GEARS = [
   { id: 'dormant', level: 0, name: '休眠', emoji: '😴', tickMs: 0, decideMaxTokens: 0, patrolEvery: 0, desc: 'jex 沉睡，只响应直聊', cost: '零消耗' },
   { id: 'eco', level: 1, name: '省电', emoji: '🌿', tickMs: 300000, decideMaxTokens: 2048, patrolEvery: 5, desc: '只关注关键事件，动作保守', cost: '极省 token' },
@@ -289,6 +290,17 @@ const server = http.createServer((req, res) => {
   }
   if (p === '/api/settings' && req.method === 'PUT') {
     send(200, { ok: true, note: 'saved (mock)' })
+    return
+  }
+  // R31 track-record bar: empty ledger by default; POST /api/stats?demo=1
+  // arms one populated entry so the e2e can see the bar render
+  if (p === '/api/stats' && req.method === 'GET') {
+    send(200, { agents: statsDemo ? [{ framework: 'hermes', total: 6, pass: 4, partial: 1, fail: 1, passRate: 67, recent: ['整理下载文件夹'] }] : [] })
+    return
+  }
+  if (p === '/api/stats' && req.method === 'POST') {
+    statsDemo = true
+    send(200, { ok: true })
     return
   }
 
