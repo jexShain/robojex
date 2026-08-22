@@ -25,7 +25,7 @@
 
 const {
   app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut,
-  ipcMain, shell, session, screen, dialog,
+  ipcMain, shell, session, screen, dialog, Notification,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -645,6 +645,21 @@ function registerIpc() {
   });
   ipcMain.handle('window:close', (e) => { from(e)?.close(); });
   ipcMain.handle('window:is-maximized', (e) => from(e)?.isMaximized() ?? false);
+  // butler briefings as native toasts — dispatched by the renderer when a
+  // jex report lands outside the open conversation or the app is hidden;
+  // clicking the toast recalls the window that raised it
+  ipcMain.handle('notify', (e, payload) => {
+    const title = typeof payload?.title === 'string' ? payload.title.trim() : '';
+    if (!title || !Notification.isSupported()) return false;
+    const w = from(e);
+    const n = new Notification({
+      title: title.slice(0, 120),
+      body: typeof payload?.body === 'string' ? payload.body.slice(0, 300) : '',
+    });
+    n.on('click', () => { if (w?.isMinimized()) w.restore(); w?.show(); w?.focus(); });
+    n.show();
+    return true;
+  });
 }
 
 /* ─────────────────── app lifecycle ─────────────────── */

@@ -556,6 +556,53 @@ scenarios.settingsnav = async ({ page }) => {
   await page.keyboard.press('Escape')
 }
 
+scenarios['talk-delegate'] = async ({ page }) => {
+  await openChat(page)
+  await page.getByTestId('sidebar-new-chat').click()
+  // plain conversation — no /jex, no commands
+  await page.getByTestId('chat-input').fill('帮我在任务板上创建一个任务：整理下载文件夹，明天完成')
+  await page.getByTestId('chat-send').click()
+  const replied = await page
+    .waitForFunction(
+      () => (document.querySelector('[data-testid="msg-row"][data-role="assistant"] [data-testid="stream-content"]')?.textContent || '').length > 10,
+      null, { timeout: 60000, polling: 1000 },
+    )
+    .then(() => true).catch(() => false)
+  ok('direct chat reply streams (no command needed)', replied)
+  await page.screenshot({ path: `${SHOTS}/talk-delegate-01.png` })
+  // the loop side: task lands on the board via the dual-channel push
+  let landed = false
+  let titles = ''
+  for (let i = 0; i < 24; i++) {
+    await page.waitForTimeout(5000)
+    const s = await api('GET', '/api/state')
+    titles = (s.json?.tasks || []).map((t) => t.title).join('|')
+    if (titles.includes('整理') || titles.includes('下载')) { landed = true; break }
+  }
+  ok('delegation lands on the board from plain talk', landed, titles.slice(0, 100))
+  await page.screenshot({ path: `${SHOTS}/talk-delegate-02.png` })
+}
+
+scenarios['brief-unread'] = async ({ page }) => {
+  await openChat(page)
+  // kick the loop with a plain delegation (dual channel) — briefings follow
+  await page.getByTestId('sidebar-new-chat').click()
+  await page.getByTestId('chat-input').fill('帮我看下任务板进度，简短汇报')
+  await page.getByTestId('chat-send').click()
+  // a briefing surfaces as ANY of: notice card in the open conversation, a
+  // 管家报告/Butler notes conversation in the sidebar, or an unread badge
+  let seen = ''
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(5000)
+    if (await page.getByTestId('agent-card').count() > 0) { seen = 'agent-card in open conv'; break }
+    if (await page.getByTestId('conv-unread').count() > 0) { seen = 'unread badge'; break }
+    const titles = await page.getByTestId('conv-item').allInnerTexts().catch(() => [])
+    if (titles.some((t) => /管家报告|Butler/.test(t || ''))) { seen = 'butler-notes conversation'; break }
+  }
+  ok('butler briefing surfaces (card / butler conv / unread)', seen !== '', seen)
+  await page.screenshot({ path: `${SHOTS}/brief-unread-01.png` })
+}
+
 /* ───────────────────────── driver ───────────────────────── */
 
 const names = process.argv.slice(2)

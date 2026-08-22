@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld('robojex', {
   // one unified subscription for tray / native-menu actions
   onAction: (cb) => subscribe('robojex:action', cb),
 
+  // butler briefing → native OS toast (main process routes + focuses on click)
+  notify: (title, body) => ipcRenderer.invoke('notify', { title, body }),
+
   // embedded ceo-core failed to boot; payload: { message }
   onBackendDown: (cb) => subscribe('robojex:backend-down', cb),
 
