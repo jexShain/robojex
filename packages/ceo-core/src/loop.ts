@@ -1,5 +1,5 @@
 // packages/ceo-core/src/loop.ts
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -534,6 +534,21 @@ export class SchedulerLoop {
             const pad = (n: number): string => String(n).padStart(2, "0");
             const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
             appendFileSync(p, `\n## ${stamp}\n${a.text.trim()}\n`);
+            // R43 memory rotation: the ledger only ever grows on disk — past
+            // 100KB the head is years-stale lessons; keep the freshest half
+            // (recent experience lives at the tail, same side the context
+            // prune favors). Best-effort: a failed rotation never blocks the
+            // reflect that earned it.
+            try {
+              const stat = statSync(p);
+              if (stat.size > 100 * 1024) {
+                const text = readFileSync(p, "utf8");
+                const keep = text.slice(Math.floor(text.length / 2));
+                const first = keep.indexOf("## ");
+                writeFileSync(p, "# MEMORY\n(older entries pruned — recent lessons below)\n" + (first >= 0 ? keep.slice(first) : keep));
+                console.log(`[loop] MEMORY rotated: ${stat.size} -> ${statSync(p).size} bytes`);
+              }
+            } catch { /* unreadable/unstatable: skip this rotation */ }
             this.push(`reflected: ${a.text.slice(0, 80)}`);
             // 管家小结 chat line only when the entry carries a real lesson:
             // short/no-op entries would chat-spam every idle cycle (double
