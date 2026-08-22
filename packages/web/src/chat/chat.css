@@ -408,6 +408,60 @@
   color: var(--dsw-static-deepseek-400);
 }
 
+/* ── agent timeline cards (/jex sends + jex replies) ── */
+.agent-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-left: 2px solid color-mix(in srgb, var(--dsw-static-deepseek-400) 45%, transparent);
+  border-radius: var(--rj-radius-md);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.agent-card .bolt {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+  color: var(--dsw-static-deepseek-400);
+}
+.agent-card.send .bolt { color: var(--dsw-alias-label-tertiary); }
+.agent-card.send {
+  border-left-color: color-mix(in srgb, var(--dsw-alias-label-caption) 40%, transparent);
+}
+.agent-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agent-label {
+  font-size: var(--rj-font-size-xs);
+  letter-spacing: 0.3px;
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
+}
+.agent-text {
+  font-size: var(--rj-font-size-sm);
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.agent-card.notice .agent-text { color: var(--dsw-alias-label-primary); }
+.agent-time {
+  flex: none;
+  margin-top: 3px;
+  font-family: var(--rj-font-mono);
+  font-size: var(--rj-font-size-xs);
+  color: var(--dsw-alias-label-dimmed);
+  user-select: none;
+}
+
 /* ── thinking fold ── */
 .think {
   border: 1px solid var(--dsw-alias-border-l1);
@@ -793,6 +847,19 @@
 .ib-hint .sep { margin: 0 6px; opacity: 0.6; }
 .ib-hint .model { color: var(--dsw-alias-label-caption); }
 
+/* char/token estimate in the tool row */
+.ib-count {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  padding-right: 8px;
+  font-family: var(--rj-font-mono);
+  font-size: var(--rj-font-size-xs);
+  color: var(--dsw-alias-label-dimmed);
+  white-space: nowrap;
+  user-select: none;
+}
+
 /* popovers (gear / model) */
 .ib-pop {
   position: absolute;
@@ -883,6 +950,66 @@
   font-size: var(--rj-font-size-sm);
   color: var(--dsw-alias-label-tertiary);
   text-align: center;
+}
+
+/* @ gear mention menu (compact companion of the popovers) */
+.ib-at {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 45;
+  width: 252px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rj-radius-md);
+  box-shadow: var(--rj-shadow-3);
+  padding: 6px;
+  animation: cv-pop 220ms var(--rj-ease-spring);
+  transform-origin: bottom left;
+}
+.ib-at-title {
+  font-size: var(--rj-font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--dsw-alias-label-tertiary);
+  padding: 6px 10px 4px;
+  text-transform: uppercase;
+}
+.ib-at-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: var(--rj-radius-sm);
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary);
+  transition: background var(--rj-duration-fast) var(--rj-ease-smooth);
+}
+.ib-at-item:hover,
+.ib-at-item.active { background: var(--dsw-alias-interactive-bg-hover-accent); }
+.ib-at-item .dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.ib-at-item .nm {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--rj-font-size-sm);
+}
+.ib-at-item .tok {
+  flex: none;
+  font-family: var(--rj-font-mono);
+  font-size: var(--rj-font-size-xs);
+  color: var(--dsw-alias-label-caption);
 }
 
 /* ══════════════════════════ SlashMenu ══════════════════════════ */
@@ -984,7 +1111,7 @@
 /* reduced motion: everything lands instantly */
 @media (prefers-reduced-motion: reduce) {
   .cv-msg, .cv-notice, .cv-err, .cv-edit, .cv-prompt, .cv-jump,
-  .cv-orb, .cv-orb-glow, .ib-pop, .slm, .think-toggle.live .brain {
+  .cv-orb, .cv-orb-glow, .ib-pop, .ib-at, .slm, .think-toggle.live .brain {
     animation: none !important;
     opacity: 1 !important;
   }

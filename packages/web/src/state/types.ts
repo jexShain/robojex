@@ -116,6 +116,10 @@ export interface Message {
   streaming?: boolean
   /** client-only: elapsed stream seconds, for the “已思考 Xs” badge. */
   thinkSecs?: number
+  /** client-only render flavor: chat (default) or an agent-channel timeline
+   * card — /jex dispatches ('agent-send') and jex replies ('agent-notice').
+   * Never persisted server-side; chat-service does not store these. */
+  kind?: 'chat' | 'agent-send' | 'agent-notice'
 }
 
 /** SSE frames on POST /api/chat/stream (each `data: {json}`). */

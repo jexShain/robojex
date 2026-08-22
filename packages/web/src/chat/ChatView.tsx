@@ -357,6 +357,33 @@ function NoticeRow({ msg }: { msg: Message }): JSX.Element {
   )
 }
 
+/** Timeline card for the agent channel — /jex dispatches ('agent-send') and
+ * jex replies ('agent-notice'). Full-width narrow card, bolt glyph, thin
+ * border and a small timestamp: clearly neither a chat bubble nor an LLM
+ * reply. Client-only messages (never persisted server-side). */
+function AgentTimelineCard({ msg }: { msg: Message }): JSX.Element {
+  const send = msg.kind === 'agent-send'
+  const time = new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return (
+    <div className="cv-msg agent" data-testid="msg-row" data-role="agent">
+      <div
+        className={`agent-card${send ? ' send' : ' notice'}`}
+        data-testid="agent-card"
+        data-kind={send ? 'send' : 'notice'}
+      >
+        <span className="bolt" aria-hidden="true">
+          <BoltIcon />
+        </span>
+        <div className="agent-body">
+          <span className="agent-label">{send ? '→ 派发给 jex' : 'jex'}</span>
+          <div className="agent-text">{msg.content}</div>
+        </div>
+        <span className="agent-time">{time}</span>
+      </div>
+    </div>
+  )
+}
+
 /* ── empty state ── */
 
 const EXAMPLE_PROMPTS = [
@@ -460,7 +487,9 @@ export function ChatView() {
         ) : (
           <div className="cv-inner">
             {messages.map((m) =>
-              m.role === 'user' ? (
+              m.kind === 'agent-send' || m.kind === 'agent-notice' ? (
+                <AgentTimelineCard key={m.id} msg={m} />
+              ) : m.role === 'user' ? (
                 <UserRow key={m.id} msg={m} messages={messages} />
               ) : m.role === 'assistant' ? (
                 <AssistantRow

@@ -1,7 +1,8 @@
 // packages/web/src/chat/InputBar.tsx — floating bottom input card: auto-height
 // textarea (1→10 rows), IME-safe Enter send, Shift+Enter newline, ↑/↓ history
-// (single line only), slash palette, gear + model chip popovers, stop/send
-// swap while streaming. `/`-prefixed text routes to runCommand.
+// (single line only), slash palette, @ gear mentions, gear + model chip
+// popovers, char/token estimate, stop/send swap while streaming. `/`-prefixed
+// text routes to runCommand; `@<gear>` tokens apply the gear on send.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
@@ -13,6 +14,7 @@ import { useStore } from '../state/store'
 import type { GearDef, GearId } from '../state/types'
 import { filterSlash, SlashMenu } from './SlashMenu'
 import type { SlashEntry } from './SlashMenu'
+import { extractGearTokens, trailingMention } from './gearTokens'
 import './chat.css'
 
 const MAX_HEIGHT = 264 // ~10 rows at 1.6 × 16.5px
@@ -50,6 +52,8 @@ export function InputBar() {
   const [value, setValue] = useState('')
   const [dismissed, setDismissed] = useState(false) // slash palette Esc-dismissed
   const [selIdx, setSelIdx] = useState(0)
+  const [atDismissed, setAtDismissed] = useState(false) // @ mention menu Esc-dismissed
+  const [atIdx, setAtIdx] = useState(0)
   const [gearOpen, setGearOpen] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -68,6 +72,16 @@ export function InputBar() {
     value.startsWith('/') && !value.includes('\n') && value.length <= 44
   const entries = menuOpen ? filterSlash(value) : []
   const activeIdx = Math.min(selIdx, Math.max(0, entries.length - 1))
+
+  /* @ gear mention menu: a `@word` being typed at the end of the value */
+  const mention = trailingMention(value)
+  const atOpen = !atDismissed && !menuOpen && !gearOpen && !modelOpen && mention !== null
+  const typedLc = atOpen && mention ? mention.typed.toLowerCase() : ''
+  const atEntries = atOpen ? gears.filter((g) => g.id.startsWith(typedLc)) : []
+  const atActive = Math.min(atIdx, Math.max(0, atEntries.length - 1))
+
+  /* char count + rough token estimate (mixed CJK/latin ≈ length / 1.6) */
+  const bodyLen = value.trim().length
 
   /* auto-grow 1→10 rows */
   useLayoutEffect(() => {
@@ -109,6 +123,8 @@ export function InputBar() {
     setValue('')
     setDismissed(false)
     setSelIdx(0)
+    setAtDismissed(false)
+    setAtIdx(0)
     histIdx.current = -1
   }
 
@@ -122,10 +138,20 @@ export function InputBar() {
       runCommand(text)
       return
     }
+    // @挡位提及：应用最后一个 token，并把所有 token 从发送文本剥除
+    const { text: body, gear } = extractGearTokens(text)
+    if (body.length === 0) {
+      // 只剩挡位提及 → 一次纯挡位切换（流式中也可用）
+      history.current.push(text)
+      resetInput()
+      if (gear) void changeGear(gear)
+      return
+    }
     if (streaming) return
-    history.current.push(text)
+    history.current.push(body)
     resetInput()
-    void sendMessage(text)
+    if (gear) void changeGear(gear)
+    void sendMessage(body)
   }
 
   const submitSelected = (): void => {
@@ -155,6 +181,28 @@ export function InputBar() {
       if (e.key === 'Escape') {
         e.preventDefault()
         setDismissed(true)
+        return
+      }
+    }
+    if (atOpen && atEntries.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setAtIdx((atActive + 1) % atEntries.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setAtIdx((atActive - 1 + atEntries.length) % atEntries.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        pickAtGear(atEntries[atActive]!.id)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setAtDismissed(true)
         return
       }
     }
@@ -195,11 +243,22 @@ export function InputBar() {
     setValue(v)
     setDismissed(false)
     setSelIdx(0)
+    setAtDismissed(false)
+    setAtIdx(0)
     histIdx.current = -1 // manual edits leave history navigation
   }
 
   const onPickEntry = (entry: SlashEntry): void => {
     submit(resolvePick(entry.label, value.trim()))
+  }
+
+  /** Complete the trailing `@word` into `@<gear-id> ` in place. */
+  const pickAtGear = (id: GearId): void => {
+    const t = trailingMention(value)
+    const at = t ? t.at : value.length
+    setValue(`${value.slice(0, at)}@${id} `)
+    setAtDismissed(false)
+    setAtIdx(0)
   }
 
   const pickGear = (id: GearId): void => {
@@ -218,6 +277,35 @@ export function InputBar() {
     <div className="ib-wrap" ref={wrapRef}>
       {menuOpen ? (
         <SlashMenu entries={entries} activeIdx={activeIdx} onHover={setSelIdx} onPick={onPickEntry} />
+      ) : null}
+
+      {atOpen && atEntries.length > 0 ? (
+        <div className="ib-at" data-testid="gear-mention" role="listbox" aria-label="挡位提及">
+          <div className="ib-at-title">@ 挡位</div>
+          {atEntries.map((g, i) => (
+            <button
+              key={g.id}
+              type="button"
+              role="option"
+              aria-selected={i === atActive}
+              className={`ib-at-item${i === atActive ? ' active' : ''}`}
+              data-testid="gear-mention-opt"
+              data-gear={g.id}
+              onMouseDown={(ev) => {
+                // mousedown beats blur: pick before the textarea loses focus
+                ev.preventDefault()
+                pickAtGear(g.id)
+              }}
+              onMouseEnter={() => setAtIdx(i)}
+            >
+              <span className="dot" style={{ background: `var(--rj-gear-${g.level})` }} />
+              <span className="nm">
+                {g.emoji} {g.name}
+              </span>
+              <span className="tok">@{g.id}</span>
+            </button>
+          ))}
+        </div>
       ) : null}
 
       {gearOpen ? (
@@ -336,6 +424,11 @@ export function InputBar() {
               </svg>
             </button>
           </div>
+          {bodyLen > 0 ? (
+            <div className="ib-count" data-testid="input-count">
+              {bodyLen} 字 · ~{Math.ceil(bodyLen / 1.6)} tok
+            </div>
+          ) : null}
           <div className="ib-actions">
             {streaming ? (
               <button

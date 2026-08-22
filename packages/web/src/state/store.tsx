@@ -5,6 +5,9 @@
 //  2. chat state — conversations + messages persisted via REST, live deltas
 //     via SSE (/api/chat/stream). Streaming writes land on the last assistant
 //     message with `streaming: true`.
+// /jex round-trips also render into the open conversation as client-only
+// timeline cards (kind 'agent-send' / 'agent-notice') — the backend chat ring
+// keeps its own transcript, so these are session-local by design.
 
 import {
   createContext,
@@ -20,7 +23,7 @@ import type { ReactNode } from 'react'
 import { connectEvents, eventsUrl } from './connection'
 import type { ConnectionHandle } from './connection'
 import * as api from './api'
-import type { StreamHandle } from './api'
+import type { DirectMessage, DirectPrefs, StreamHandle } from './api'
 import { setThemePref, themeSnapshot } from './theme'
 import type {
   Budget,
@@ -72,6 +75,9 @@ export interface WebState {
   models: string[]
   /** true until the first conversations fetch resolves. */
   convsLoading: boolean
+  /** direct-connection prefs (SPEC §1 fallback): localStorage-backed picker
+   * for gateway vs browser-direct DeepSeek; gateway stays the default. */
+  direct: DirectPrefs
 }
 
 type Action =
@@ -93,6 +99,8 @@ type Action =
   | { type: 'conv-selected'; id: string | null; messages: Message[] }
   | { type: 'msg-deleted'; id: string }
   | { type: 'chat-notice'; text: string }
+  /* /jex timeline cards — client-only, never sent to the server */
+  | { type: 'agent-msg'; convId: string; kind: 'agent-send' | 'agent-notice'; text: string }
   /* streaming */
   | { type: 'stream-start'; convId: string }
   | { type: 'stream-meta'; convId: string; userMsgId: string; assistantMsgId: string; model: string }
@@ -104,6 +112,8 @@ type Action =
   /* models */
   | { type: 'models-loaded'; models: string[] }
   | { type: 'model-set'; model: string }
+  /* direct-connection prefs */
+  | { type: 'direct-set'; direct: DirectPrefs }
 
 const MODEL_KEY = 'robojex-model'
 
@@ -115,7 +125,7 @@ function readModel(): string {
   }
 }
 
-const initialState: WebState = {
+export const initialState: WebState = {
   conn: 'connecting',
   version: '',
   tasks: [],
@@ -139,6 +149,7 @@ const initialState: WebState = {
   model: readModel(),
   models: [],
   convsLoading: true,
+  direct: api.readDirectPrefs(),
 }
 
 // Transcript/message ids only need uniqueness within a session; StrictMode's
@@ -203,8 +214,34 @@ function patchConv(state: WebState, id: string, patch: Partial<Conversation>): W
   }
 }
 
+/** Renderer-local conversation shell for direct mode: renders like a normal
+ * conversation in the sidebar, but nothing backs it server-side. */
+function localConversation(id: string, model: string): Conversation {
+  const now = Date.now()
+  return {
+    id,
+    title: '直连对话',
+    createdAt: now,
+    updatedAt: now,
+    pinned: 0,
+    gear: '',
+    model,
+    archived: 0,
+    messageCount: 0,
+    preview: '',
+  }
+}
+
+/** Live-view messages → direct-mode request history (user/assistant content
+ * only; notices and error stubs dropped). */
+function toDirectHistory(messages: Message[]): DirectMessage[] {
+  return messages
+    .filter((m) => (m.role === 'user' || m.role === 'assistant') && m.content !== '' && !m.error)
+    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+}
+
 /** Bump a conversation to the top of its sort group (preview + updatedAt). */
-function reducer(state: WebState, action: Action): WebState {
+export function reducer(state: WebState, action: Action): WebState {
   switch (action.type) {
     case 'conn':
       return state.conn === action.conn ? state : { ...state, conn: action.conn }
@@ -264,6 +301,21 @@ function reducer(state: WebState, action: Action): WebState {
       }
       return { ...state, messages: [...state.messages, notice] }
     }
+    case 'agent-msg': {
+      // /jex timeline card — client-only by design: the server conversation
+      // store never sees these, so they live just in the open live view of
+      // the target conversation (switching away drops them, by design).
+      if (state.activeConvId !== action.convId) return state
+      const msg: Message = {
+        id: nextId(),
+        convId: action.convId,
+        role: 'notice',
+        kind: action.kind,
+        content: action.text,
+        createdAt: Date.now(),
+      }
+      return { ...state, messages: [...state.messages, msg] }
+    }
 
     /* streaming */
     case 'stream-start':
@@ -321,7 +373,9 @@ function reducer(state: WebState, action: Action): WebState {
       const conv = state.conversations.find((c) => c.id === action.convId)
       if (conv) {
         const lastMsg = state.messages.filter((m) => m.role !== 'notice').slice(-1)[0]
-        const lastContent = lastMsg?.content || conv.preview
+        // stop early enough and content is still '' — POST /api/conversations
+        // returns no preview, so guard both before .slice (P0.5 crash fix)
+        const lastContent = lastMsg?.content || conv.preview || ''
         const finished = state.messages.some((m) => m.streaming)
         conversations = state.conversations.map((c) =>
           c.id === action.convId
@@ -330,7 +384,7 @@ function reducer(state: WebState, action: Action): WebState {
                 updatedAt: Date.now(),
                 preview: lastContent.slice(0, 80),
                 title: action.title || c.title,
-                messageCount: c.messageCount + (finished ? 1 : 0),
+                messageCount: (c.messageCount ?? 0) + (finished ? 1 : 0),
               }
             : c,
         )
@@ -360,6 +414,8 @@ function reducer(state: WebState, action: Action): WebState {
       return { ...state, models: action.models }
     case 'model-set':
       return { ...state, model: action.model }
+    case 'direct-set':
+      return { ...state, direct: action.direct }
 
     case 'frame':
       return applyFrame(state, action.frame)
@@ -439,8 +495,9 @@ export interface StoreApi {
 
   /* jex agent */
   selectTask(id: string | null): void
-  /** legacy WS chat into the jex loop (agent orchestration channel). */
-  sendAgentChat(text: string): void
+  /** legacy WS chat into the jex loop (agent orchestration channel); renders
+   * the send + later jex replies as timeline cards in that conversation. */
+  sendAgentChat(text: string): Promise<void>
   setMode(mode: Mode): void
   appendMission(text: string): void
   /** Execute a /command; returns false when the text is not a command. */
@@ -467,6 +524,9 @@ export interface StoreApi {
   /* models */
   refreshModels(): Promise<void>
   setModel(model: string): void
+
+  /* direct-connection prefs (SPEC §1 fallback) */
+  setDirectPrefs(patch: Partial<DirectPrefs>): void
 }
 
 const StoreContext = createContext<StoreApi | null>(null)
@@ -484,6 +544,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const connRef = useRef<ConnectionHandle | null>(null)
   const streamRef = useRef<StreamHandle | null>(null)
+  /** conversation the most recent /jex was dispatched from; later jex
+   * chat_out frames render as 'agent-notice' cards there. Session-local. */
+  const agentConvRef = useRef<string | null>(null)
 
   /* ── boot: WS + initial REST loads ── */
   const loadedOnce = useRef(false)
@@ -496,7 +559,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // inline jex notices inside the open conversation
         const f = frame as { t: string; from?: string; text?: string }
         if (f.t === 'chat_out' && f.from === 'jex' && f.text) {
-          dispatch({ type: 'chat-notice', text: `jex · ${f.text}` })
+          // after a /jex, replies land as timeline cards in the conversation
+          // the dispatch came from; unprompted jex chatter keeps the old pill
+          const target = agentConvRef.current
+          if (target) dispatch({ type: 'agent-msg', convId: target, kind: 'agent-notice', text: f.text })
+          else dispatch({ type: 'chat-notice', text: `jex · ${f.text}` })
         }
       },
       onStatus: (conn) => {
@@ -529,32 +596,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [waiting])
 
   const localMsg = useCallback((text: string) => dispatch({ type: 'local-msg', text }), [])
-
-  /* ── jex agent ops (legacy channel) ── */
-  const sendAgentChat = useCallback(
-    (text: string) => {
-      const body = text.trim()
-      if (!body) return
-      if (connRef.current?.sendChat(body)) {
-        dispatch({ type: 'sent' })
-        return
-      }
-      dispatch({ type: 'sent' })
-      void fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: body }),
-      }).then(
-        (res) => {
-          if (!res.ok) localMsg(`send failed (HTTP ${res.status})`)
-        },
-        (err: unknown) => {
-          localMsg(`send failed (${err instanceof Error ? err.message : String(err)})`)
-        },
-      )
-    },
-    [localMsg],
-  )
 
   const setMode = useCallback(
     (mode: Mode) => {
@@ -639,6 +680,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return null
     }
   }, [localMsg])
+
+  /* ── jex agent ops (legacy channel) ── */
+  const sendAgentChat = useCallback(
+    async (text: string) => {
+      const body = text.trim()
+      if (!body) return
+      let convId = stateRef.current.activeConvId
+      if (!convId) {
+        // give the round-trip a home: open a conversation first
+        const conv = await newConversation()
+        if (!conv) return
+        convId = conv.id
+      }
+      // route later jex chat_out frames back into this conversation
+      agentConvRef.current = convId
+      // optimistic timeline card; client-only — chat-service does not persist
+      // /jex sends, so the card lives just in this session's live view
+      dispatch({ type: 'agent-msg', convId, kind: 'agent-send', text: body })
+      dispatch({ type: 'sent' })
+      if (connRef.current?.sendChat(body)) return
+      void fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: body }),
+      }).then(
+        (res) => {
+          if (!res.ok) localMsg(`send failed (HTTP ${res.status})`)
+        },
+        (err: unknown) => {
+          localMsg(`send failed (${err instanceof Error ? err.message : String(err)})`)
+        },
+      )
+    },
+    [localMsg, newConversation],
+  )
 
   const selectConversation = useCallback(async (id: string | null) => {
     if (id === null) {
@@ -725,26 +801,59 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  /* ── direct mode (browser → provider; gateway bypassed, SPEC §1) ── */
+  const runDirectStream = useCallback(
+    async (convId: string, messages: DirectMessage[]) => {
+      const prefs = stateRef.current.direct
+      const model = prefs.model || stateRef.current.model
+      const handle = api.chatStreamDirect(
+        { conversationId: convId, messages, model, prefs },
+        (ev) => consumeStream(convId, ev),
+      )
+      streamRef.current = handle
+      await handle.done
+      streamRef.current = null
+    },
+    [consumeStream],
+  )
+
   const sendMessage = useCallback(
     async (text: string) => {
       const body = text.trim()
       if (!body || stateRef.current.stream.status === 'streaming') return
+      const direct = api.directEnabled(stateRef.current.direct)
       let convId = stateRef.current.activeConvId
       if (!convId) {
-        const conv = await newConversation()
-        if (!conv) return
-        convId = conv.id
+        if (direct) {
+          // fallback home: a renderer-local conversation, no backend
+          // round-trip — it lives only in this session, refresh drops it
+          // (intentional tradeoff of the direct mode)
+          convId = nextId()
+          const model = stateRef.current.direct.model || stateRef.current.model
+          dispatch({ type: 'conv-created', conv: localConversation(convId, model) })
+        } else {
+          const conv = await newConversation()
+          if (!conv) return
+          convId = conv.id
+        }
       }
+      const prior = stateRef.current.messages
       // optimistic user message
       dispatch({
         type: 'conv-selected',
         id: convId,
         messages: [
-          ...stateRef.current.messages,
+          ...prior,
           { id: nextId(), convId, role: 'user', content: body, createdAt: Date.now() },
         ],
       })
       dispatch({ type: 'stream-start', convId })
+      if (direct) {
+        // direct fallback: messages are NOT persisted server-side — the
+        // conversation dies with the renderer session, by design
+        await runDirectStream(convId, [...toDirectHistory(prior), { role: 'user', content: body }])
+        return
+      }
       const handle = api.streamChat(
         { conversationId: convId, text: body, model: stateRef.current.model },
         (ev) => consumeStream(convId, ev),
@@ -753,7 +862,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await handle.done
       streamRef.current = null
     },
-    [consumeStream, newConversation],
+    [consumeStream, newConversation, runDirectStream],
   )
 
   const stopStream = useCallback(() => {
@@ -769,12 +878,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const msgs = [...stateRef.current.messages]
     while (msgs.length > 0 && msgs[msgs.length - 1].role !== 'user') msgs.pop()
     dispatch({ type: 'conv-selected', id: convId, messages: msgs })
+    if (api.directEnabled(stateRef.current.direct) && msgs.length > 0) {
+      // fallback mode: replay the live history straight to the provider —
+      // the gateway holds no record of these turns to truncate server-side
+      dispatch({ type: 'stream-start', convId })
+      await runDirectStream(convId, toDirectHistory(msgs))
+      return
+    }
     dispatch({ type: 'stream-start', convId })
     const handle = api.regenerate(convId, (ev) => consumeStream(convId, ev))
     streamRef.current = handle
     await handle.done
     streamRef.current = null
-  }, [consumeStream])
+  }, [consumeStream, runDirectStream])
 
   /* ── models ── */
   const refreshModels = useCallback(async () => {
@@ -793,6 +909,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // best-effort
     }
     dispatch({ type: 'model-set', model })
+  }, [])
+
+  /* ── direct-connection prefs ── */
+  const setDirectPrefs = useCallback((patch: Partial<DirectPrefs>) => {
+    const next = { ...stateRef.current.direct, ...patch }
+    api.writeDirectPrefs(next)
+    dispatch({ type: 'direct-set', direct: next })
   }, [])
 
   /* ── slash commands ── */
@@ -846,13 +969,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case 'jex': {
           const body = arg.trim()
-          if (!body) localMsg('usage: /jex <text> — send to the jex orchestration loop')
-          else if (!stateRef.current.activeConvId) {
-            // give the jex replies a home: open a conversation first
-            void newConversation().then((conv) => {
-              if (conv) sendAgentChat(body)
-            })
-          } else sendAgentChat(body)
+          if (body) void sendAgentChat(body)
+          else localMsg('usage: /jex <text> — send to the jex orchestration loop')
           return true
         }
         case 'tasks': {
@@ -925,6 +1043,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       regenerateLast,
       refreshModels,
       setModel,
+      setDirectPrefs,
     }),
     [
       state,
@@ -948,6 +1067,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       regenerateLast,
       refreshModels,
       setModel,
+      setDirectPrefs,
     ],
   )
 
