@@ -88,7 +88,7 @@ function fakeTools(results: string | string[]) {
       calls.push([name, args, gate]);
       return Array.isArray(results) ? results[Math.min(n++, results.length - 1)]! : results;
     },
-    schemasBlock: (): string => "# BUILTIN TOOLS\ninvoke via {\"type\":\"tool_call\",...}\nterminal(command:string, timeout?:integer) — Run a shell command\nprocess(action:string, pid?:integer) — List processes or kill one",
+    schemasBlock: (): string => "# BUILTIN TOOLS\ninvoke via {\"type\":\"tool_call\",...}\nterminal(command:string, timeout?:integer) — Run a shell command\nprocess(action:string, pid?:integer) — List processes or kill one\nread_file(path:string) — Read a text file\nwrite_file(path:string, content:string) — Write a file\npatch(mode:string, path:string) — Edit a file\nsearch_files(pattern:string) — Search files\nkanban_list() — Show the board\nkanban_create(title:string) — Create a card\ndelegate_task(framework:string, prompt:string) — Delegate to a sub-agent\ncomputer_use(action:string) — Desktop control",
   };
   return { tools, calls };
 }
@@ -303,4 +303,18 @@ test("abort lands on the sentinel line: no tool executes, the row settles as abo
   expect(f.some((e) => e.type === "done")).toBe(true);
   expect(rig.store.listMessages(conv.id).at(-1)!.error).toBe("aborted");
   expect(rig.llmState.streamCalls).toBe(1); // no fed-back second round
+});
+
+test("R11: the chat tool surface is LOOKING-only — writes never reach the prompt", async () => {
+  const { tools } = fakeTools("x");
+  const rig = mkRig([{ content: ["好"] }], { tools });
+  const conv = rig.store.create();
+  await run(rig, { conversationId: conv.id, text: "看下" });
+  const sys = rig.llmState.roundMessages[0]![0]!.content;
+  // reads stay
+  for (const keep of ["terminal(", "read_file(", "kanban_list("]) expect(sys).toContain(keep);
+  // write-class tools are filtered out of the chat surface
+  for (const ban of ["write_file(", "patch(", "delegate_task(", "computer_use(", "kanban_create("]) expect(sys).not.toContain(ban);
+  // a write sentinel from the model falls through to ToolManager which still
+  // enforces the gate — the prompt just never advertises them
 });

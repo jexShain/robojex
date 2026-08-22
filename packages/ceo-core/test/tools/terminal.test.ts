@@ -1,6 +1,6 @@
 // packages/ceo-core/test/tools/terminal.test.ts
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
@@ -13,6 +13,11 @@ const call = async (name: string, args: Record<string, unknown>) => {
   if (!e) throw new Error(`no tool ${name}`);
   return e.handler(args, ctx);
 };
+// The render contract pins the exit/timed-out marker to the FINAL line —
+// models judge success from the end of tool output.
+const lastLine = (s: string) => { const t = s.trimEnd().split("\n"); return t[t.length - 1] as string; };
+const unix = process.platform !== "win32";
+const unixIt = unix ? it : it.skip;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "rjterm-"));
@@ -21,17 +26,46 @@ beforeEach(() => {
 
 describe("terminal", () => {
   it("runs a command and reports exit code + output", async () => {
-    const r = await call("terminal", { command: process.platform === "win32" ? "echo hello" : "echo hello" });
+    const r = await call("terminal", { command: "echo hello" });
     expect(r).toContain("hello");
-    expect(r).toMatch(/exit[=:]?\s*0/i);
+    expect(lastLine(r)).toBe("[exit code: 0]");
   });
   it("honours workdir", async () => {
     const r = await call("terminal", { command: process.platform === "win32" ? "cd" : "pwd", workdir: dir });
     expect(r.replace(/\\/g, "/")).toContain(dir.replace(/\\/g, "/"));
   });
-  it("timeout kills a hung command", async () => {
+  it("non-zero exit is reported on the last line, not an error", async () => {
+    const r = await call("terminal", { command: "exit 7" });
+    expect(lastLine(r)).toBe("[exit code: 7]");
+  });
+  it("separates stderr into its own marked section", async () => {
+    const r = await call("terminal", { command: "echo out; echo err 1>&2" });
+    expect(r).toContain("[stderr]\nerr");
+    expect(r.indexOf("out")).toBeLessThan(r.indexOf("[stderr]")); // stdout stays before the stderr block
+    expect(lastLine(r)).toBe("[exit code: 0]");
+  });
+  unixIt("keeps the tail, spills the full stream, and points at the file", async () => {
+    const r = await call("terminal", { command: "seq 1 20000" }); // ~109KB ≫ the 8KB tail window
+    expect(r).toContain("20000");                   // the tail window survived
+    expect(r.split("\n")[1]).not.toBe("1");         // the head did not stay in memory
+    const m = r.match(/\[output truncated; full output: (.+?)\]/);
+    expect(m, "truncation notice with spill path").not.toBeNull();
+    const spill = (m as RegExpMatchArray)[1] as string;
+    expect(existsSync(spill)).toBe(true);
+    // Spill holds the head the memory tail dropped. Not startsWith: this
+    // machine's login shell prints a preamble line to stdout before the
+    // command runs, so the head of the STREAM is not the head of seq's output.
+    expect(readFileSync(spill, "utf8")).toContain("1\n2\n3\n");
+    expect(lastLine(r)).toBe("[exit code: 0]");
+    rmSync(spill, { force: true }); // the design leaves recovery files behind; tests clean up after themselves
+  }, 20000);
+  it("timeout escalates SIGTERM→SIGKILL and returns promptly", async () => {
+    const t0 = Date.now();
     const r = await call("terminal", { command: process.platform === "win32" ? "powershell -Command Start-Sleep 30" : "sleep 30", timeout: 2 });
-    expect(r).toMatch(/timeout|timed out/i);
+    const elapsed = Date.now() - t0;
+    expect(lastLine(r)).toBe("[timed out after 2s (killed)]");
+    expect(elapsed).toBeGreaterThanOrEqual(1900); // the full timeout elapsed…
+    expect(elapsed).toBeLessThan(6500);           // …but the ladder bounded the teardown — not the command's 30s
   }, 15000);
   it("rejects timeout above the 600s cap", async () => {
     const r = await call("terminal", { command: "echo hi", timeout: 900 });
@@ -69,23 +103,23 @@ processGroupTests("process group", () => {
     // Use a unique sleep duration to avoid conflicting with other processes
     const uniqueSleep = "297"; // Less common sleep duration
     const cleanup = () => { try { execSync(`pkill -f 'sleep ${uniqueSleep}'`, { stdio: "ignore" }); } catch {} };
-    
+
     // Pre-cleanup: ensure no test artifacts from previous runs
     cleanup();
-    
+
     try {
       // Background child + foreground blocker: the background sleep is a
       // grandchild that only a group kill can reach (killing just the shell
       // orphans it — that is the discriminator this test exists for)
-      const r = await call("terminal", { 
-        command: `sleep ${uniqueSleep} & sleep 300`, 
-        timeout: 2 
+      const r = await call("terminal", {
+        command: `sleep ${uniqueSleep} & sleep 300`,
+        timeout: 2
       });
       expect(r).toMatch(/timeout|timed out/i);
-      
+
       // Wait a moment for processes to fully exit after group kill
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       // Check for orphan survival - if process tree kill worked, pgrep should find nothing
       let trulyOrphaned = false;
       for (let i = 0; i < 10; i++) {
@@ -118,10 +152,10 @@ processGroupTests("process group", () => {
           // pgrep exits with code 1 when no processes found (good!)
           break; // No orphans - test passes
         }
-        // Wait 200ms before retrying
+        // Wait 200ms before retry
         await new Promise(resolve => setTimeout(resolve, 200));
       }
-      
+
       // If orphan survived, the test fails - this is a real bug
       if (trulyOrphaned) {
         expect.fail(`Orphan process survived group kill - process.kill(-pid) may not be working correctly`);

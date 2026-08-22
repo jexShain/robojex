@@ -65,6 +65,7 @@ export interface LoopDeps {
   wsFactory?: (url: string) => WsLike;   // test seam: substitute sockets
   outlet?: LoopOutlet | null;               // api broadcast; absent = headless (frames dropped)
   reconnectBaseMs?: number;              // test seam: first reconnect delay
+  watchdogFloorMs?: number;              // test seam: stall-detection floor (default 3 min)
 }
 
 // packages/ceo-core/{src,dist} -> repo root -> skills/; under a pkg binary
@@ -96,6 +97,12 @@ export class SchedulerLoop {
   private ws: WsLike | null = null;
   private reconnectTimer: NodeJS.Timeout | undefined;
   private backoffMs = 1000;
+  // R10 heartbeat self-check: a fixed 60s watchman compares tickN across
+  // checks; unchanged past 3 tick periods (floor 3 min — slow decide cycles
+  // must never false-positive) means the tick timer died or the queue wedged,
+  // and a forced wake is the self-recovery. Test seam: the floor.
+  private lastTickSeen = { n: 0, at: 0 };
+  private watchdog?: NodeJS.Timeout;
   private stopped = true; // no reconnect machinery may run before start()
   private running = false;
   private idleWaiters: (() => void)[] = [];
@@ -153,6 +160,12 @@ export class SchedulerLoop {
   // task_due pump debounce: one chase nudge per task per window (>=60s and at
   // least one tick, so a turbo tick cannot flood the queue); lost on restart
   private taskDueNudgedAt = new Map<string, number>();
+  // repeat tool-call guard (dsh guard/repeat-tool-reminder pattern): the same
+  // tool+args re-requested across consecutive cycles means the loop is stuck —
+  // escalate a visible note inside the tool-result event (which rides into the
+  // next decide context) instead of silently re-burning tokens. A different
+  // call or a 10-minute gap resets the streak.
+  private toolRepeat = { key: "", n: 0, at: 0 };
 
   mode(): Gate { return this.modeNow; }
 
@@ -350,7 +363,7 @@ export class SchedulerLoop {
       });
       // layer 1: cheap patrol triage
       const p = await this.d.llm.chat("patrol", [
-        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; act on a chat: event unless it is a pure greeting or social chatter with no ask — a question about this machine or jex's work (hardware, system, files, processes, tasks, progress) ALWAYS acts (the direct-chat reply alone never settles it: it may be ungrounded), and any request or delegation always acts. When unsure, act — the human's words outrank thrift. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
+        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; act on a chat: event unless it is a pure greeting or social chatter with no ask — a question about this machine or jex's work (hardware, system, files, processes, tasks, progress) ALWAYS acts (the direct-chat reply alone never settles it: it may be ungrounded), and any request or delegation always acts. When unsure, act — the human's words outrank thrift. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). A 'plan_created:' event means a goal was just decomposed into child steps on the board — always act: dispatch the ready steps (in the listed order when they depend on each other, in parallel when independent). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
       let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); return; } // patrol cost still booked on parse failure
@@ -368,9 +381,10 @@ export class SchedulerLoop {
       // installed on this machine; blank or missing files inject nothing
       let agentsDoc = "";
       try { agentsDoc = readFileSync(join(this.d.runtimeDir, "AGENTS.md"), "utf8").trim(); } catch { /* not scouted yet */ }
+      const stats = this.statsBlock(); // R8: per-agent verified track record
       const decideMessages = [
-        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)","accept":"acceptance criteria: one objectively checkable success line (a fallback line is added when missing)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tool_call","tool":"<name from BUILTIN TOOLS>","args":{}} | {"type":"verify","task_id":"...","progress":0-100,"verdict":"pass|partial|fail","note":"one-line evidence"} | {"type":"reflect","text":"durable lesson distilled from this cycle, appended to MEMORY with a timestamp (non-empty, <=4KB)"} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. tool_call runs one builtin tool directly (see # BUILTIN TOOLS in the context): small file, terminal, memory, or board work needs no sub-agent, and the result arrives as an event on the next wake. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself. You are an orchestrator and acceptance judge, never a worker: ALL productive work goes to coding agents via spawn; builtin tools are for LOOKING (verifying outputs, checking state), never for building. Questions about THIS machine or jex's fleet (hardware, OS, files, processes, network, installed tools, task progress) are LOOKING: answer them yourself via tool_call (terminal / read_file / process), grounded in the real output, then reply to the human — never state system facts from memory. Spawn sub-agents for work that builds or changes things and for long jobs. reflect banks a durable lesson into MEMORY — the butler's idle-cycle move when no task is ready: reflect, catch up on unverified work, or refine MISSION, instead of inventing busywork.` },
-        { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (agentsDoc ? `\n\n# AGENTS (verified on this system)\n${agentsDoc}` : "") + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") + (builtin ? `\n\n${builtin}` : "") },
+        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + `You are jex, orchestrator of an autonomous agent fleet. Choose actions. Reply ONLY JSON: {"actions":[{"type":"spawn","framework":"<agent name from AVAILABLE AGENTS>","title":"...","prompt":"...","parent":"task id (optional)","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)","accept":"acceptance criteria: one objectively checkable success line (a fallback line is added when missing)"} | {"type":"reply","text":"conversational reply to the human in the chat"} | {"type":"message","text":"..."} | {"type":"mission_update","text":"..."} | {"type":"steer","task_id":"...","correction":"..."} | {"type":"takeover","input":{"kind":"key"|"move"|"click"|"type",...}} | {"type":"cdp","op":"cdp_open"|"cdp_snapshot","url":"..."} | {"type":"plan","goal":"...","steps":[{"title":"...","prompt":"...","framework":"<agent name>","scheduledAt":"ISO 8601 (optional)","dueAt":"ISO 8601 (optional)","accept":"..."}]} | {"type":"toolscout","query":"..."} | {"type":"tentacle_call","tentacle":"...","op":"...","args":{}} | {"type":"tool_call","tool":"<name from BUILTIN TOOLS>","args":{}} | {"type":"verify","task_id":"...","progress":0-100,"verdict":"pass|partial|fail","note":"one-line evidence from a real tool check (a pass without an evidence note is refused; a fail triggers one corrective re-dispatch)"} | {"type":"reflect","text":"durable lesson distilled from this cycle, appended to MEMORY with a timestamp (non-empty, <=4KB)"} | {"type":"tentacle_register","spec":{"name":"...","kind":"rest"|"webhook"|"poller"|"hardware"|"custom","endpoint":"...","auth":{"header":"...","apiKeyEnv":"ENV_VAR_NAME"},"ops":[{"name":"...","method":"GET","path":"/x/{id}","description":"..."}],"enabled":true,"blurb":"...","openapiUrl":"https://.../openapi.json","openapiContent":"<full OpenAPI document>"}}]}. Take 0-3 actions. Prefer spawning sub-agents over doing work yourself. Reply to human chat with the reply action; it costs no task and no sub-agent. The toolscout action re-scans, verifies, and manuals the installed CLI tools in the background — use it when a needed tool seems missing or the inventory looks stale; describe the job in query so the scout can also discover tools beyond its seed list. tentacle_call invokes one op of a registered external connector (see # TENTACLES in the context); tentacle_register validates and saves a new connector spec — a short spec template (name, kind, endpoint, a few ops) is enough for simple APIs, while spec.openapiUrl or spec.openapiContent imports a full OpenAPI document as a rest tentacle instead; specs written by spawned agents under runtime/tentacles/ are hot-loaded right after each register. tool_call runs one builtin tool directly (see # BUILTIN TOOLS in the context): small file, terminal, memory, or board work needs no sub-agent, and the result arrives as an event on the next wake. Reference API keys only through auth.apiKeyEnv (an environment variable name), never the key itself. You are an orchestrator and acceptance judge, never a worker: ALL productive work goes to coding agents via spawn; builtin tools are for LOOKING (verifying outputs, checking state), never for building. Questions about THIS machine or jex's fleet (hardware, OS, files, processes, network, installed tools, task progress) are LOOKING: answer them yourself via tool_call (terminal / read_file / process), grounded in the real output, then reply to the human — never state system facts from memory. Spawn sub-agents for work that builds or changes things and for long jobs. A goal needing 3+ ordered steps earns one plan action (epic + child steps with acceptance each) instead of ad-hoc spawns — the plan_created event re-wakes you to staff the steps. reflect banks a durable lesson into MEMORY — the butler's idle-cycle move when no task is ready: reflect, catch up on unverified work, or refine MISSION, instead of inventing busywork.` },
+        { role: "user", content: context + (agentsBlock ? `\n\n${agentsBlock}` : "") + (agentsDoc ? `\n\n# AGENTS (verified on this system)\n${agentsDoc}` : "") + (stats ? `\n\n${stats}` : "") + (manuals ? `\n\n${manuals}` : "") + (tools ? `\n\n# AVAILABLE TOOLS\n${tools}` : "") + (tentacles ? `\n\n# TENTACLES\n${tentacles}` : "") + (builtin ? `\n\n${builtin}` : "") },
       ] satisfies ChatMsg[];
       const decideMax = gdef.decideMaxTokens; // the gear buys the decide budget
       let dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: decideMax }); // big contexts (tools+tentacles inventories) starve reasoning models below this
@@ -427,41 +441,8 @@ export class SchedulerLoop {
               this.push(`spawn_deferred: ${t.title} until ${new Date(scheduledAt as number).toISOString()}`);
               this.d.outlet?.chatOut("jex", `已排程「${t.title}」（${relTime(scheduledAt as number)}开工，验收：${acceptance.slice(0, 40)}${acceptance.length > 40 ? "…" : ""}）`);
             } else {
-            this.d.board.update(t.id, { status: "running" });
-            this.emitTasks();
-            // butler briefing: the user asked to be kept told — every dispatch
-            // earns one chat line, no conditions (spawn itself is rare)
-            this.d.outlet?.chatOut("jex", `已派发「${t.title}」给 ${a.framework}${dueAt ? `（预计 ${relTime(dueAt)}，` : "（"}验收：${acceptance.slice(0, 40)}${acceptance.length > 40 ? "…" : ""}）`);
-            // background: the cycle moves on to the next action; the card settles
-            // when the sub-agent exits, and the completion re-wakes jex
-            const title = t.title;
-            const prompt = this.withToolManuals(a.prompt);
-            void this.d.orchestrator.spawn(a.framework, prompt).then((r) => {
-              if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
-              const card = this.d.board.list().find((x) => x.id === t.id);
-              const hasAccept = (card?.acceptance ?? "") !== "";
-              const verdictOk = !hasAccept || (card?.verdict === "pass");
-              const ok = r.exitCode === 0 && !r.summary.startsWith("FAIL") && verdictOk;
-              this.d.board.update(t.id, {
-                status: ok ? "done" : "blocked",
-                resultSummary: r.exitCode === 0 && !verdictOk ? `${r.summary} [awaiting acceptance: verify with tools, then {"type":"verify","task_id":"...","verdict":"pass",...}]` : r.summary,
-                attempts: 1,
-              });
-              this.emitTasks();
-              this.d.outlet?.chatOut("jex", `「${title}」${ok ? "完成" : "阻塞"}：${r.summary.slice(0, 60)}`);
-              this.push(`agent_done: ${title} -> ${r.summary}`);
-            }).catch((err: unknown) => {
-              const reason = err instanceof Error ? err.message : String(err);
-              console.error(`[ceo] action failed: ${reason}`);
-              const summary = `action failed: ${reason}`;
-              this.d.board.update(t.id, { status: "blocked", resultSummary: summary, attempts: 1 });
-              this.emitTasks();
-              this.d.outlet?.chatOut("jex", `「${title}」阻塞：${summary.slice(0, 60)}`);
-            }).catch((err: unknown) => {
-              // terminal guard: a crash inside the settlement handlers above must
-              // not escape as an unhandled rejection and take the process down
-              console.error(`[ceo] spawn handler crashed: ${err instanceof Error ? err.message : String(err)}`);
-            });
+            this.launchSpawn(t.id, a.framework, t.title, a.prompt,
+              `已派发「${t.title}」给 ${a.framework}${dueAt ? `（预计 ${relTime(dueAt)}，` : "（"}验收：${acceptance.slice(0, 40)}${acceptance.length > 40 ? "…" : ""}）`, 1);
             }
           } else if (a.type === "mission_update") {
             if (typeof a.text !== "string" || a.text.length === 0) throw new Error("invalid mission_update action: text must be a non-empty string");
@@ -511,6 +492,41 @@ export class SchedulerLoop {
             // orchestrator has no per-task kill interface yet: record the
             // steering intent for the operator; real kill+respawn is deferred
             console.log(`[ceo] steer noted (kill+respawn deferred): ${card.title} <- ${a.correction}`);
+          } else if (a.type === "plan") {
+            // R9 decomposition: one epic + ordered child steps on the board.
+            // plan only BUILDS the tree — dispatch stays a separate decision
+            // on the next wake (plan_created event), so the model weighs
+            // ordering and parallelism like a manager staffing a project.
+            if (typeof a.goal !== "string" || a.goal.trim().length === 0) throw new Error("invalid plan action: goal must be a non-empty string");
+            const steps = Array.isArray(a.steps) ? a.steps : [];
+            if (steps.length < 1 || steps.length > 8) throw new Error("invalid plan action: steps must be an array of 1-8 steps");
+            const registryNames = this.d.orchestrator.getRegistry()?.names() ?? [];
+            const parsedSteps = steps.map((s: Record<string, unknown>, i: number) => {
+              const title = typeof s.title === "string" && s.title ? s.title : `第${i + 1}步`;
+              const prompt = typeof s.prompt === "string" && s.prompt ? s.prompt : "";
+              const framework = typeof s.framework === "string" ? s.framework : (registryNames[0] ?? "hermes");
+              if (!registryNames.includes(framework) && framework !== "hermes" && framework !== "claude-code") {
+                throw new Error(`invalid plan action: step ${i + 1} framework must be a registered agent name (got ${JSON.stringify(framework)}). Available: ${registryNames.join(", ") || "hermes, claude-code"}`);
+              }
+              if (!prompt) throw new Error(`invalid plan action: step ${i + 1} prompt must be a non-empty string`);
+              const acceptGiven = typeof s.accept === "string" && s.accept.length > 0;
+              return {
+                title, prompt, framework,
+                scheduledAt: this.spawnTime(s.scheduledAt, "scheduledAt"),
+                dueAt: this.spawnTime(s.dueAt, "dueAt"),
+                acceptance: acceptGiven ? s.accept as string : `${title}（完成后 jex 须用只读工具 verify 并给出 verdict）`,
+              };
+            });
+            const epic = this.d.board.add({
+              title: a.goal.trim(), assignee: "jex",
+              acceptance: `${a.goal.trim()}（全部子步骤验收通过后由 jex verify 收口）`,
+            });
+            for (const s of parsedSteps) {
+              this.d.board.add({ title: s.title, assignee: s.framework, parentId: epic.id, scheduledAt: s.scheduledAt ?? null, dueAt: s.dueAt ?? null, acceptance: s.acceptance });
+            }
+            this.emitTasks();
+            this.d.outlet?.chatOut("jex", `已制定计划「${a.goal.trim().slice(0, 40)}」：${parsedSteps.length} 步（首步：${parsedSteps[0]!.title.slice(0, 30)}）`);
+            this.push(`plan_created: ${a.goal.trim().slice(0, 60)} (${parsedSteps.length} steps) — dispatch the ready steps now, respect the listed order when steps depend on each other`);
           } else if (a.type === "toolscout") {
             if (a.query !== undefined && typeof a.query !== "string") throw new Error("invalid toolscout action: query must be a string");
             // fire-and-forget: a full scan+verify+manuals pass can take minutes;
@@ -553,13 +569,28 @@ export class SchedulerLoop {
             if (!this.d.builtinTools) throw new Error("tool_call action: no builtin tool manager wired");
             const args = (a.args && typeof a.args === "object" && !Array.isArray(a.args)) ? a.args as Record<string, unknown> : {};
             const name = a.tool;
+            // repeat guard: streak of identical (tool, args) across cycles
+            const key = `${name}:${JSON.stringify(args)}`;
+            const now = Date.now();
+            if (this.toolRepeat.key !== key || now - this.toolRepeat.at > 10 * 60_000) this.toolRepeat = { key, n: 0, at: now };
+            this.toolRepeat.n += 1;
+            this.toolRepeat.at = now;
+            const rep = this.toolRepeat.n;
             // fire-and-forget like tentacle_call: the result rides the log +
             // the next wake's event queue; the gate is the effective one
             // (gateForTools: observe with no takeover link degrades to assist),
             // non-internal writes under assist land in the approval queue
             void this.d.builtinTools.call(name, args, this.gateForTools()).then((r) => {
               console.log(`[ceo] tool ${name} -> ${r.slice(0, 200)}`);
-              this.push(`tool ${name} -> ${r}`);
+              // escalation ladder rides inside the event the next decide
+              // reads: a nudge at 3, a hard warning at 5 — never a veto (the
+              // model may have a legitimate reason, it just has to see itself)
+              const note = rep >= 5
+                ? ` [WARNING: identical call #${rep} — this approach is stuck; stop repeating, reflect a lesson or change method]`
+                : rep >= 3
+                  ? ` [NOTE: identical call #${rep}; same result expected — change approach or move on]`
+                  : "";
+              this.push(`tool ${name} -> ${r}${note}`);
             }).catch((err: unknown) => {
               console.error(`[ceo] tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`);
             });
@@ -571,6 +602,12 @@ export class SchedulerLoop {
             const card = this.d.board.list().find((x) => x.id === a.task_id || x.id.startsWith(a.task_id));
             if (!card) throw new Error(`invalid verify action: no task ${a.task_id} on the board`);
             const note = typeof a.note === "string" ? a.note : "";
+            // R7 evidence chain: a pass must cite what was actually checked —
+            // a bare "pass" is a judgment without grounds and is refused (the
+            // action-failed event teaches the model the bar for next time)
+            if (verdict === "pass" && note.trim().length < 8) {
+              throw new Error("invalid verify action: a pass verdict must carry an evidence note (one line citing the tool output you checked)");
+            }
             this.d.board.update(card.id, { progress, verdict, resultSummary: [card.resultSummary, note].filter(Boolean).join(" | ") });
             // acceptance loop closes here: a pass on a task that finished
             // cleanly but was held blocked pending acceptance promotes it
@@ -587,6 +624,26 @@ export class SchedulerLoop {
               : `◐ 部分通过——${note.slice(0, 40)}`;
             this.d.outlet?.chatOut("jex", `验收「${card.title}」：${mark}`);
             console.log(`[ceo] verify ${card.id.slice(0, 8)} -> ${verdict} ${progress}%${verdict === "pass" && card.status === "blocked" ? " -> done" : ""} ${note.slice(0, 80)}`);
+            // R8 experience ledger: every verdict is one stat line — the
+            // decide pass aggregates them into a per-agent track record, so
+            // staffing starts learning who is good at what (a manager's gut
+            // feeling, but written down and counted)
+            this.appendStat(card.assignee, verdict, card.title);
+            // R7 auto-retry: a failed acceptance is not a dead end — like a
+            // human manager, jex re-dispatches once with the failure folded
+            // into the prompt. Second failure (attempts >= 2) stays on the
+            // board for the human; retrying forever would burn tokens on a
+            // hopeless task.
+            if (verdict === "fail" && card.status !== "done" && card.attempts < 2 && !card.parentId
+              && !this.d.board.list().some((x) => x.parentId === card.id)) {
+              const retried = this.d.board.add({
+                title: `${card.title}（重派#2）`, assignee: card.assignee, parentId: card.id,
+                acceptance: card.acceptance || `${card.title}（完成后 jex 须用只读工具 verify 并给出 verdict）`,
+              });
+              const corrective = `${card.acceptance ? `任务：${card.acceptance}\n` : ""}上一次尝试未通过验收，原因：${note}\n请修正这个问题后完成任务。`;
+              this.launchSpawn(retried.id, card.assignee, retried.title, corrective,
+                `已重派「${card.title}」（第2次尝试，修正：${note.slice(0, 40)}）`, 2);
+            }
           }
         } catch (e) {
           // one bad action must not kill the rest of the wake: block its task (if any) and move on
@@ -607,6 +664,87 @@ export class SchedulerLoop {
       // live; the line stays for one-line CLI summaries
       this.d.outlet?.frame({ t: "budget", line: this.d.budget.line(), budget: this.d.budget.snapshot() });
     }
+  }
+
+  /** R8 stat ledger: append `framework|verdict|title` to runtime/STATS.md.
+   *  Append-only like MEMORY.md — aggregation happens at read time so the
+   *  raw history always stays auditable by the human. Best-effort: a stats
+   *  write failure must never break the verify that earned it. */
+  private appendStat(framework: string, verdict: string, title: string): void {
+    try {
+      appendFileSync(join(this.d.runtimeDir, "STATS.md"), `${framework}|${verdict}|${title.slice(0, 60).replaceAll("|", "/")}\n`);
+    } catch (e) {
+      console.warn(`[loop] stats append failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** R8 aggregate: last 200 stat lines folded into a per-agent track record
+   *  for the decide context. Empty ledger → empty string (nothing injected). */
+  private statsBlock(): string {
+    try {
+      const raw = readFileSync(join(this.d.runtimeDir, "STATS.md"), "utf8");
+      const lines = raw.split("\n").filter((l) => l.includes("|")).slice(-200);
+      if (lines.length === 0) return "";
+      const byAgent = new Map<string, { pass: number; fail: number; partial: number; titles: string[] }>();
+      for (const l of lines) {
+        const [fw, verdict, title] = l.split("|");
+        if (!fw || !verdict) continue;
+        const s = byAgent.get(fw) ?? { pass: 0, fail: 0, partial: 0, titles: [] };
+        if (verdict === "pass") s.pass++;
+        else if (verdict === "fail") s.fail++;
+        else if (verdict === "partial") s.partial++;
+        if (title && s.titles.length < 3) s.titles.push(title);
+        byAgent.set(fw, s);
+      }
+      const rows = [...byAgent.entries()].map(([fw, s]) => {
+        const total = s.pass + s.fail + s.partial;
+        const pct = total > 0 ? Math.round((s.pass / total) * 100) : 0;
+        return `- ${fw}: ${total} 次验收，通过率 ${pct}%（${s.pass}✓ ${s.partial}◐ ${s.fail}✗）${s.titles.length ? `，近期：${s.titles.join("、")}` : ""}`;
+      });
+      return `# AGENT STATS（各代理实测战绩——派活时优先选同类任务通过率高的）\n${rows.join("\n")}`;
+    } catch {
+      return ""; // no ledger yet: inject nothing
+    }
+  }
+
+  /** Launch a spawned task in the background: mark running, brief the human,
+   *  and settle the card when the sub-agent exits (done / blocked + briefing +
+   *  re-wake). Shared by the spawn action and the acceptance-loop auto-retry
+   *  (R7) — one settlement path, one briefing contract. */
+  private launchSpawn(taskId: string, framework: string, title: string, rawPrompt: string, brief: string, attempt: number): void {
+    this.d.board.update(taskId, { status: "running", attempts: attempt });
+    this.emitTasks();
+    // butler briefing: the user asked to be kept told — every dispatch earns
+    // one chat line, no conditions (spawn itself is rare)
+    this.d.outlet?.chatOut("jex", brief);
+    // background: the cycle moves on to the next action; the card settles
+    // when the sub-agent exits, and the completion re-wakes jex
+    const prompt = this.withToolManuals(rawPrompt);
+    void this.d.orchestrator.spawn(framework, prompt).then((r) => {
+      if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
+      const card = this.d.board.list().find((x) => x.id === taskId);
+      const hasAccept = (card?.acceptance ?? "") !== "";
+      const verdictOk = !hasAccept || (card?.verdict === "pass");
+      const ok = r.exitCode === 0 && !r.summary.startsWith("FAIL") && verdictOk;
+      this.d.board.update(taskId, {
+        status: ok ? "done" : "blocked",
+        resultSummary: r.exitCode === 0 && !verdictOk ? `${r.summary} [awaiting acceptance: verify with tools, then {"type":"verify","task_id":"...","verdict":"pass",...}]` : r.summary,
+      });
+      this.emitTasks();
+      this.d.outlet?.chatOut("jex", `「${title}」${ok ? "完成" : "阻塞"}：${r.summary.slice(0, 60)}`);
+      this.push(`agent_done: ${title} -> ${r.summary}`);
+    }).catch((err: unknown) => {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`[ceo] action failed: ${reason}`);
+      const summary = `action failed: ${reason}`;
+      this.d.board.update(taskId, { status: "blocked", resultSummary: summary });
+      this.emitTasks();
+      this.d.outlet?.chatOut("jex", `「${title}」阻塞：${summary.slice(0, 60)}`);
+    }).catch((err: unknown) => {
+      // terminal guard: a crash inside the settlement handlers above must
+      // not escape as an unhandled rejection and take the process down
+      console.error(`[ceo] spawn handler crashed: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   // Resolves a spawn action's "parent" to a board card: exact id, or a prefix
@@ -721,12 +859,17 @@ export class SchedulerLoop {
       this.timer = setInterval(() => { this.pumpGantt(); this.push("tick"); }, this.tickMsNow);
       this.timer.unref();
     }
+    this.lastTickSeen = { n: this.tickCount, at: Date.now() };
+    this.watchdog = setInterval(() => this.checkStall(), 60_000);
+    this.watchdog.unref();
   }
   stop(): void {
     this.stopped = true; // first: late socket events must not reschedule anything
     this.ticking = false;
     clearInterval(this.timer);
     this.timer = undefined;
+    clearInterval(this.watchdog);
+    this.watchdog = undefined;
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
     const ws = this.ws;
@@ -734,6 +877,22 @@ export class SchedulerLoop {
     ws?.close();
     clearTimeout(this.debounce);
     this.debounce = undefined;
+  }
+
+  /** R10 stall detector: tickN frozen past 3 tick periods (floor 3 min) with a
+   *  live tick interval means the timer or the queue wedged — force one wake
+   *  (the wake itself re-proves the machinery) and say so on the wire. */
+  private checkStall(): void {
+    if (this.stopped || this.tickMsNow === 0) { this.lastTickSeen = { n: this.tickCount, at: Date.now() }; return; }
+    const now = Date.now();
+    if (this.tickCount !== this.lastTickSeen.n) { this.lastTickSeen = { n: this.tickCount, at: now }; return; }
+    const floor = this.d.watchdogFloorMs ?? 180_000;
+    const stallMs = Math.max(3 * this.tickMsNow, floor);
+    if (now - this.lastTickSeen.at < stallMs) return;
+    const frozenFor = Math.round((now - this.lastTickSeen.at) / 1000);
+    console.warn(`[loop] stalled: tickN=${this.tickCount} frozen for ${frozenFor}s — forcing a self-recovery wake`);
+    this.lastTickSeen.at = now; // one forced wake per stall window
+    this.push(`loop_stalled: tick frozen ${frozenFor}s — self-recovery wake (check timers, queue and the takeover link)`);
   }
 
   private connectWs(): void {

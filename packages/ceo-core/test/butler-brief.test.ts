@@ -118,7 +118,7 @@ describe("butler briefs (管家节点简报)", () => {
     const fail = board.add({ title: "未过任务", acceptance: "ok" });
     const partial = board.add({ title: "部分任务", acceptance: "ok" });
     const { loop } = rig(() => JSON.stringify({ actions: [
-      { type: "verify", task_id: pass.id, progress: 100, verdict: "pass", note: "全绿" },
+      { type: "verify", task_id: pass.id, progress: 100, verdict: "pass", note: "terminal 跑测试套件全绿 12/12" },
       { type: "verify", task_id: fail.id, progress: 20, verdict: "fail", note: "测试没跑通，缺两个用例且构建产物没有落盘" },
       { type: "verify", task_id: partial.id, progress: 60, verdict: "partial", note: "2/3 套件通过" },
     ] }));

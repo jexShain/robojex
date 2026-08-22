@@ -54,7 +54,27 @@ const TOOL_PREVIEW_MAX = 400; // chars of tool output shipped in the done frame 
 const LIVE_LOOKUP_DOC = `# LIVE LOOKUP (grounding)
 You have LIVE tools for facts about THIS machine. If answering needs real-time system data (hardware, OS, files, processes, network, task progress), NEVER invent it: output EXACTLY one line
 <<tool:terminal>> {"command":"nvidia-smi"}
-and nothing else — the sentinel line must be the VERY FIRST characters of your reply (no narration before it). The tool name and every parameter name must be copied EXACTLY from the Allowed tools list below (e.g. the terminal tool takes "command", not "arg" or "cmd"). The system runs it and feeds you the real result; then answer grounded in it. One tool per reply. If no live data is needed, just answer normally (no sentinel).`;
+and nothing else — the sentinel line must be the VERY FIRST characters of your reply (no narration before it). The tool name and every parameter name must be copied EXACTLY from the Allowed tools list below (e.g. the terminal tool takes "command", not "arg" or "cmd"). The system runs it and feeds you the real result; then answer grounded in it. One tool per reply. Live lookup is read-only — writing files or mutating the board belongs to the butler loop, not to this chat. If no live data is needed, just answer normally (no sentinel).`;
+
+// Read-only tools the chat channel may invoke (R11): facts only. Everything
+// write-class — write_file/patch, kanban mutations, delegate_task,
+// computer_use, job_start/kill — stays with the orchestration loop.
+const LOOKING_TOOLS = new Set([
+  "terminal", "process",                       // system + hardware facts
+  "read_file", "search_files",                 // file facts
+  "kanban_list", "kanban_show",                // task-board progress facts
+  "memory", "todo",                            // jex's own state (internal, safe)
+  "skills_list", "skill_view",                 // delegation capability facts
+  "job_output", "job_list",                    // background job facts
+]);
+
+/** Keep only the allowlisted schema lines from a ToolManager schemasBlock
+ *  (two header lines + one `name(params) — desc` line per tool). */
+function lookingSchemas(block: string): string {
+  const lines = block.split("\n");
+  const kept = lines.filter((l, i) => i < 2 || LOOKING_TOOLS.has(l.split("(")[0]?.trim() ?? ""));
+  return kept.join("\n");
+}
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const s = JSON.stringify(body);
@@ -119,7 +139,11 @@ export class ChatService {
     // (an empty schemas block means nothing could run — the sentinel would
     // only waste a round, so the prompt stays untouched)
     const tools = this.d.tools ?? null;
-    const schemas = tools ? tools.schemasBlock() : "";
+    // R11 LOOKING allowlist: the chat channel grounds FACTS — reads, board
+    // inspection, memory. Writes (files, kanban mutations, delegation,
+    // desktop control) belong to the orchestration loop, never to a chat
+    // stream: a conversational reply must not side-effect the system.
+    const schemas = tools ? lookingSchemas(tools.schemasBlock()) : "";
     const grounding = tools && schemas ? `\n\n${LIVE_LOOKUP_DOC}\n\nAllowed tools:\n${schemas}` : "";
     const llmMessages = [
       { role: "system", content: chatPrompt(this.d.gear.current()) + grounding },
