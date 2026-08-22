@@ -661,7 +661,7 @@ test("spawn prompt: a tool name inside a larger word does not match (jqx is not 
   await loop.runOnce("tick");
   const sent = spawnFn.mock.calls[0]?.[1] as string;
 
-  expect(sent).toBe("check the jqx config file"); // word boundary held: no manual block
+  expect(sent.startsWith("check the jqx config file")).toBe(true); // word boundary held: no manual block (acceptance block may follow)
 });
 
 test("spawn prompt: generic words (go/file/http) attach manuals only backticked or line-start; other names keep word-boundary match", async () => {
@@ -701,7 +701,7 @@ test("spawn prompt: generic words (go/file/http) attach manuals only backticked 
 
   const sent = spawnFn.mock.calls.map((c) => c[1] as string);
   expect(sent).toHaveLength(4);
-  expect(sent[0]).toBe("go check the file at http://x"); // pure prose names no manual
+  expect(sent[0]!.startsWith("go check the file at http://x")).toBe(true); // pure prose names no manual (acceptance block may follow)
   expect(sent[1]).toContain("jq manual.");               // jq is not generic: plain word match
   expect(sent[1]).not.toContain("go manual.");
   expect(sent[2]).toContain("go manual.");               // backticks make the generic name explicit

@@ -805,7 +805,14 @@ export class SchedulerLoop {
     this.d.outlet?.chatOut("jex", brief);
     // background: the cycle moves on to the next action; the card settles
     // when the sub-agent exits, and the completion re-wakes jex
-    const prompt = this.withToolManuals(rawPrompt);
+    const prompt0 = this.withToolManuals(rawPrompt);
+    // R30 contract honesty: the acceptance bar lives on the card, but the
+    // sub-agent only ever sees the prompt — until now jex graded against a
+    // ruler the worker never read. Ship the bar with the work.
+    const card = this.d.board.list().find((x) => x.id === taskId);
+    const prompt = card && card.acceptance
+      ? `${prompt0}\n\n# 验收标准（完成后 jex 将按此判定）\n${card.acceptance}`
+      : prompt0;
     void this.d.orchestrator.spawn(framework, prompt).then((r) => {
       if (r.summaryUsage) this.d.budget.spend(r.summaryUsage); // sub-agent summary cost belongs to this wake
       const card = this.d.board.list().find((x) => x.id === taskId);

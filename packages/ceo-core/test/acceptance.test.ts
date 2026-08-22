@@ -129,7 +129,10 @@ describe("R20: concurrency guard", () => {
     // spawns settle (they settle in microtasks, so by the first assertion the
     // promotion may already have landed — order is what stays provable)
     await until(() => rig.spawns.length === 5, 50, 60);
-    expect(rig.spawns.map((s) => s.prompt)).toEqual(["干活1", "干活2", "干活3", "干活4", "干活5"]);
+    expect(rig.spawns.map((s) => s.prompt.slice(0, 3))).toEqual(["干活1", "干活2", "干活3", "干活4", "干活5"].map((p) => p.slice(0, 3)));
+    // R30: every dispatched prompt carries the acceptance bar the agent will
+    // be graded against (prompt body + the shipped ruler)
+    for (const s of rig.spawns) expect(s.prompt).toContain(`# 验收标准（完成后 jex 将按此判定）\n完成`);
     expect(rig.outletChat.some((c) => c.includes("排队中"))).toBe(true); // it really queued first
     rig.loop.stop();
   }, 30_000);
