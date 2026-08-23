@@ -151,7 +151,9 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [zoomIdx, setZoomIdx] = useState(0)
   const [scrollHours, setScrollHours] = useState(0)
-  const [dragBlock, setDragBlock] = useState<AgendaBlock | null>(null)
+  // drag payload: a placed block, or a rail task being dragged in for its
+  // first schedule (both only need .task)
+  const [dragBlock, setDragBlock] = useState<{ task: Task } | null>(null)
   const [dragY, setDragY] = useState(0)
   const dragStartY = useRef(0)
   const isDragging = useRef(false)
@@ -222,11 +224,21 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
     return () => el.removeEventListener('wheel', onWheel)
   }, [onWheel])
 
-  // Drag-to-reschedule handlers.
+  // Drag-to-reschedule handlers (also the drag-in target for rail items).
   const onPointerDown = useCallback((e: PointerEvent, block: AgendaBlock) => {
     dragStartY.current = e.clientY
     isDragging.current = false
     setDragBlock(block)
+    setDragY(e.clientY)
+    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+  }, [])
+
+  // drag FROM the unscheduled rail INTO the timeline = give the card its
+  // first slot (the rail's other gesture, click, opens details)
+  const onRailDragStart = useCallback((e: PointerEvent, task: Task) => {
+    dragStartY.current = e.clientY
+    isDragging.current = false
+    setDragBlock({ task })
     setDragY(e.clientY)
     ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
   }, [])
@@ -245,11 +257,15 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
     const el = scrollRef.current
     if (el) {
       const rect = el.getBoundingClientRect()
-      const y = e.clientY - rect.top + el.scrollTop
-      const trackH = 24 * h
-      const newTime = snapTo(yToTime(y, trackH, day0, zoom, scrollHours), snapMinutes(zoom))
-      // optimistic stage + real write (see `pending` above)
-      sendReschedule(dragBlock.task.id, newTime, setPending, setStageErr)
+      // only a drop INSIDE the timeline schedules; dropping back on the rail
+      // (or elsewhere) is a cancelled gesture, not a slot at that y
+      if (e.clientX >= rect.left && e.clientX <= rect.right) {
+        const y = e.clientY - rect.top + el.scrollTop
+        const trackH = 24 * h
+        const newTime = snapTo(yToTime(y, trackH, day0, zoom, scrollHours), snapMinutes(zoom))
+        // optimistic stage + real write (see `pending` above)
+        sendReschedule(dragBlock.task.id, newTime, setPending, setStageErr)
+      }
     }
     setDragBlock(null)
     isDragging.current = false
@@ -261,8 +277,11 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
     setPending((m) => retireConfirmed(m, state.tasks))
   }, [state.tasks])
 
+  // move/up live on the shared body container so drags started in the rail
+  // (outside the timeline) keep tracking until the pointer drops
+  const bodyRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const el = scrollRef.current
+    const el = bodyRef.current
     if (!el) return
     el.addEventListener('pointermove', onPointerMove as any)
     el.addEventListener('pointerup', onPointerUp as any)
@@ -329,7 +348,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
           </span>
         ) : null}
       </div>
-      <div className="agenda-body">
+      <div className="agenda-body" ref={bodyRef}>
         <div className="agenda-timeline" ref={scrollRef}>
           <div className="agenda-track" style={{ height: trackH }}>
             {hourLabels.map((hr) => (
@@ -375,7 +394,8 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
                 key={t.id}
                 type="button"
                 className={`au-item ${toneOf(t)}`}
-                onClick={() => onOpen(t.id)}
+                onClick={() => { if (!isDragging.current) onOpen(t.id) }}
+                onPointerDown={(e) => onRailDragStart(e.nativeEvent, t)}
                 title={t.resultSummary || t.title}
               >
                 <span className="au-dot" />

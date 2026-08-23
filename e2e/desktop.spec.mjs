@@ -524,3 +524,37 @@ test.describe('RoboJex desktop', () => {
     expect(delta).toBeLessThan(6 * 3_600_000)
     await shot(page, '30-days-drag')
   })
+
+  // 31 (rail drop): an unscheduled card dragged from the side rail into the
+  // timeline gets its FIRST scheduledAt via the same PATCH — scheduling by
+  // gesture instead of chat.
+  test('31 rail drop: unscheduled card gains a slot by dragging in', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.request.post('/api/task', { data: { title: '侧栏拖入排程探针' } })
+    await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    const rail = page.locator('.au-item', { hasText: '侧栏拖入排程探针' })
+    await expect(rail).toBeVisible({ timeout: 5_000 })
+    const track = page.locator('.agenda-track')
+    const trackBox = await track.boundingBox()
+    const railBox = await rail.boundingBox()
+    expect(trackBox).toBeTruthy()
+    // drag from the rail into the middle of the visible timeline
+    await page.mouse.move(railBox.x + railBox.width / 2, railBox.y + railBox.height / 2)
+    await page.mouse.down()
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(
+        railBox.x + railBox.width / 2 + ((trackBox.x + trackBox.width / 2 - railBox.x - railBox.width / 2) * i) / 10,
+        railBox.y + railBox.height / 2 + ((trackBox.y + trackBox.height * 0.5 - railBox.y - railBox.height / 2) * i) / 10,
+        { steps: 2 },
+      )
+    }
+    await page.mouse.up()
+    // it leaves the rail and appears as a block on the timeline
+    await expect(page.locator('.au-item', { hasText: '侧栏拖入排程探针' })).toHaveCount(0, { timeout: 10_000 })
+    await expect(page.locator('.agenda-block', { hasText: '侧栏拖入排程探针' })).toBeVisible({ timeout: 5_000 })
+    const after = await (await page.request.get('/api/state')).json()
+    const sched = after.tasks.find((tk) => tk.title === '侧栏拖入排程探针').scheduledAt
+    expect(sched).not.toBeNull()
+    await shot(page, '31-rail-drop')
+  })

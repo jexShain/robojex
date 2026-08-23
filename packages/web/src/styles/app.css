@@ -1825,6 +1825,7 @@ body[data-ds-dark-theme] .chip.full {
   border-radius: 9px;
   border: 1px solid transparent;
   text-align: left;
+  cursor: grab; /* draggable into the timeline for a first slot */
   transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out),
     border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }

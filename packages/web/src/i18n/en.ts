@@ -329,7 +329,7 @@ export const en: Record<string, string> = {
   'ag.stagedTitle': 'Drag-reschedules are being written to the backend',
   'ag.staged': 'Rescheduling ×{n}',
   'ag.stageErr': 'Reschedule failed, reverted: {t}',
-  'ag.unschedHead': 'No time scheduled',
+  'ag.unschedHead': 'Unscheduled · drag into the timeline',
   'ag.unschedEmpty': 'Nothing unscheduled',
   'ag.empty': 'Nothing scheduled yet',
   'ag.modeAria': 'Agenda mode',

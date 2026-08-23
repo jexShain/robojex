@@ -329,7 +329,7 @@ export const zh: Record<string, string> = {
   'ag.stagedTitle': '拖拽改期正在写入后端',
   'ag.staged': '改期中 ×{n}',
   'ag.stageErr': '改期失败，已还原：{t}',
-  'ag.unschedHead': '未排时间',
+  'ag.unschedHead': '未排时间 · 可拖入时间轴',
   'ag.unschedEmpty': '没有未排程任务',
   'ag.empty': '暂无排程',
   'ag.modeAria': '日历模式',

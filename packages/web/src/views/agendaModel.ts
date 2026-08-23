@@ -136,7 +136,8 @@ export function blocksForDay(tasks: Task[], day0: number, now: number): AgendaBl
 /** Tasks with no scheduledAt — the Day view's "no time" side list. */
 export function unscheduledTasks(tasks: Task[]): Task[] {
   return tasks
-    .filter((t) => t.scheduledAt == null && t.status !== 'cancelled')
+    // done needs no slot and cancelled is dead — the rail is a to-place list
+    .filter((t) => t.scheduledAt == null && t.status !== 'cancelled' && t.status !== 'done')
     .sort((a, b) => a.createdAt - b.createdAt)
 }
 
