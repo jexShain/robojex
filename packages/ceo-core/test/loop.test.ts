@@ -1358,3 +1358,33 @@ test("R85b ruling enforcement: decide narrating without verify still settles the
   expect(chats.some((c) => c.includes("验收「整理桌面文件夹（重派#2）」") && c.includes("通过"))).toBe(true);
   loop.stop();
 });
+
+test("R86 narrative guard: journal lines are refused, real lessons land", async () => {
+  const runtimeDir = makeRuntime();
+  const events: string[] = [];
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const chat = vi.fn(async (slot: string, msgs: { content: string }[]) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    const ctx = msgs.at(-1)!.content;
+    if (/^chat: journal wake$/m.test(ctx)) { // line-anchored: RECENT CYCLES replays it
+      return { content: JSON.stringify({ actions: [{ type: "reflect", text: "hello-robojex verified pass at wake#227; no further re-checks needed." }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+    }
+    return { content: JSON.stringify({ actions: [{ type: "reflect", text: "整理类任务先 du 看体积再动手，避免盲扫大目录。" }] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  try {
+    const loop = new SchedulerLoop({
+      llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+      orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+    });
+    const origPush = loop.push.bind(loop);
+    loop.push = (e: string) => { events.push(e); origPush(e); };
+    await loop.runOnce("chat: journal wake");          // journal line → refused
+    await loop.runOnce("chat: real lesson please");    // real lesson → banked
+    const memory = readFileSync(join(runtimeDir, "MEMORY.md"), "utf8");
+    expect(memory).toContain("整理类任务先 du");
+    expect(memory).not.toContain("wake#227");
+    expect(events.some((e) => e.includes("action failed") && e.includes("session journal line"))).toBe(true);
+    loop.stop();
+  } finally { err.mockRestore(); }
+});

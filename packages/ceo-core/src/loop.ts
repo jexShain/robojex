@@ -714,6 +714,14 @@ export class SchedulerLoop {
                 throw new Error("invalid reflect action: this lesson is already the latest MEMORY entry — bank only NEW lessons");
               }
             }
+            // R86 narrative guard: the live ledger collected journal lines
+            // ("verified pass at wake#227; no further re-checks needed") —
+            // session logs, not lessons. A reusable lesson is trigger +
+            // what to do differently; wake-number citations and
+            // nothing-more-to-do closers are the tell of a diary entry.
+            if (/wake#\d+|no further|no follow-up|无需(重复|复查|跟进)|已验证[过，,]?\s*无需/.test(a.text)) {
+              throw new Error("invalid reflect action: that reads as a session journal line (wake citations / nothing-more-to-do closers), not a REUSABLE lesson — bank trigger + what to do differently, or take no reflect at all");
+            }
             const p = join(this.d.runtimeDir, "MEMORY.md");
             if (!existsSync(p)) writeFileSync(p, "# MEMORY\n"); // missing file: recreate with the canonical header
             const d = new Date();
