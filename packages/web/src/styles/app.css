@@ -1086,6 +1086,68 @@ body[data-ds-dark-theme] .chip.full {
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* add-a-step: quiet ghost opener, inline mini form on expand */
+.df-add-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  background: none;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: var(--rj-radius-sm, 6px);
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.df-add-open:hover {
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.df-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.df-add-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rj-radius-sm, 6px);
+  padding: 4px 8px;
+}
+
+.df-add-input:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.df-add-btn {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--rj-radius-sm, 6px);
+  color: var(--dsw-alias-state-business-primary);
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 35%, transparent);
+  cursor: pointer;
+}
+
+.df-add-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* operator action row on the task detail tab */
 .detail-actions {
   display: flex;

@@ -363,6 +363,8 @@ export const en: Record<string, string> = {
   'detail.markDone': "I've done it",
   'detail.confirmDone': 'click again to confirm (terminal — never-dispatched cards only)',
   'detail.doneErr': 'mark-done failed — try again shortly',
+  'detail.addStep': 'Add a step',
+  'detail.addStepErr': 'could not add the step — try again shortly',
   'detail.kId': 'ID',
   'detail.kStatus': 'Status',
   'detail.kCreated': 'Created',

@@ -9,6 +9,7 @@ import { useT } from '../i18n'
 import { fill } from '../i18n'
 import { Icon } from '../ui/Icon'
 import { TakeoverPreview } from './TakeoverPreview'
+import { parseQuickTime } from '../views/quickTime'
 
 type Tab = 'task' | 'files' | 'screen'
 
@@ -152,6 +153,37 @@ function TaskDetail() {
       .then((r) => { if (!r.ok) throw new Error(String(r.status)); return undefined })
       .catch(() => setDoneErr(true))
   }
+  // add-a-step: plans gain a missed step without going back to the board;
+  // quick-time syntax works here too (steps often carry their own clock)
+  const [addingStep, setAddingStep] = useState(false)
+  const [stepTitle, setStepTitle] = useState('')
+  const [stepErr, setStepErr] = useState(false)
+  const stepInputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (addingStep) stepInputRef.current?.focus()
+  }, [addingStep])
+  const addStep = (): void => {
+    const raw = stepTitle.trim()
+    if (!raw) return
+    setStepErr(false)
+    const quick = parseQuickTime(raw)
+    void fetch('/api/task', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: quick?.title ?? raw,
+        parentId: task.id,
+        ...(quick?.scheduledAt !== undefined ? { scheduledAt: quick.scheduledAt } : {}),
+        ...(quick?.dueAt !== undefined ? { dueAt: quick.dueAt } : {}),
+      }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status))
+        setStepTitle('')
+        return undefined
+      })
+      .catch(() => setStepErr(true))
+  }
   // precise time edits ride the same PATCH as the drag gestures; null clears
   const patchTime = (fields: { scheduledAt?: number | null; dueAt?: number | null }): void => {
     setCancelErr(false)
@@ -260,7 +292,8 @@ function TaskDetail() {
         // the tree from the detail rail beats hunting cards on the board
         const parent = task.parentId != null ? state.tasks.find((x) => x.id === task.parentId) : undefined
         const kids = state.tasks.filter((x) => x.parentId === task.id && x.status !== 'cancelled')
-        if (!parent && kids.length === 0) return null
+        const stepAddable = task.status !== 'done' && task.status !== 'cancelled'
+        if (!parent && kids.length === 0 && !stepAddable) return null
         return (
           <div className="detail-family">
             {parent ? (
@@ -282,6 +315,38 @@ function TaskDetail() {
                 ))}
                 {kids.length > 6 ? <span className="df-more">+{kids.length - 6}</span> : null}
               </div>
+            ) : null}
+            {stepAddable ? (
+              addingStep ? (
+                <div className="df-add">
+                  <input
+                    ref={stepInputRef}
+                    className="df-add-input"
+                    value={stepTitle}
+                    placeholder={t('board.newPlaceholder')}
+                    onChange={(e) => setStepTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') addStep()
+                      else if (e.key === 'Escape') setAddingStep(false)
+                    }}
+                    onBlur={() => { if (!stepTitle.trim()) setAddingStep(false) }}
+                  />
+                  <button
+                    type="button"
+                    className="df-add-btn"
+                    title={t('detail.addStep')}
+                    disabled={!stepTitle.trim()}
+                    onClick={addStep}
+                  >
+                    <Icon name="plus" size={11} />
+                  </button>
+                  {stepErr ? <span className="da-err" role="alert">{t('detail.addStepErr')}</span> : null}
+                </div>
+              ) : (
+                <button type="button" className="df-add-open" onClick={() => setAddingStep(true)}>
+                  <Icon name="plus" size={10} /> {t('detail.addStep')}
+                </button>
+              )
             ) : null}
           </div>
         )

@@ -363,6 +363,8 @@ export const zh: Record<string, string> = {
   'detail.markDone': '我已完成',
   'detail.confirmDone': '再点一次确认完成（终态，仅限未派发的卡）',
   'detail.doneErr': '标记完成失败，请稍后再试',
+  'detail.addStep': '添加步骤',
+  'detail.addStepErr': '添加失败，请稍后再试',
   'detail.kId': 'ID',
   'detail.kStatus': '状态',
   'detail.kCreated': '创建',

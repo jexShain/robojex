@@ -707,3 +707,32 @@ test.describe('RoboJex desktop', () => {
     await page.keyboard.press('Enter')
     await expect(page.locator('.board-new input')).toBeFocused()
   })
+
+  // 38 (add a step): a plan missing a step gains it in the detail rail —
+  // quick-time syntax carries the step's own clock.
+  test('38 details: add-a-step posts a child with quick-time schedule', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.request.post('/api/task', { data: { title: '补步探针父卡' } })
+    const parent = await (await page.request.get('/api/state')).json()
+    const pid = parent.tasks.find((tk) => tk.title === '补步探针父卡').id
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    await page.locator('.board-card', { hasText: '补步探针父卡' }).first().click()
+    await expect(page.locator('.detail-title')).toContainText('补步探针父卡', { timeout: 5_000 })
+
+    await page.locator('.df-add-open').click()
+    const input = page.locator('.df-add-input')
+    await expect(input).toBeFocused()
+    await input.fill('明天9点 补步探针子卡 截止11点')
+    await input.press('Enter')
+
+    // chip lands in the family block; the child persists with its clock
+    await expect(page.locator('.df-kids .df-link', { hasText: '补步探针子卡' })).toBeVisible({ timeout: 5_000 })
+    const after = await (await page.request.get('/api/state')).json()
+    const kid = after.tasks.find((tk) => tk.title === '补步探针子卡')
+    expect(kid).toBeTruthy()
+    expect(kid.parentId).toBe(pid)
+    expect(new Date(kid.scheduledAt).getHours()).toBe(9)
+    expect(new Date(kid.dueAt).getHours()).toBe(11)
+    await shot(page, '38-add-step')
+  })
