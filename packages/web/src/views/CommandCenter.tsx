@@ -338,7 +338,7 @@ function Swimlanes({
         const hidden = lane === 'done' && doneCollapsed
         return (
           <section key={lane} className={`cc-lane lane-${lane}${hidden ? ' shut' : ''}`}>
-            <header className="cc-lane-head">
+            <header className="cc-lane-head" title={t(`lane.tip${lane.charAt(0).toUpperCase()}${lane.slice(1)}`)}>
               <span className={`cc-dot ${lane}`} />
               <span className="cc-lane-name">{t(`lane.${lane}`)}</span>
               <span className="cc-lane-count">{tasks.length}</span>
