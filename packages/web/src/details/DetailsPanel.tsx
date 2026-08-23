@@ -130,37 +130,37 @@ function TaskDetail() {
         </div>
       )}
       <div className="kv">
-        <span className="k">id</span>
+        <span className="k">{t('detail.kId')}</span>
         <span className="v" style={{ fontFamily: 'var(--ds-font-family-code)' }}>
           {task.id}
         </span>
       </div>
       <div className="kv">
-        <span className="k">status</span>
+        <span className="k">{t('detail.kStatus')}</span>
         <span className="v">
           <span className={`dot ${statusTone(task.status)}`} style={{ display: 'inline-block', marginRight: 6 }} />
-          {task.status}
+          {t(`status.${task.status}`)}
         </span>
       </div>
       <div className="kv">
-        <span className="k">created</span>
+        <span className="k">{t('detail.kCreated')}</span>
         <span className="v">{new Date(task.createdAt).toLocaleString()}</span>
       </div>
       {task.scheduledAt != null ? (
         <div className="kv">
-          <span className="k">scheduled</span>
+          <span className="k">{t('detail.kScheduled')}</span>
           <span className="v">{new Date(task.scheduledAt).toLocaleString()}</span>
         </div>
       ) : null}
       {task.dueAt != null ? (
         <div className="kv">
-          <span className="k">due</span>
+          <span className="k">{t('detail.kDue')}</span>
           <span className="v">{new Date(task.dueAt).toLocaleString()}</span>
         </div>
       ) : null}
       {task.acceptance ? (
         <div className="kv">
-          <span className="k">acceptance</span>
+          <span className="k">{t('detail.kAcceptance')}</span>
           <span className="v summary oneline" title={task.acceptance}>
             {task.acceptance}
           </span>
@@ -168,7 +168,7 @@ function TaskDetail() {
       ) : null}
       {task.resultSummary ? (
         <div className="kv">
-          <span className="k">result</span>
+          <span className="k">{t('detail.kResult')}</span>
           <span className="v summary">{task.resultSummary}</span>
         </div>
       ) : null}
