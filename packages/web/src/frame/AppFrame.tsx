@@ -92,6 +92,11 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
   const changeView = useCallback((v: ViewId) => {
     setView(v)
     saveView(v)
+    // ChatView stays mounted (offscreen when inactive) so its autoFocus
+    // only fires at boot — re-entering chat means typing intent; the
+    // InputBar listens for this and takes focus (palette's new-chat lands
+    // here too, where focus is equally wanted).
+    if (v === 'chat') window.dispatchEvent(new CustomEvent('robojex:focus-chat'))
   }, [])
 
   /* frame layout flags (persisted) */

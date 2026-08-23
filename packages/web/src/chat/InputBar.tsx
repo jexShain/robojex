@@ -116,6 +116,18 @@ export function InputBar() {
     wasStreaming.current = streaming
   }, [streaming])
 
+  /* view switch into chat = typing intent: take focus (the view stays
+     mounted, so the mount-time autoFocus alone never refires). The event
+     fires mid-view-switch while the page is still display:none — focus
+     lands on the frame AFTER the class flip commits. */
+  useEffect(() => {
+    const onFocusChat = (): void => {
+      requestAnimationFrame(() => requestAnimationFrame(() => taRef.current?.focus()))
+    }
+    window.addEventListener('robojex:focus-chat', onFocusChat)
+    return () => window.removeEventListener('robojex:focus-chat', onFocusChat)
+  }, [])
+
   const resetInput = (): void => {
     setValue('')
     setDismissed(false)

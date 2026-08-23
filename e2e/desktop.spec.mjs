@@ -865,3 +865,16 @@ test.describe('RoboJex desktop', () => {
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('settings-modal')).toBeHidden()
   })
+
+  // 45 (flow): landing on the chat view means typing intent — the input
+  // takes focus even though the view never remounts.
+  test('45 chat: view switch focuses the input', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.keyboard.press('Control+1') // command center first
+    await expect(page.locator('[data-testid="view-tab"][data-view="command"]')).toHaveAttribute('data-active', 'true', { timeout: 5_000 })
+    await page.keyboard.press('Control+2') // into chat
+    await expect(page.getByTestId('chat-input')).toBeFocused()
+    await page.keyboard.type('abc')
+    await expect(page.getByTestId('chat-input')).toHaveValue('abc')
+  })
