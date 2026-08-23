@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { statusTone, useStore } from '../state/store'
+import { Icon } from '../ui/Icon'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
 import type { Task } from '../state/types'
@@ -88,7 +89,7 @@ function AgendaBlockView({
       <span className="ab-title">{t.title}</span>
       {pending ? (
         <span className="ab-pend" title={tr('ag.pendingBadge')}>
-          ⏳
+          <Icon name="clock" size={10} />
         </span>
       ) : null}
       {block.spansBeyond && d != null ? (
@@ -135,7 +136,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
 
   // Drag-reschedule staging: the core API only has POST /api/task (create);
   // there is no task-update endpoint, so a drop is staged locally, applied
-  // visually and flagged ⏳ — never silently dropped.
+  // visually and flagged with a clock badge — never silently dropped.
   // TODO: send PATCH /api/task/:id { scheduledAt } once ceo-core grows one.
   const [pending, setPending] = useState<Map<string, number>>(() => new Map())
   const tasks = useMemo(
@@ -330,7 +331,9 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
                 <span className="au-dot" />
                 <span className="au-title">{t.title}</span>
                 {t.dueAt != null ? (
-                  <span className="au-due">⏳ {fmtStamp(t.dueAt, now)}</span>
+                  <span className="au-due">
+                    <Icon name="clock" size={10} /> {fmtStamp(t.dueAt, now)}
+                  </span>
                 ) : null}
               </button>
             ))

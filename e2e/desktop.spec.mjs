@@ -368,3 +368,23 @@ test.describe('RoboJex desktop', () => {
     await expect(page.locator('.board-card', { hasText: '示例任务二' })).toHaveCount(0, { timeout: 5_000 })
     await shot(page, '25-board-cancel')
   })
+
+  // 26 (surface sweep): the three never-shot surfaces — agenda day + days
+  // modes, activity feed, and the task details rail opened from a card.
+  test('26 surface sweep: agenda modes, activity, details rail', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    await expect(page.locator('.agenda-track')).toBeVisible({ timeout: 5_000 })
+    await shot(page, '26-agenda-day')
+    await page.locator('.agenda-toolbar .seg button').nth(1).click()
+    await expect(page.locator('.ad-track').first()).toBeVisible({ timeout: 5_000 })
+    await shot(page, '26-agenda-days')
+    await page.locator('[data-testid="view-tab"][data-view="activity"]').click()
+    await page.waitForTimeout(300)
+    await shot(page, '26-activity')
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    await page.locator('.board-card', { hasText: '进行中的演示任务' }).click()
+    await expect(page.locator('.detail-title')).toContainText('进行中的演示任务', { timeout: 5_000 })
+    await shot(page, '26-details')
+  })
