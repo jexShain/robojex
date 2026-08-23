@@ -2350,6 +2350,11 @@ body[data-ds-dark-theme] .chip.full {
   white-space: nowrap;
 }
 
+.agenda-staged.err {
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+}
+
 /* Details: verdict/progress badges */
 .detail-badges {
   display: flex;

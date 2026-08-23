@@ -363,6 +363,24 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  // operator drag-reschedule (agenda PATCH): epoch ms or null
+  if (p === '/api/task' && req.method === 'PATCH') {
+    void readBody().then((b) => {
+      const hit = tasks.find((t) => t.id === b.id)
+      if (!hit) return send(404, { error: 'no such task' })
+      if (hit.status === 'done' || hit.status === 'cancelled') return send(409, { error: `task is ${hit.status} — history is immutable` })
+      if (b.scheduledAt === undefined && b.dueAt === undefined) return send(400, { error: 'scheduledAt or dueAt required' })
+      for (const k of ['scheduledAt', 'dueAt']) {
+        if (b[k] !== undefined && b[k] !== null && typeof b[k] !== 'number') return send(400, { error: `${k} must be epoch ms or null` })
+      }
+      if (b.scheduledAt !== undefined) hit.scheduledAt = b.scheduledAt
+      if (b.dueAt !== undefined) hit.dueAt = b.dueAt
+      broadcast({ t: 'tasks', tasks: JSON.parse(JSON.stringify(tasks)) })
+      send(202, { ok: true, task: hit })
+    })
+    return
+  }
+
   if (p.startsWith('/api/')) return send(404, { error: 'not found' })
 
   // static web bundle (SPA fallback)

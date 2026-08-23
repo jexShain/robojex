@@ -211,6 +211,41 @@ test("PUT /api/task: operator cancel retires a card + broadcasts; idempotent, do
   c.ws.close();
 });
 
+test("PATCH /api/task: operator reschedule lands on the board via the loop; history refuses, bad shapes 4xx", async () => {
+  const rig = mkRig();
+  const live = rig.board.add({ title: "draggable" });
+  const fin = rig.board.add({ title: "finished" });
+  rig.board.update(fin.id, { status: "done" });
+  const rescheduled: Array<{ id: string; times: { scheduledAt?: number | null; dueAt?: number | null } }> = [];
+  const loop = { push: vi.fn(), rescheduleById: (id: string, times: { scheduledAt?: number | null; dueAt?: number | null }) => { rescheduled.push({ id, times }); rig.board.update(id, times); } };
+  const api = makeApi(rig, loop);
+  await api.start();
+  const c = wsCollect(api);
+  await c.opened;
+
+  const patch = (body: unknown): Promise<Response> =>
+    fetch(`http://127.0.0.1:${api.port}/api/task`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  const T0 = 1_787_000_000_000;
+  const r = await patch({ id: live.id, scheduledAt: T0 });
+  expect(r.status).toBe(202);
+  expect(rescheduled).toEqual([{ id: live.id, times: { scheduledAt: T0 } }]);
+  expect(rig.board.list().find((t) => t.id === live.id)!.scheduledAt).toBe(T0);
+
+  const both = await patch({ id: live.id, scheduledAt: null, dueAt: T0 + 3_600_000 });
+  expect(both.status).toBe(202);
+  expect(rescheduled[1]).toEqual({ id: live.id, times: { scheduledAt: null, dueAt: T0 + 3_600_000 } });
+  expect(rig.board.list().find((t) => t.id === live.id)).toMatchObject({ scheduledAt: null, dueAt: T0 + 3_600_000 });
+
+  const done = await patch({ id: fin.id, scheduledAt: T0 });
+  expect(done.status).toBe(409); // history is immutable
+  for (const [body, code] of [[{}, 400], [{ id: live.id }, 400], [{ id: 42, scheduledAt: T0 }, 400], [{ id: "missing", scheduledAt: T0 }, 404], [{ id: live.id, scheduledAt: "soon" }, 400]] as [unknown, number][]) {
+    const rr = await patch(body);
+    expect(rr.status, `body ${JSON.stringify(body)}`).toBe(code);
+  }
+  c.ws.close();
+});
+
 test("POST /api/chat: 202, enqueues 'chat: <text>', broadcasts chat_out(user); WS {t:'chat'} frame is equivalent; bad input 400", async () => {
   const rig = mkRig();
   const loop = { push: vi.fn() };

@@ -273,6 +273,19 @@ export class SchedulerLoop {
     this.push(`mode_changed -> ${mode}`);
   }
 
+  /** Write a card's clock from outside the decide cycle (operator UI drag):
+   *  same semantics as the reschedule action — board write plus pump re-arm,
+   *  so a card dragged into the future re-defers and one dragged onto now
+   *  re-earns its due_spawn. Times are epoch ms; null clears. */
+  rescheduleById(id: string, times: { scheduledAt?: number | null; dueAt?: number | null }): void {
+    this.d.board.update(id, times);
+    this.ganttDispatched.delete(id);
+    this.spawnNudgedAt.delete(id);
+    this.spawnNudgeState.delete(id);
+    this.emitTasks();
+    console.log(`[ceo] reschedule ${id.slice(0, 8)} -> sched ${times.scheduledAt ?? "(keep)"} due ${times.dueAt ?? "(keep)"}`);
+  }
+
   // chat-driven approval resolution: "approve <id>" / "deny <id>" from the
   // human settles a pending assist-mode write-class tool call. The current
   // effective gate rides along: a mode drop to observe since the call was
@@ -794,19 +807,12 @@ export class SchedulerLoop {
             const scheduledAt = hasSched ? this.spawnTime(a.scheduledAt, "scheduledAt") : undefined;
             const dueAt = hasDue ? this.spawnTime(a.dueAt, "dueAt") : undefined;
             if (scheduledAt === undefined && dueAt === undefined) throw new Error("invalid reschedule action: neither timestamp parsed");
-            this.d.board.update(card.id, {
+            this.rescheduleById(card.id, {
               ...(scheduledAt !== undefined ? { scheduledAt } : {}),
               ...(dueAt !== undefined ? { dueAt } : {}),
             });
-            // a card that moved to the future re-defers; moved to now/past
-            // re-earns its due_spawn so the pump launches it promptly
-            this.ganttDispatched.delete(card.id);
-            this.spawnNudgedAt.delete(card.id);
-            this.spawnNudgeState.delete(card.id);
-            this.emitTasks();
             const fmt = (ms?: number): string => ms ? new Date(ms).toLocaleString("zh-CN", { hour12: false }) : "?";
             this.d.outlet?.chatOut("jex", `已改期「${card.title}」：开工 ${fmt(scheduledAt ?? card.scheduledAt ?? undefined)}${dueAt !== undefined ? ` · 截止 ${fmt(dueAt)}` : ""}`);
-            console.log(`[ceo] reschedule ${card.id.slice(0, 8)} -> ${fmt(scheduledAt)} due ${fmt(dueAt)}`);
           } else if (a.type === "archive") {
             // R83: dead cards (fail-exhausted, obsolete, duplicate) had no
             // terminal state — they sat on the board forever, riding every

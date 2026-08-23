@@ -321,12 +321,13 @@ export const zh: Record<string, string> = {
   'board.progressAria': '进度 {n}%',
 
   /* agenda / calendar */
-  'ag.pendingBadge': '已暂存（需后端任务更新端点）',
+  'ag.pendingBadge': '改期同步中…',
   'ag.prevDay': '前一天',
   'ag.nextDay': '后一天',
   'ag.today': '今天',
-  'ag.stagedTitle': '拖拽改期已暂存本地，等待后端任务更新端点',
-  'ag.staged': '已暂存 ×{n}（需后端任务更新端点）',
+  'ag.stagedTitle': '拖拽改期正在写入后端',
+  'ag.staged': '改期中 ×{n}',
+  'ag.stageErr': '改期失败，已还原：{t}',
   'ag.unschedHead': '未排时间',
   'ag.unschedEmpty': '没有未排程任务',
   'ag.empty': '暂无排程',

@@ -321,12 +321,13 @@ export const en: Record<string, string> = {
   'board.progressAria': 'progress {n}%',
 
   /* agenda / calendar */
-  'ag.pendingBadge': 'Staged (needs a backend task-update endpoint)',
+  'ag.pendingBadge': 'Syncing reschedule…',
   'ag.prevDay': 'Previous day',
   'ag.nextDay': 'Next day',
   'ag.today': 'today',
-  'ag.stagedTitle': 'Drag-reschedules are staged locally until a task-update endpoint exists',
-  'ag.staged': 'Staged ×{n} (needs a backend task-update endpoint)',
+  'ag.stagedTitle': 'Drag-reschedules are being written to the backend',
+  'ag.staged': 'Rescheduling ×{n}',
+  'ag.stageErr': 'Reschedule failed, reverted: {t}',
   'ag.unschedHead': 'No time scheduled',
   'ag.unschedEmpty': 'Nothing unscheduled',
   'ag.empty': 'Nothing scheduled yet',

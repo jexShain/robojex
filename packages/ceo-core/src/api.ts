@@ -29,6 +29,7 @@ export interface ApiLoopHandle {
   push(event: string): void;
   sendCtrl?(frame: Record<string, unknown>): boolean; // false/absent: takeover link down
   setModeLocal?(mode: string): void;                  // link-down fallback: switch the mode without takeoverd
+  rescheduleById?(id: string, times: { scheduledAt?: number | null; dueAt?: number | null }): void; // operator drag-to-reschedule landing (pump re-arm included)
   mode?(): string;
   tickN?(): number;                     // decision-cycle count for HUD lag detection; absent = 0
   resolveToolApproval?(id: string, ok: boolean): Promise<string | null>; // settles a pending assist-mode tool write
@@ -303,6 +304,7 @@ export class ApiServer implements LoopOutlet {
     if (path === "/api/mission" && req.method === "POST") { await this.postMission(req, res); return; }
     if (path === "/api/task" && req.method === "POST") { await this.postTask(req, res); return; }
     if (path === "/api/task" && req.method === "PUT") { await this.putTask(req, res); return; }
+    if (path === "/api/task" && req.method === "PATCH") { await this.patchTask(req, res); return; }
     if (path === "/api/mode" && req.method === "POST") { await this.postMode(req, res); return; }
     if (path === "/api/settings" && req.method === "GET") { this.getSettings(res); return; }
     if (path === "/api/settings" && req.method === "PUT") { await this.putSettings(req, res); return; }
@@ -498,6 +500,32 @@ export class ApiServer implements LoopOutlet {
       this.d.board.update(hit.id, { status: "cancelled", resultSummary: [hit.resultSummary, "[cancelled by operator]"].filter(Boolean).join(" | ") });
       this.broadcast({ t: "tasks", tasks: this.d.board.list().map(taskView) });
     }
+    const now = this.d.board.list().find((t) => t.id === hit.id)!;
+    json(res, 202, { ok: true, task: taskView(now) });
+  }
+
+  // PATCH /api/task: operator reschedule — { id, scheduledAt?, dueAt? } with
+  // epoch-ms numbers (null clears). The agenda's drag-to-reschedule had been
+  // staging drops locally with nowhere to land them; this is the landing, with
+  // the same pump re-arm as the agent's reschedule action (future moves defer,
+  // now/past moves re-arm due_spawn). done/cancelled are history: 409.
+  private async patchTask(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
+    if (typeof body.id !== "string" || body.id.length === 0) { json(res, 400, { error: "id must be a non-empty task id" }); return; }
+    if (body.scheduledAt === undefined && body.dueAt === undefined) { json(res, 400, { error: "scheduledAt or dueAt (epoch ms or null) is required" }); return; }
+    for (const k of ["scheduledAt", "dueAt"] as const) {
+      const v = body[k];
+      if (v !== undefined && v !== null && typeof v !== "number") { json(res, 400, { error: `${k} must be epoch ms or null` }); return; }
+    }
+    const hit = this.d.board.list().find((t) => t.id === body.id);
+    if (!hit) { json(res, 404, { error: "no such task" }); return; }
+    if (hit.status === "done" || hit.status === "cancelled") { json(res, 409, { error: `task is ${hit.status} — history is immutable` }); return; }
+    if (!this.d.loop.rescheduleById) { json(res, 503, { error: "loop not wired for reschedule" }); return; }
+    this.d.loop.rescheduleById(hit.id, {
+      ...(body.scheduledAt !== undefined ? { scheduledAt: body.scheduledAt as number | null } : {}),
+      ...(body.dueAt !== undefined ? { dueAt: body.dueAt as number | null } : {}),
+    });
     const now = this.d.board.list().find((t) => t.id === hit.id)!;
     json(res, 202, { ok: true, task: taskView(now) });
   }

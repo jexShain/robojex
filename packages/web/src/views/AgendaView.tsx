@@ -134,11 +134,16 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
   const today0 = dayStartOf(now)
   const day0 = addDaysLocal(today0, dayOffset)
 
-  // Drag-reschedule staging: the core API only has POST /api/task (create);
-  // there is no task-update endpoint, so a drop is staged locally, applied
-  // visually and flagged with a clock badge — never silently dropped.
-  // TODO: send PATCH /api/task/:id { scheduledAt } once ceo-core grows one.
+  // Drag-reschedule: a drop PATCHes /api/task { id, scheduledAt } and is
+  // applied optimistically here; the `pending` map doubles as the in-flight
+  // marker (clock badge) until the tasks broadcast confirms the server truth.
   const [pending, setPending] = useState<Map<string, number>>(() => new Map())
+  const [stageErr, setStageErr] = useState<string | null>(null)
+  useEffect(() => {
+    if (stageErr === null) return
+    const timer = window.setTimeout(() => setStageErr(null), 4_000)
+    return () => window.clearTimeout(timer)
+  }, [stageErr])
   const tasks = useMemo(
     () =>
       pending.size === 0
@@ -208,13 +213,37 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
       const y = e.clientY - rect.top + el.scrollTop
       const trackH = 24 * h
       const newTime = snapTo(yToTime(y, trackH, day0, zoom, scrollHours), snapMinutes(zoom))
-      // staged locally (see `pending` above) — flagged in the UI, not lost
-      console.log(`[drag-reschedule] ${dragBlock.task.id} → ${new Date(newTime).toISOString()} (staged; no backend update endpoint)`)
+      // optimistic stage + real write (see `pending` above)
       setPending((m) => new Map(m).set(dragBlock.task.id, newTime))
+      void fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: dragBlock.task.id, scheduledAt: newTime }),
+      })
+        .then((r) => { if (!r.ok) throw new Error(`PATCH /api/task -> ${r.status}`); return undefined })
+        .catch(() => {
+          // write refused: revert the optimistic stage, surface the old time
+          setPending((m) => { const c = new Map(m); c.delete(dragBlock.task.id); return c })
+          setStageErr(new Date(newTime).toLocaleTimeString())
+        })
     }
     setDragBlock(null)
     isDragging.current = false
   }, [dragBlock, day0, zoom, scrollHours, h])
+
+  // the tasks broadcast is the source of truth: once a card carries the
+  // staged time (or left the board), its in-flight badge retires
+  useEffect(() => {
+    setPending((m) => {
+      if (m.size === 0) return m
+      const next = new Map(m)
+      for (const [id, time] of m) {
+        const t = state.tasks.find((x) => x.id === id)
+        if (t && (t.scheduledAt === time || t.status === 'done' || t.status === 'cancelled')) next.delete(id)
+      }
+      return next.size === m.size ? m : next
+    })
+  }, [state.tasks])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -276,6 +305,11 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
         {pending.size > 0 ? (
           <span className="agenda-staged" title={t('ag.stagedTitle')}>
             {fill(t('ag.staged'), { n: pending.size })}
+          </span>
+        ) : null}
+        {stageErr ? (
+          <span className="agenda-staged err" role="alert" title={stageErr}>
+            {fill(t('ag.stageErr'), { t: stageErr })}
           </span>
         ) : null}
       </div>

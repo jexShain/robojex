@@ -405,3 +405,36 @@ test.describe('RoboJex desktop', () => {
     await expect(page.locator('.board-card').first()).toBeVisible({ timeout: 5_000 })
     await shot(page, '27-reconnect')
   })
+
+  // 28 (drag-reschedule): agenda drops PATCH /api/task — optimistic badge
+  // shows, the tasks broadcast confirms, the badge retires, and the mock's
+  // persisted state carries the new scheduledAt (no more staged-only drops).
+  test('28 agenda drag-reschedule persists via PATCH', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    const stateBefore = await (await page.request.get('/api/state')).json()
+    const t3 = stateBefore.tasks.find((t) => t.title.includes('进行中的演示任务'))
+    expect(t3).toBeTruthy()
+    await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    const block = page.locator('.agenda-block', { hasText: '进行中的演示任务' }).first()
+    await expect(block).toBeVisible({ timeout: 5_000 })
+    const box = await block.boundingBox()
+    expect(box).toBeTruthy()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    // 8 steps of 15px = 120px down — crossing the 4px drag threshold,
+    // kept below any lane boundary concerns
+    for (let i = 1; i <= 8; i++) {
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + i * 15, { steps: 2 })
+    }
+    await page.mouse.up()
+    // in-flight badge may flash; the settled state is badge-gone (broadcast
+    // confirmed the write and retired the marker)
+    await expect(page.locator('.agenda-staged')).toHaveCount(0, { timeout: 10_000 })
+    const stateAfter = await (await page.request.get('/api/state')).json()
+    const t3b = stateAfter.tasks.find((t) => t.id === t3.id)
+    const delta = t3b.scheduledAt - t3.scheduledAt
+    expect(delta).toBeGreaterThan(45 * 60_000) // moved meaningfully later
+    expect(delta).toBeLessThan(5 * 3_600_000) // but not off the day
+    await shot(page, '28-drag-reschedule')
+  })
