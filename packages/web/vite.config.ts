@@ -17,6 +17,12 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      // e2e test hooks on the mock (/mock/slow, /mock/ws-drop, …) — without
+      // this they silently 404 into vite's SPA fallback and never land
+      '/mock': {
+        target: `http://127.0.0.1:${process.env.MOCK_PORT || 7620}`,
+        changeOrigin: true,
+      },
     },
   },
   build: {

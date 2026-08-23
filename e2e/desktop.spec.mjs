@@ -388,3 +388,20 @@ test.describe('RoboJex desktop', () => {
     await expect(page.locator('.detail-title')).toContainText('进行中的演示任务', { timeout: 5_000 })
     await shot(page, '26-details')
   })
+
+  // 27 (resilience): backend kicks every WS client — the badge must surface
+  // the drop (重连中…/Reconnecting…) and the generation-based loop must
+  // reconnect with the hello rebuild back to live, no reload needed.
+  test('27 ws drop: badge surfaces reconnect and recovers to live', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.getByTestId('conn-status')).toContainText(/已连接|live/, { timeout: 10_000 })
+    await page.evaluate(async () => {
+      await fetch('/mock/ws-drop', { method: 'POST' }).catch(() => {})
+    })
+    await expect(page.getByTestId('conn-status')).toContainText(/重连|Reconnect/i, { timeout: 5_000 })
+    await expect(page.getByTestId('conn-status')).toContainText(/已连接|live/, { timeout: 15_000 })
+    // the rebuilt store still carries board data (hello replay worked)
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    await expect(page.locator('.board-card').first()).toBeVisible({ timeout: 5_000 })
+    await shot(page, '27-reconnect')
+  })

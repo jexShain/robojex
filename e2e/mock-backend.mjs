@@ -98,6 +98,25 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  // diagnostics: how many WS clients does the mock see right now
+  if (p === '/mock/ws-info' && req.method === 'GET') {
+    send(200, { clients: clients.size })
+    return
+  }
+
+  // resilience hook: kick every WS client AND refuse new upgrades for a
+  // short window — the badge's reconnecting state is ms-flashy against a
+  // local server, so the outage needs a floor to be assertable.
+  if (p === '/mock/ws-drop' && req.method === 'POST') {
+    void readBody().then((b) => {
+      wsDropUntil = Date.now() + Number(b.ms ?? 2500)
+      const n = [...clients].filter((c) => c.readyState === 1).length
+      for (const c of clients) c.terminate()
+      send(200, { ok: true, dropped: n, ms: Number(b.ms ?? 2500) })
+    })
+    return
+  }
+
   if (p === '/api/state') {
     send(200, {
       now: Date.now(),
@@ -364,13 +383,14 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 })
 const clients = new Set()
+let wsDropUntil = 0 // /mock/ws-drop outage window: upgrades are refused until this ts
 function broadcast(frame) {
   const data = JSON.stringify(frame)
   for (const c of clients) if (c.readyState === 1) c.send(data)
 }
 server.on('upgrade', (req, socket, head) => {
   const { pathname } = new URL(req.url || '/', `http://${req.headers.host}`)
-  if (pathname !== '/api/events') {
+  if (pathname !== '/api/events' || Date.now() < wsDropUntil) {
     socket.destroy()
     return
   }

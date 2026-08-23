@@ -51,6 +51,14 @@ button {
   background: transparent;
 }
 
+/* Keyboard focus ring: one uniform ring across every interactive element.
+   :where() keeps specificity at 0 so specialized rules (rj-tab's inset
+   offset, board-card's) keep winning where they exist. */
+:where(button, a, input, textarea, select, summary, [tabindex]:not([tabindex='-1'])):focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
 /* ---------- AppFrame grid ---------- */
 
 .app-frame {
