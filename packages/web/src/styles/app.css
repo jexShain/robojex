@@ -1376,6 +1376,30 @@ body[data-ds-dark-theme] .chip.full {
   transition: transform var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 
+/* operator cancel: quiet until the card is hovered — a destructive affordance
+ * should be discoverable where the cursor already is, never ambient noise */
+.bc-cancel {
+  display: flex;
+  align-items: center;
+  padding: 2px 4px;
+  border-radius: 6px;
+  color: var(--dsw-alias-label-tertiary);
+  opacity: 0;
+  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    background var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.board-card:hover .bc-cancel,
+.board-card:focus-within .bc-cancel {
+  opacity: 1;
+}
+
+.bc-cancel:hover {
+  background: var(--dsw-alias-state-error-primary, #dc2626);
+  color: #fff;
+}
+
 .board-card.shut .bc-caret svg {
   transform: rotate(-90deg);
 }

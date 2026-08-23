@@ -63,6 +63,10 @@ const activeStreams = new Set()
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/* ── mutable task board (seedTasks hoists; POST/PUT /api/task mutate it
+ *  and broadcast, mirroring the core API the desktop UI talks to) ── */
+const tasks = seedTasks()
+
 /* ── server ── */
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host}`)
@@ -97,7 +101,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/state') {
     send(200, {
       now: Date.now(),
-      tasks: seedTasks(),
+      tasks,
       budget: { mode: 'burn', dailyTokens: 2_000_000, spentToday: 12345, line: 'burn · 12,345 tok' },
       mode: 'observe',
       mission: '# MISSION\nmock mission',
@@ -310,6 +314,36 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  if (p === '/api/task' && req.method === 'POST') {
+    void readBody().then((b) => {
+      const title = typeof b.title === 'string' ? b.title.trim() : ''
+      if (!title || title.length > 200) return send(400, { error: 'title must be a non-empty string of at most 200 bytes' })
+      tasks.push({
+        id: `t${tasks.length + 1}-${Date.now()}`, title, status: 'todo', resultSummary: '',
+        createdAt: Date.now(), parentId: typeof b.parentId === 'string' ? b.parentId : null,
+        scheduledAt: typeof b.scheduledAt === 'number' ? b.scheduledAt : null,
+        dueAt: typeof b.dueAt === 'number' ? b.dueAt : null,
+        priority: 0, assignee: '', attempts: 0, overdueNaggedAt: null, acceptance: '', progress: 0, verdict: 'unchecked',
+      })
+      broadcast({ t: 'tasks', tasks: JSON.parse(JSON.stringify(tasks)) })
+      send(202, { ok: true })
+    })
+    return
+  }
+  if (p === '/api/task' && req.method === 'PUT') {
+    void readBody().then((b) => {
+      const hit = tasks.find((t) => t.id === b.id)
+      if (!hit) return send(404, { error: 'no such task' })
+      if (hit.status === 'done') return send(409, { error: 'task is done — history is immutable' })
+      if (hit.status !== 'cancelled') {
+        hit.status = 'cancelled'
+        broadcast({ t: 'tasks', tasks: JSON.parse(JSON.stringify(tasks)) })
+      }
+      send(202, { ok: true, task: hit })
+    })
+    return
+  }
+
   if (p.startsWith('/api/')) return send(404, { error: 'not found' })
 
   // static web bundle (SPA fallback)
@@ -371,7 +405,7 @@ function seedTasks() {
 function stateSnapshot() {
   return {
     now: Date.now(),
-    tasks: seedTasks(),
+    tasks,
     budget: { mode: 'burn', dailyTokens: 2_000_000, spentToday: 12345, line: 'burn · 12,345 tok' },
     mode: 'observe',
     mission: '# MISSION\nmock mission',

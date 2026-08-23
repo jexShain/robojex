@@ -301,6 +301,7 @@ export const zh: Record<string, string> = {
   /* board view */
   'board.newPlaceholder': '＋ 新任务，回车创建',
   'board.create': '创建任务',
+  'board.cancelTask': '撤销这张卡（{t}）',
   'board.filter.all': '全部',
   'board.filter.running': '运行中',
   'board.filter.due-today': '今日到期',

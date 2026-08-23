@@ -352,3 +352,19 @@ test.describe('RoboJex desktop', () => {
     await expect(page.locator('[data-icon-fallback]')).toHaveCount(0)
     await shot(page, '24-widget')
   })
+
+  // 25 (operator cancel): the board card's hover trash button PUTs
+  // /api/task {status:"cancelled"}; the tasks broadcast updates the store
+  // and the board filter drops the cancelled card from the canvas.
+  test('25 board: hover-cancel retires a card', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    const card = page.locator('.board-card', { hasText: '示例任务二' })
+    await expect(card).toBeVisible({ timeout: 5_000 })
+    await card.hover()
+    await card.locator('.bc-cancel').click()
+    // cancelled cards are filtered out of the board entirely
+    await expect(page.locator('.board-card', { hasText: '示例任务二' })).toHaveCount(0, { timeout: 5_000 })
+    await shot(page, '25-board-cancel')
+  })

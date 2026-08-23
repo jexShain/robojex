@@ -123,19 +123,31 @@ function matches(t: Task, f: BoardFilter, today0: number): boolean {
 }
 
 /** Keep the nodes a filter matches plus their ancestor chain, so the tree
- * stays connected instead of floating orphans. */
+ * stays connected instead of floating orphans. Two distinct retire paths:
+ * cancelled cards vanish entirely and their children resurface one level up
+ * (archived is history, never a connector), while merely filter-mismatched
+ * nodes stay as connectors when a descendant matches. 'all' also runs the
+ * prune — an early `filter === 'all'` return used to skip it, so archived
+ * cards cluttered the default view. */
 export function filterForest(
   forest: BoardNode[],
   filter: BoardFilter,
   today0: number = dayStartOf(Date.now()),
 ): BoardNode[] {
-  if (filter === 'all') return forest
-  const prune = (n: BoardNode): BoardNode | null => {
-    const kids = n.children.map(prune).filter((c): c is BoardNode => c !== null)
+  const prune = (n: BoardNode): BoardNode[] | null => {
+    const kids = n.children.map(prune).filter((c): c is BoardNode[] => c !== null).flat()
+    if (n.task.status === 'cancelled') return kids.length > 0 ? kids : null
     if (!matches(n.task, filter, today0) && kids.length === 0) return null
-    return { ...n, children: kids }
+    return [{ ...n, children: kids }]
   }
-  return forest.map(prune).filter((n): n is BoardNode => n !== null)
+  const out = forest.map(prune).filter((n): n is BoardNode[] => n !== null).flat()
+  // promotion may have shifted levels — restamp depth for the layout pass
+  const redepth = (n: BoardNode, d: number): BoardNode => {
+    n.depth = d
+    n.children = n.children.map((c) => redepth(c, d + 1))
+    return n
+  }
+  return out.map((r) => redepth(r, 0))
 }
 
 /** Tidy-tree placement of the visible (non-collapsed) forest. `cursorY`

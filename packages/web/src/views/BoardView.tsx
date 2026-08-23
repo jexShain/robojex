@@ -81,6 +81,7 @@ function BoardCard({
   active,
   onSelect,
   onToggle,
+  onRemove,
 }: {
   placed: PlacedNode
   collapsed: boolean
@@ -88,6 +89,7 @@ function BoardCard({
   active: boolean
   onSelect(): void
   onToggle(): void
+  onRemove(): void
 }) {
   const { t } = useT()
   const { task, children, subtreeBlocked, subtreeRunning, allChildrenDone } = placed.node
@@ -126,6 +128,20 @@ function BoardCard({
       {typeof task.progress === 'number' || task.verdict ? <ProgressRing task={task} /> : null}
       <div className="bc-meta">
         <Badges task={task} now={now} />
+        {task.status !== 'done' && task.status !== 'cancelled' ? (
+          <button
+            type="button"
+            className="bc-cancel"
+            title={t('board.cancelTask')}
+            aria-label={fill(t('board.cancelTask'), { t: task.title })}
+            onClick={(e) => {
+              e.stopPropagation()
+              onRemove()
+            }}
+          >
+            <Icon name="trash" size={11} />
+          </button>
+        ) : null}
         {hasKids ? (
           <button
             type="button"
@@ -184,6 +200,24 @@ export function BoardView() {
       setCreateErr(err instanceof Error ? err.message : String(err))
     } finally {
       setCreating(false)
+    }
+  }
+
+  // Operator cancel (PUT /api/task): the tasks broadcast updates the store,
+  // and the board filter drops cancelled cards — no local patching needed.
+  const removeTask = async (id: string): Promise<void> => {
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id, status: 'cancelled' }),
+      })
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(d.error || `HTTP ${res.status}`)
+      }
+    } catch (err) {
+      setCreateErr(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -333,6 +367,7 @@ export function BoardView() {
                 active={p.node.task.id === state.selectedTaskId}
                 onSelect={() => selectTask(p.node.task.id)}
                 onToggle={() => toggle(p.node.task.id)}
+                onRemove={() => void removeTask(p.node.task.id)}
               />
             ))}
             {ghosts.map((g) => (

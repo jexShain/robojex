@@ -162,6 +162,29 @@ describe('filterForest', () => {
     const out = filterForest(forest, 'due-today', today0)
     expect(out.map((r) => r.task.id)).toEqual(['in'])
   })
+
+  test('all drops cancelled cards (archived never clutters the default view)', () => {
+    // regression: an early `filter === 'all'` return skipped matches(), so
+    // cancelled cards stayed on the board in the default filter
+    const forest = buildForest([
+      T({ id: 'live', status: 'running' }),
+      T({ id: 'dead', status: 'cancelled' }),
+      T({ id: 'done', status: 'done' }),
+    ])
+    const out = filterForest(forest, 'all')
+    expect(out.map((r) => r.task.id)).toEqual(['live', 'done'])
+  })
+
+  test('a cancelled parent survives nothing: its live children resurface', () => {
+    // prune keeps ancestors of matches, never cancelled nodes themselves —
+    // a cancelled parent with a live child drops the parent, keeps the child
+    const forest = buildForest([
+      T({ id: 'cp', status: 'cancelled' }),
+      T({ id: 'kid', parentId: 'cp', status: 'todo' }),
+    ])
+    const out = filterForest(forest, 'all')
+    expect(out.map((r) => r.task.id)).toEqual(['kid'])
+  })
 })
 
 describe('edgePath', () => {
