@@ -183,6 +183,24 @@ export function CommandPalette({
       onClose()
       return
     }
+    // focus trap: Tab must not escape the dialog into the page behind it.
+    // The input and item buttons are the cycle; wrap at both ends.
+    if (e.key === 'Tab') {
+      const focusables = Array.from(
+        listRef.current?.querySelectorAll<HTMLButtonElement>('.cmdk-item') ?? [],
+      )
+      const first: HTMLElement | null = inputRef.current
+      const last: HTMLElement | null = focusables.length > 0 ? focusables[focusables.length - 1] : first
+      const cur = document.activeElement
+      if (!e.shiftKey && cur === last) {
+        e.preventDefault()
+        first?.focus()
+      } else if (e.shiftKey && cur === first) {
+        e.preventDefault()
+        last?.focus()
+      }
+      return
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       setActive((i) => (visible.length === 0 ? 0 : (i + 1) % visible.length))

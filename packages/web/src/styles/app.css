@@ -2331,6 +2331,15 @@ body[data-ds-dark-theme] .chip.full {
   animation: rj-glow-red var(--rj-duration-slow, 2s) ease-in-out infinite alternate;
 }
 
+/* the T4 glows are the one animation family the earlier reduce blocks
+   predate — infinite pulses stand down, static shadows stay */
+@media (prefers-reduced-motion: reduce) {
+  .agenda-block.overdue,
+  .agenda-block.upcoming {
+    animation: none;
+  }
+}
+
 @keyframes rj-glow-red {
   from { box-shadow: 0 0 6px 1px rgba(239, 68, 68, 0.4); }
   to   { box-shadow: 0 0 14px 4px rgba(239, 68, 68, 0.6); }

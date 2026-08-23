@@ -148,3 +148,21 @@
 .rj-stagger-4 { animation-delay: 200ms; }
 .rj-stagger-5 { animation-delay: 250ms; }
 .rj-stagger-6 { animation-delay: 300ms; }
+
+/* Reduced motion: entrance/infinite effects stand down (the rj-animate-*
+ * utilities are also covered from app.css; this file owns stagger + the
+ * infinite shimmer/pulse/float/spin family). */
+@media (prefers-reduced-motion: reduce) {
+  .rj-animate-in,
+  .rj-animate-in-fast,
+  .rj-animate-slide-up,
+  .rj-animate-scale,
+  .rj-skeleton,
+  .rj-pulse-dot,
+  .rj-celebrate,
+  .rj-spinner,
+  .rj-float,
+  [class*="rj-stagger"] {
+    animation: none;
+  }
+}

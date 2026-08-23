@@ -825,3 +825,26 @@ test.describe('RoboJex desktop', () => {
     expect(after.tasks.find((tk) => tk.title === '改名探针新名')).toBeTruthy()
     await shot(page, '42-rename')
   })
+
+  // 43 (a11y): the palette traps Tab inside the dialog; reduced-motion
+  // stands the decorative animations down.
+  test('43 a11y: palette focus trap + reduced-motion', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.keyboard.press('Control+k')
+    await expect(page.getByTestId('cmdk-input')).toBeVisible({ timeout: 3_000 })
+    const inPanel = () =>
+      page.evaluate(() => !!document.activeElement?.closest('.cmdk-panel'))
+    for (let i = 0; i < 12; i++) await page.keyboard.press('Tab')
+    expect(await inPanel()).toBe(true)
+    await page.keyboard.press('Shift+Tab')
+    expect(await inPanel()).toBe(true)
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('cmdk')).toHaveCount(0)
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    await expect(page.locator('.board-card').first()).toBeVisible({ timeout: 5_000 })
+    const anim = await page.evaluate(() => getComputedStyle(document.querySelector('.board-card')).animationName)
+    expect(anim).toBe('none')
+  })
