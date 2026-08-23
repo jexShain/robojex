@@ -1105,3 +1105,31 @@ test("R75: a reflect identical to the latest MEMORY entry is refused (no duplica
     loop.stop();
   } finally { err.mockRestore(); }
 });
+
+test("R81 reschedule action moves a card's clock, re-arms the pump, and survives bad input", async () => {
+  const runtimeDir = makeRuntime();
+  const chats: string[] = [];
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return { content: JSON.stringify({ actions: [
+      { type: "reschedule", task_id: "喝水", scheduledAt: "2026-08-24T10:00:00", dueAt: "2026-08-24T20:00:00" },
+      { type: "reschedule", task_id: "no-such-card", scheduledAt: "2026-08-24T10:00:00" }, // invalid: unknown card
+      { type: "reschedule", task_id: "喝水" }, // invalid: no timestamps
+    ] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  loop.setOutlet({ chatOut: (_f, text) => chats.push(text), frame: () => {}, hud: () => {} } as never);
+  const board = (loop as unknown as { d: { board: TaskBoard } }).d.board;
+  const t = board.add({ title: "提醒我喝水", assignee: "hermes", scheduledAt: Date.now() + 86_400_000, acceptance: "done" });
+  await loop.runOnce("chat: 把提醒喝水改到明天上午10点");
+  const card = board.list().find((x) => x.id === t.id)!;
+  expect(card.scheduledAt).toBe(Date.parse("2026-08-24T10:00:00")); // moved exactly as parsed
+  expect(card.dueAt).toBe(Date.parse("2026-08-24T20:00:00"));       // due moved too
+  expect(chats.some((c) => c.includes("已改期") && c.includes("提醒我喝水"))).toBe(true);
+  // the two invalid actions logged failures but the cycle lived
+  loop.stop();
+});
