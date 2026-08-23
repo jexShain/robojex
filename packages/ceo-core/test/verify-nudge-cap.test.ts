@@ -38,13 +38,23 @@ const MIN = 60_000;
 describe("R73 verify_due nag cap", () => {
   it("an unchanged card gets 3 nudges then goes quiet until it changes", () => {
     const rig = makeRig();
+    const chats: Array<[string, string]> = [];
+    rig.loop.setOutlet({ chatOut: (from: string, text: string) => { chats.push([from, text]); } } as never);
     const t = rig.board.add({ title: "悬置卡", assignee: "hermes", acceptance: "产物核对" });
     rig.board.update(t.id, { status: "blocked", resultSummary: "done [awaiting acceptance: verify]", attempts: 1 });
     const verifyDue = (): number => rig.events.filter((e) => e.startsWith("verify_due:") && e.includes("悬置卡")).length;
     rig.loop.pumpGantt(Date.now()); expect(verifyDue()).toBe(1);
+    expect(chats.length).toBe(0); // nudges 1-2 stay model-facing, no human spam
     rig.loop.pumpGantt(Date.now() + 6 * MIN); expect(verifyDue()).toBe(2);
+    expect(chats.length).toBe(0);
     rig.loop.pumpGantt(Date.now() + 12 * MIN); expect(verifyDue()).toBe(3);
+    // R77: the cap never parks silently — the third nudge tells the human
+    expect(chats.length).toBe(1);
+    expect(chats[0]![0]).toBe("jex");
+    expect(chats[0]![1]).toContain("验收悬置");
+    expect(chats[0]![1]).toContain("悬置卡");
     rig.loop.pumpGantt(Date.now() + 18 * MIN); expect(verifyDue()).toBe(3); // capped
+    expect(chats.length).toBe(1); // ...and says it exactly once per episode
     rig.loop.pumpGantt(Date.now() + 24 * MIN); expect(verifyDue()).toBe(3); // still capped
     // the card moves (attempts bumped): the episode resets and nudge resumes
     rig.board.update(t.id, { status: "blocked", resultSummary: "retry [awaiting acceptance: verify]", attempts: 0 });

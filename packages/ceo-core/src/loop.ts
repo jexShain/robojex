@@ -370,7 +370,13 @@ export class SchedulerLoop {
       ns.n++;
       this.verifyNudgeState.set(t.id, ns);
       this.verifyNudgedAt.set(t.id, now);
-      this.push(`verify_due: ${t.id.slice(0, 8)} ${t.title} accept: ${t.acceptance.slice(0, 120)}${awaiting ? " [awaiting acceptance since the agent finished — judge it now]" : ""}`);
+      // R77: the cap must not park silently — the third nudge tells the human
+      // in plain words (code-side, no model in the loop) that acceptance is
+      // stalled and hands over one concrete way to unblock it
+      if (ns.n === 3) {
+        this.d.outlet?.chatOut("jex", `验收悬置：「${t.title}」已完成待验，但我连续 3 轮没能完成裁决，卡片先停等你确认。可直接说「验收 ${t.title.slice(0, 12)} 通过/不通过」，或让我重试。`);
+      }
+      this.push(`verify_due: ${t.id.slice(0, 8)} ${t.title} accept: ${t.acceptance.slice(0, 120)}${awaiting ? " [awaiting acceptance since the agent finished — judge it now: FIRST run the check as a tool_call (terminal/read_file/du…), THEN emit the verify action in the SAME cycle with the evidence note]" : ""}`);
       this.d.outlet?.hud?.("verify_due", t.id);
     }
     // task_due chase pump (SPEC-BUTLER §6): every tick the board is scanned
