@@ -98,6 +98,7 @@ export function groupForGantt(tasks: Task[], win: GanttWindow): GanttGroup {
   const unscheduled: Task[] = []
   const laneMap = new Map<Lane, Task[]>(LANES.map((l) => [l, []]))
   for (const t of tasks) {
+    if (t.status === 'cancelled') continue // retired cards never gantt
     laneMap.get(laneOf(t.status))!.push(t)
     const bar = barGeom(t, win)
     if (bar) scheduled.push({ task: t, bar })

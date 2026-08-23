@@ -113,6 +113,9 @@ export function buildForest(tasks: Task[]): BoardNode[] {
 }
 
 function matches(t: Task, f: BoardFilter, today0: number): boolean {
+  // archived cards are retired — they stay in the DB and the chat log, but
+  // never clutter the live board
+  if (t.status === 'cancelled') return false
   if (f === 'all') return true
   if (f === 'running') return t.status === 'running'
   // due-today: dueAt inside today's local day.

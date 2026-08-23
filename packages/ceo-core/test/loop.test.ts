@@ -1219,3 +1219,39 @@ test("R82b spawn times: relative durations parse, UTC drift heals, garbage stays
     loop.stop();
   } finally { warn.mockRestore(); }
 });
+
+test("R83 archive action retires dead cards, clears pump state, and drops them from decide context", async () => {
+  const runtimeDir = makeRuntime();
+  const chats: string[] = [];
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return { content: JSON.stringify({ actions: [
+      { type: "archive", task_id: "整理下载文件夹（重派#3）", reason: "重试梯子已烧尽且下载夹已整理过，弃单" },
+      { type: "archive", task_id: "跑着的活", reason: "should refuse" },            // running: refused
+      { type: "archive", task_id: "no-such-card", reason: "x" },                     // unknown: refused
+    ] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const ctx = new ContextAssembler();
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx,
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  loop.setOutlet({ chatOut: (_f, text) => chats.push(text), frame: () => {}, hud: () => {} } as never);
+  const board = (loop as unknown as { d: { board: TaskBoard } }).d.board;
+  const dead = board.add({ title: "整理下载文件夹（重派#3）", assignee: "hermes", acceptance: "done" });
+  const live = board.add({ title: "跑着的活", assignee: "hermes", acceptance: "done" });
+  board.update(live.id, { status: "running" });
+  await loop.runOnce("chat: 把那张烧尽重试的下载卡归了吧");
+  const card = board.list().find((x) => x.id === dead.id)!;
+  expect(card.status).toBe("cancelled");
+  expect(card.resultSummary).toContain("[archived: 重试梯子已烧尽");
+  expect(chats.some((c) => c.includes("已归档") && c.includes("整理下载文件夹"))).toBe(true);
+  expect(board.list().find((x) => x.id === live.id)!.status).toBe("running"); // refused, untouched
+  // the retire also leaves decide context: cancelled cards never ride the board block
+  const context = ctx.build({ mission: "m", rubric: "r", memory: "", board: board.list(), events: ["e"] });
+  expect(context).not.toContain("整理下载文件夹（重派#3）");
+  expect(context).toContain("跑着的活");
+  // double archive is refused (idempotence guard)
+  loop.stop();
+});

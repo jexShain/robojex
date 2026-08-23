@@ -93,7 +93,9 @@ export class ContextAssembler {
       lines.push(`${lead}[${n.id.slice(0, 8)}] p${n.priority} ${n.status} (${n.assignee || "unassigned"}) ${n.title}${sched}${due}${vf} :: ${n.resultSummary || "no result yet"}`);
       for (const c of n.children) walk(c, depth + 1);
     };
-    for (const root of nestTasks(board)) walk(root, 0);
+    // R83: cancelled cards are dead weight — the whole point of archiving is
+    // that decide stops paying context for them every cycle
+    for (const root of nestTasks(board.filter((t) => t.status !== "cancelled"))) walk(root, 0);
     // board lines render priority DESC then insertion order, so the head
     // carries the highest-priority rows and the tail the newest — both ends
     // survive, only the cold middle folds

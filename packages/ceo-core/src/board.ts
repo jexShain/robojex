@@ -2,7 +2,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 
-export interface Task { id: string; title: string; status: "todo" | "running" | "done" | "blocked"; priority: number; assignee: string; attempts: number; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null; overdueNaggedAt: number | null; acceptance: string; progress: number; verdict: "unchecked" | "pass" | "partial" | "fail"; }
+export interface Task { id: string; title: string; status: "todo" | "running" | "done" | "blocked" | "cancelled"; priority: number; assignee: string; attempts: number; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null; overdueNaggedAt: number | null; acceptance: string; progress: number; verdict: "unchecked" | "pass" | "partial" | "fail"; }
 
 // Task plus its nested children: the shape of the board tree view.
 export interface TaskNode extends Task { children: TaskNode[]; }

@@ -9,7 +9,7 @@ import type { ToolEntry, ToolCtx } from "./registry.js";
 import type { Task } from "../board.js";
 
 const COLUMN_STATUS: Record<string, Task["status"]> = { todo: "todo", doing: "running", done: "done", blocked: "blocked" };
-const STATUS_COLUMN: Record<Task["status"], string> = { todo: "todo", running: "doing", done: "done", blocked: "blocked" };
+const STATUS_COLUMN: Record<Task["status"], string> = { todo: "todo", running: "doing", done: "done", blocked: "blocked", cancelled: "blocked" };
 
 // task_id accepted under hermes' alias too (todo uses task_id, kanban card_id)
 function findCard(ctx: ToolCtx, raw: unknown): Task | undefined {
