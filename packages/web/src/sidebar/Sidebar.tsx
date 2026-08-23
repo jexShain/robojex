@@ -397,6 +397,8 @@ export function Sidebar(props: {
         <div
           className="sb-status"
           data-testid="conn-status"
+          role="status"
+          aria-live="polite"
           title={`jex · ${gearName} · ${connLabel(state.conn)}${state.version ? ` · v${state.version}` : ''}`}
         >
           <span className="sb-status-dot" />

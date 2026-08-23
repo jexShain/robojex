@@ -303,7 +303,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
         )}
         <span className="agenda-zoom-badge">{zoom}h</span>
         {pending.size > 0 ? (
-          <span className="agenda-staged" title={t('ag.stagedTitle')}>
+          <span className="agenda-staged" role="status" title={t('ag.stagedTitle')}>
             {fill(t('ag.staged'), { n: pending.size })}
           </span>
         ) : null}

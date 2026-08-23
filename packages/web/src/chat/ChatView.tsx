@@ -550,7 +550,7 @@ export function ChatView() {
 
   return (
     <div className="cv">
-      <div className="cv-scroll" ref={scrollRef} onScroll={onScroll}>
+      <div className="cv-scroll" ref={scrollRef} onScroll={onScroll} role="log" aria-live="polite">
         {messages.length === 0 ? (
           <EmptyState onPick={(t) => void sendMessage(t)} />
         ) : (

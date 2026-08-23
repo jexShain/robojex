@@ -63,6 +63,8 @@ test.describe('RoboJex desktop', () => {
     // final content contains markdown artifacts
     await expect(page.locator('[data-testid="msg-row"][data-role="assistant"] code').first()).toBeVisible({ timeout: 20_000 })
     await expect(page.locator('[data-testid="msg-row"][data-role="assistant"] table').first()).toBeVisible()
+    // the stream is a polite log for screen readers (a11y live region)
+    await expect(page.locator('.cv-scroll')).toHaveAttribute('role', 'log')
     await shot(page, '03-stream-done')
   })
 
@@ -418,6 +420,8 @@ test.describe('RoboJex desktop', () => {
     await page.evaluate(async () => {
       await fetch('/mock/ws-drop', { method: 'POST' }).catch(() => {})
     })
+    // the badge is a polite status region — the drop is announced, not silent
+    await expect(page.getByTestId('conn-status')).toHaveAttribute('role', 'status')
     await expect(page.getByTestId('conn-status')).toContainText(/重连|Reconnect/i, { timeout: 5_000 })
     await expect(page.getByTestId('conn-status')).toContainText(/已连接|live/, { timeout: 15_000 })
     // the rebuilt store still carries board data (hello replay worked)
