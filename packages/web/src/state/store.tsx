@@ -38,6 +38,7 @@ import type {
   GearDef,
   GearId,
   HudNotice,
+  JobInfo,
   Message,
   Mode,
   ServerFrame,
@@ -63,6 +64,8 @@ export interface WebState {
   waiting: boolean
   clockOffset: number
   lastHud: HudNotice | null
+  /** background shell jobs (R84): pushed as deduped WS frames */
+  jobs: JobInfo[]
 
   /* autonomy gears */
   gear: GearId
@@ -159,6 +162,7 @@ export const initialState: WebState = {
   waiting: false,
   clockOffset: 0,
   lastHud: null,
+  jobs: [],
   gear: 'balanced',
   gears: [],
   gearAppliedTickMs: 60_000,
@@ -609,6 +613,8 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
         transcript: toasts.length > 0 ? [...state.transcript, ...toasts] : state.transcript,
       }
     }
+    case 'jobs':
+      return { ...state, jobs: frame.jobs }
     case 'cycle':
       return {
         ...state,

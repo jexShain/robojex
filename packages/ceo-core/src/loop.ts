@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ChatMsg, LLMClient } from "./llm.js";
 import { overlapTokens, overlapScore } from "./token-match.js";
+import { jobSnapshot } from "./tools/jobs.js";
 import type { TaskBoard, Task } from "./board.js";
 import { lookingSchemas } from "./chat-service.js";
 import type { ContextAssembler } from "./context.js";
@@ -89,6 +90,15 @@ function relTime(ts: number, now = Date.now()): string {
     : [86_400_000, "天"] as const;
   return `${Math.max(1, Math.round(abs / unitMs))}${unit}${diff >= 0 ? "后" : "前"}`;
 }
+
+// Every action type the dispatch chain understands (R84b sugar gate): a
+// bare type outside this set that matches a builtin tool name routes onto
+// tool_call; anything else fails loudly instead of dropping silently.
+const KNOWN_ACTION_TYPES = new Set([
+  "spawn", "reply", "message", "mission_update", "steer", "reschedule", "archive",
+  "takeover", "cdp", "plan", "toolscout", "tentacle_call", "tool_call", "verify",
+  "reflect", "tentacle_register",
+]);
 
 export class SchedulerLoop {
   private queue: string[] = [];
@@ -597,9 +607,20 @@ export class SchedulerLoop {
         if (this.recentCycles.length > 5) this.recentCycles.splice(0, this.recentCycles.length - 5);
       }
 
-      for (const a of parsed.actions ?? []) {
+      const toolNames = new Set(this.d.builtinTools?.names() ?? []);
+      for (let a of parsed.actions ?? []) {
         let taskId: string | null = null;
         try {
+          // R84b: live soak caught the model shortcutting the tool_call
+          // wrapper ({"type":"job_start","command":...} instead of
+          // {"type":"tool_call","tool":"job_start"}). A bare builtin tool
+          // name as the action type routes onto tool_call with the rest of
+          // the object as args — friendly sugar, same gate, same event flow.
+          if (a && typeof a === "object" && typeof a.type === "string"
+            && !KNOWN_ACTION_TYPES.has(a.type) && toolNames.has(a.type)) {
+            const { type, ...rest } = a as Record<string, unknown>;
+            a = { type: "tool_call", tool: type, args: rest };
+          }
           if (a?.type === "spawn") {
             const promptOk = typeof a.prompt === "string" && a.prompt.length > 0;
             const registryNames = this.d.orchestrator.getRegistry()?.names() ?? [];
@@ -900,6 +921,11 @@ export class SchedulerLoop {
             });
           } else if (a.type === "verify") {
             this.applyVerify(a);
+          } else {
+            // R84b: unknown action types were silently dropped — the model
+            // never learned the shape was wrong. A loud failure event teaches
+            // the next cycle (and the sugar above already rescued tool names).
+            throw new Error(`unknown action type ${JSON.stringify(a?.type)} — builtin tools go through {"type":"tool_call","tool":"<name>","args":{...}}`);
           }
         } catch (e) {
           // one bad action must not kill the rest of the wake: block its task (if any) and move on
@@ -926,7 +952,20 @@ export class SchedulerLoop {
       // full snapshot (not just the line) so clients' progress bars advance
       // live; the line stays for one-line CLI summaries
       this.d.outlet?.frame({ t: "budget", line: this.d.budget.line(), budget: this.d.budget.snapshot() });
+      // R84: background jobs ride the same pipe — deduped, so the strip only
+      // flickers when a job actually starts, ends or dies
+      this.emitJobs();
     }
+  }
+
+  /** R84 jobs observability: push the registry snapshot when it changed. */
+  private lastJobsJson = "";
+  private emitJobs(): void {
+    const jobs = jobSnapshot();
+    const j = JSON.stringify(jobs);
+    if (j === this.lastJobsJson) return;
+    this.lastJobsJson = j;
+    this.d.outlet?.frame({ t: "jobs", jobs });
   }
 
   /** R20 queue drain: promote the oldest queued spawn once a slot is free.

@@ -14,7 +14,7 @@ import * as api from '../state/api'
 import { useStore } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
-import type { Task, TranscriptItem } from '../state/types'
+import type { JobInfo, Task, TranscriptItem } from '../state/types'
 import { gearsOrFallback, localizeGears } from './gearDefs'
 import {
   type GanttGroup,
@@ -489,6 +489,46 @@ function ThinkLog() {
 
 /* ── the view ── */
 
+/* ── background jobs strip (R84) ── */
+
+function fmtDur(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m${s % 60 ? ` ${s % 60}s` : ''}`
+  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`
+}
+
+function JobsStripVisible(jobs: JobInfo[]): boolean {
+  return jobs.length > 0
+}
+
+function JobsStrip() {
+  const { state } = useStore()
+  const { t } = useT()
+  const now = Date.now() + state.clockOffset
+  const running = state.jobs.filter((j) => j.state === 'running').length
+  return (
+    <div className="cc-jobs" data-testid="cc-jobs">
+      <span className="cc-jobs-label">{fill(t('cc.jobs.title'), { n: running })}</span>
+      <div className="cc-jobs-rows">
+        {state.jobs.slice(0, 6).map((j) => (
+          <span key={j.id} className={`cc-job st-${j.state}`} title={j.command}>
+            <b>{j.id}</b>
+            <span className="cc-job-cmd">{j.command.slice(0, 42)}</span>
+            <span className="cc-job-state">
+              {j.state === 'running'
+                ? fill(t('cc.jobs.running'), { d: fmtDur(now - j.startedAt) })
+                : j.state === 'killed'
+                  ? t('cc.jobs.killed')
+                  : fill(t('cc.jobs.done'), { c: String(j.exitCode ?? '?') })}
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function CommandCenter() {
   const { state, selectTask } = useStore()
   const { t } = useT()
@@ -596,6 +636,8 @@ export function CommandCenter() {
           </div>
         </div>
       ) : null}
+
+      {JobsStripVisible(state.jobs) ? <JobsStrip /> : null}
 
       <div className="cc-body">
         <section className="cc-left" data-testid="gantt-board">

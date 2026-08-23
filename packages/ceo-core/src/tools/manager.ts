@@ -125,6 +125,12 @@ export class ToolManager {
     return lines.length ? `# BUILTIN TOOLS\ninvoke via {"type":"tool_call","tool":"<name>","args":{...}}\n${lines.join("\n")}` : "";
   }
 
+  /** Available tool names (R84b: the action loop routes bare tool-name actions
+   *  — {"type":"job_start",...} — onto tool_call using this list). */
+  names(): string[] {
+    return this.opts.registry.entries().filter((e) => this.available(e)).map((e) => e.schema.name);
+  }
+
   // Normalize path for sensitive-path detection
   private normalizePath(p: string): string {
     const withHome = p.replace(/^~(?=\/|\\)/, homedir());

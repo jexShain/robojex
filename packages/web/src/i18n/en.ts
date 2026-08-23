@@ -248,6 +248,10 @@ export const en: Record<string, string> = {
   'cc.stats.title': 'Agent record',
   'cc.stats.row': '{n} runs · {p}% pass ({a}✓ {b}◐ {c}✗)',
   'cc.stats.recent': 'Recent: {titles}',
+  'cc.jobs.title': 'Background jobs ({n} live)',
+  'cc.jobs.running': 'running {d}',
+  'cc.jobs.killed': 'killed',
+  'cc.jobs.done': 'exit {c}',
 
   /* cockpit (GearPanel) */
   'cp.dialAria': 'Current gear {n}/4',

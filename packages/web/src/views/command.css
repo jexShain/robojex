@@ -152,6 +152,60 @@
  * — same trio the verdict glyphs use */
 .cc-stats-row.tone-good .cc-stats-rate { color: var(--dsw-alias-state-success-primary); }
 .cc-stats-row.tone-mid .cc-stats-rate { color: var(--dsw-alias-state-warn-primary); }
+
+/* ── background-jobs strip (R84): what the butler runs behind the board ── */
+
+.cc-jobs {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 4px var(--rj-space-3);
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rj-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.cc-jobs-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.cc-jobs-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 16px;
+}
+
+.cc-job {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  font-family: var(--rj-font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.cc-job b {
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.cc-job-cmd {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cc-job.st-running .cc-job-state { color: var(--dsw-alias-state-success-primary); }
+.cc-job.st-killed .cc-job-state { color: var(--dsw-alias-state-warn-primary); }
+.cc-job.st-done .cc-job-state { color: var(--dsw-alias-label-tertiary); }
 .cc-stats-row.tone-bad .cc-stats-rate { color: var(--dsw-alias-state-error-primary); }
 
 /* ── body split ── */

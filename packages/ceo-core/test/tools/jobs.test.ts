@@ -5,6 +5,7 @@
 // declaration order (vitest runs `it` top-to-bottom within a file).
 import { describe, it, expect, afterAll } from "vitest";
 import { jobsTools } from "../../src/tools/jobs.js";
+import { jobSnapshot } from "../../src/tools/jobs.js";
 import type { ToolCtx } from "../../src/tools/registry.js";
 
 const ctx: ToolCtx = {
@@ -83,6 +84,27 @@ describe("jobs", () => {
     await expect(call("job_start", { command: "echo hi", timeout: 99999 })).resolves.toMatch(/3600/);
     await expect(call("job_output", { id: "deadbeef" })).resolves.toMatch(/no job 'deadbeef'/);
     await expect(call("job_kill", { id: "deadbeef" })).resolves.toMatch(/no job 'deadbeef'/);
+  });
+
+  it("R84 snapshot: structured jobs for /api/jobs — running first, capped finished tail", async () => {
+    const snap = jobSnapshot();
+    // whatever the shared registry holds, the shape must hold: unique ids,
+    // known states, and every running job sorted before the finished ones
+    const ids = new Set(snap.map((j) => j.id));
+    expect(ids.size).toBe(snap.length);
+    for (const j of snap) expect(["running", "done", "killed"]).toContain(j.state);
+    const firstFinished = snap.findIndex((j) => j.state !== "running");
+    if (firstFinished >= 0) {
+      for (const j of snap.slice(firstFinished)) expect(j.state).not.toBe("running");
+    }
+    // startedAt always set; endedAt only once finished
+    for (const j of snap) {
+      expect(j.startedAt).toBeGreaterThan(0);
+      if (j.state === "running") expect(j.endedAt).toBeNull();
+      else expect(j.endedAt).not.toBeNull();
+    }
+    // cap: the finished tail never exceeds 6 rows
+    expect(snap.filter((j) => j.state !== "running").length).toBeLessThanOrEqual(6);
   });
 
   afterAll(async () => {

@@ -198,6 +198,20 @@ export type ServerFrame =
   | { t: 'mode'; mode: Mode }
   | { t: 'budget'; line: string; budget?: Budget }
   | { t: 'gear'; gear: GearId }
+  | { t: 'jobs'; jobs: JobInfo[] }
+
+/** One background shell job (job_start …): the CommandCenter strip shows what
+ *  the butler is running behind the board. state mirrors the core registry;
+ *  finished jobs ride along until the core's retention sweep drops them. */
+export interface JobInfo {
+  id: string
+  command: string
+  state: 'running' | 'done' | 'killed'
+  exitCode: number | null
+  timedOut: boolean
+  startedAt: number
+  endedAt: number | null
+}
 
 /** Unified agent-transcript entry (legacy ring + synthesized), for the
  * Activity view and inline jex notices inside chat conversations. */

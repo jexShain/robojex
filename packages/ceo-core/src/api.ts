@@ -17,6 +17,7 @@ import type { GearController } from "./gears.js";
 import { isGearId, GEAR_IDS } from "./gears.js";
 import type { LLMClient } from "./llm.js";
 import { aggregateStats } from "./stats.js";
+import { jobSnapshot } from "./tools/jobs.js";
 
 export type ChatFrom = "user" | "jex" | "system";
 export interface ChatMessage { from: ChatFrom; ts: number; text: string; }
@@ -304,6 +305,7 @@ export class ApiServer implements LoopOutlet {
     if (path === "/api/mode" && req.method === "POST") { await this.postMode(req, res); return; }
     if (path === "/api/settings" && req.method === "GET") { this.getSettings(res); return; }
     if (path === "/api/settings" && req.method === "PUT") { await this.putSettings(req, res); return; }
+    if (path === "/api/jobs" && req.method === "GET") { json(res, 200, { jobs: jobSnapshot() }); return; }
     if (path.startsWith("/api/")) { json(res, 404, { error: "not found" }); return; }
     this.serveStatic(res, path);
   }

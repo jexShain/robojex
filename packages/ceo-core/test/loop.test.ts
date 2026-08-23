@@ -1255,3 +1255,36 @@ test("R83 archive action retires dead cards, clears pump state, and drops them f
   // double archive is refused (idempotence guard)
   loop.stop();
 });
+
+test("R84b bare builtin-tool actions route onto tool_call; unknown types fail loudly", async () => {
+  const runtimeDir = makeRuntime();
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const events: string[] = [];
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return { content: JSON.stringify({ actions: [
+      { type: "job_start", command: "sleep 1", timeout: 60 }, // bare tool name → tool_call sugar
+      { type: "frobnicate", x: 1 },                            // unknown → loud failure event
+    ] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  try {
+    const loop = new SchedulerLoop({
+      llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+      orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+      builtinTools: {
+        names: () => ["job_start", "job_list"],
+        schemasBlock: () => "",
+        call: async (name: string, args: Record<string, unknown>) => { calls.push({ name, args }); return "job abc123 started"; },
+      } as never,
+    });
+    const origPush = loop.push.bind(loop);
+    loop.push = (e: string) => { events.push(e); origPush(e); };
+    await loop.runOnce("chat: 后台跑个任务");
+    await new Promise((r) => setTimeout(r, 30)); // tool_call is fire-and-forget
+    expect(calls).toEqual([{ name: "job_start", args: { command: "sleep 1", timeout: 60 } }]);
+    expect(events.some((e) => e.includes("unknown action type") && e.includes("frobnicate"))).toBe(true);
+    loop.stop();
+  } finally { err.mockRestore(); }
+});

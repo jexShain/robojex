@@ -248,6 +248,10 @@ export const zh: Record<string, string> = {
   'cc.stats.title': '代理战绩',
   'cc.stats.row': '{n} 次 · 通过率 {p}%（{a}✓ {b}◐ {c}✗）',
   'cc.stats.recent': '近期：{titles}',
+  'cc.jobs.title': '后台任务 {n} 在跑',
+  'cc.jobs.running': '运行 {d}',
+  'cc.jobs.killed': '已终止',
+  'cc.jobs.done': '退出 {c}',
 
   /* cockpit (GearPanel) */
   'cp.dialAria': '当前挡位 {n}/4',

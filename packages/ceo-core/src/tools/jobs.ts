@@ -194,6 +194,20 @@ class JobRegistry {
     return [...running, ...rest].join("\n");
   }
 
+  /** R84 structured snapshot for /api/jobs — the UI strip shows what the
+   *  butler is running in the background (no tails: ids, state and clocks
+   *  only, so the payload stays a few hundred bytes). */
+  snapshot(): Array<{ id: string; command: string; state: JobState; exitCode: number | null; timedOut: boolean; startedAt: number; endedAt: number | null }> {
+    const one = (j: Job) => ({ id: j.id, command: j.command.slice(0, 80), state: j.state, exitCode: j.exitCode, timedOut: j.timedOut, startedAt: j.startedAt, endedAt: j.endedAt });
+    const running = this.live().sort((a, b) => a.startedAt - b.startedAt).map(one);
+    const rest = [...this.jobs.values()]
+      .filter((j) => j.state !== "running")
+      .sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt))
+      .slice(0, 6)
+      .map(one);
+    return [...running, ...rest];
+  }
+
   // retention sweep: finished jobs stay readable RETAIN_MS, then go. The
   // interval is unref'd and self-destructs once the registry empties, so it
   // never holds the process open.
@@ -213,6 +227,9 @@ class JobRegistry {
 // Process-level singleton: tool handlers are pure functions over args and
 // ToolManager instances come and go — the registry must outlive them all.
 const registry = new JobRegistry();
+
+/** The api layer's window into the singleton (R84 jobs observability). */
+export function jobSnapshot(): ReturnType<JobRegistry["snapshot"]> { return registry.snapshot(); }
 
 async function jobStart(args: Record<string, unknown>): Promise<string> {
   const command = args.command;
