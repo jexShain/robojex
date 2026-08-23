@@ -365,6 +365,8 @@ export const zh: Record<string, string> = {
   'detail.kDue': '截止',
   'detail.kAcceptance': '验收',
   'detail.kResult': '结果',
+  'detail.editSched': '开始时间（可编辑）',
+  'detail.editDue': '截止时间（可编辑）',
   'status.todo': '待办',
   'status.running': '进行中',
   'status.blocked': '受阻',

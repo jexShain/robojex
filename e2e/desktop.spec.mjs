@@ -558,3 +558,29 @@ test.describe('RoboJex desktop', () => {
     expect(sched).not.toBeNull()
     await shot(page, '31-rail-drop')
   })
+
+  // 32 (details time edit): the detail rail's quiet datetime fields are the
+  // precise/keyboard sibling of the drag gestures — set, blur, persisted;
+  // empty clears. (Also the a11y path for scheduling.)
+  test('32 details: editable time fields persist via PATCH', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.request.post('/api/task', { data: { title: '详情改期探针' } })
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    await page.locator('.board-card', { hasText: '详情改期探针' }).click()
+    await expect(page.locator('.detail-title')).toContainText('详情改期探针', { timeout: 5_000 })
+    const sched = page.locator('.kv-time').first() // scheduled field
+    await sched.fill('2026-08-25T14:30')
+    await sched.press('Enter') // Enter blurs → commit (Tab only cycles segments)
+    await page.waitForTimeout(600)
+    const s1 = await (await page.request.get('/api/state')).json()
+    const t1 = s1.tasks.find((tk) => tk.title === '详情改期探针')
+    expect(t1.scheduledAt).toBe(Date.parse('2026-08-25T14:30'))
+    await shot(page, '32-time-edit')
+    // clear → null
+    await sched.fill('')
+    await sched.press('Enter')
+    await page.waitForTimeout(600)
+    const s2 = await (await page.request.get('/api/state')).json()
+    expect(s2.tasks.find((tk) => tk.title === '详情改期探针').scheduledAt).toBeNull()
+  })

@@ -3,7 +3,7 @@
 // read-only MISSION/RUBRIC/MEMORY views with copy buttons, and the takeoverd
 // live screen preview. AppFrame controls column visibility (display none).
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore, statusTone } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
@@ -78,6 +78,37 @@ function FileView({ label, text }: { label: string; text: string }) {
   )
 }
 
+/** epoch ms → datetime-local value (local timezone, minute precision). */
+function toLocalInput(ms: number): string {
+  const d = new Date(ms)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/** Quiet inline datetime field: reads as text, edits as a native picker.
+ *  Saving is the keyboard/precision sibling of the agenda's drag gestures
+ *  (and their a11y alternative). Empty clears. */
+function TimeField({ ms, onPick, ariaLabel }: { ms: number | null; onPick(v: number | null): void; ariaLabel: string }) {
+  const [v, setV] = useState(ms != null ? toLocalInput(ms) : '')
+  useEffect(() => setV(ms != null ? toLocalInput(ms) : ''), [ms])
+  const commit = (): void => {
+    const next = v === '' ? null : new Date(v).getTime()
+    if (next === ms || (next !== null && Number.isNaN(next))) return
+    onPick(next)
+  }
+  return (
+    <input
+      type="datetime-local"
+      className="kv-time"
+      aria-label={ariaLabel}
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') { e.currentTarget.blur() } }}
+    />
+  )
+}
+
 function TaskDetail() {
   const { state } = useStore()
   const { t } = useT()
@@ -98,6 +129,17 @@ function TaskDetail() {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id: task.id, status: 'cancelled' }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return undefined })
+      .catch(() => setCancelErr(true))
+  }
+  // precise time edits ride the same PATCH as the drag gestures; null clears
+  const patchTime = (fields: { scheduledAt?: number | null; dueAt?: number | null }): void => {
+    setCancelErr(false)
+    void fetch('/api/task', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: task.id, ...fields }),
     })
       .then((r) => { if (!r.ok) throw new Error(String(r.status)); return undefined })
       .catch(() => setCancelErr(true))
@@ -146,13 +188,35 @@ function TaskDetail() {
         <span className="k">{t('detail.kCreated')}</span>
         <span className="v">{new Date(task.createdAt).toLocaleString()}</span>
       </div>
-      {task.scheduledAt != null ? (
+      {cancellable ? (
+        <div className="kv">
+          <span className="k">{t('detail.kScheduled')}</span>
+          <span className="v">
+            <TimeField
+              ms={task.scheduledAt ?? null}
+              ariaLabel={t('detail.editSched')}
+              onPick={(v) => patchTime({ scheduledAt: v })}
+            />
+          </span>
+        </div>
+      ) : task.scheduledAt != null ? (
         <div className="kv">
           <span className="k">{t('detail.kScheduled')}</span>
           <span className="v">{new Date(task.scheduledAt).toLocaleString()}</span>
         </div>
       ) : null}
-      {task.dueAt != null ? (
+      {cancellable ? (
+        <div className="kv">
+          <span className="k">{t('detail.kDue')}</span>
+          <span className="v">
+            <TimeField
+              ms={task.dueAt ?? null}
+              ariaLabel={t('detail.editDue')}
+              onPick={(v) => patchTime({ dueAt: v })}
+            />
+          </span>
+        </div>
+      ) : task.dueAt != null ? (
         <div className="kv">
           <span className="k">{t('detail.kDue')}</span>
           <span className="v">{new Date(task.dueAt).toLocaleString()}</span>

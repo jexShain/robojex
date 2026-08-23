@@ -365,6 +365,8 @@ export const en: Record<string, string> = {
   'detail.kDue': 'Due',
   'detail.kAcceptance': 'Acceptance',
   'detail.kResult': 'Result',
+  'detail.editSched': 'Start time (editable)',
+  'detail.editDue': 'Due time (editable)',
   'status.todo': 'To do',
   'status.running': 'Running',
   'status.blocked': 'Blocked',
