@@ -765,3 +765,18 @@ test.describe('RoboJex desktop', () => {
     await expect(page.locator('.board-card', { hasText: '逾期探针' }).locator('.bc-badge.due.over')).toBeVisible({ timeout: 5_000 })
     await shot(page, '39-due-urgency')
   })
+
+  // 40 (cmdk task search): a growing board's cards are findable from any
+  // view — Enter jumps to the board with the card's detail rail open.
+  test('40 cmdk: task search jumps to board + detail', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.request.post('/api/task', { data: { title: ' needle 海底捞针探针' } })
+    await page.keyboard.press('Control+k')
+    await page.getByTestId('cmdk-input').fill('海底捞针')
+    await expect(page.locator('.cmdk-item', { hasText: 'needle' })).toBeVisible({ timeout: 3_000 })
+    await page.keyboard.press('Enter')
+    await expect(page.locator('[data-testid="view-tab"][data-view="board"]')).toHaveAttribute('data-active', 'true', { timeout: 5_000 })
+    await expect(page.locator('.detail-title')).toContainText('海底捞针探针', { timeout: 5_000 })
+    await shot(page, '40-cmdk-task')
+  })

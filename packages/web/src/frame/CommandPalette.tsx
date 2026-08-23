@@ -4,7 +4,7 @@
 // (zh→en→system) · gear ×5. Keyboard: ↑/↓ move, Enter run, Esc close.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useStore } from '../state/store'
+import { useStore, statusTone } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
 import type { LangPref } from '../i18n'
@@ -85,6 +85,22 @@ export function CommandPalette({
         onView('board')
       },
     })
+    // task search: as the board grows, finding one card means hunting
+    // lanes — the palette finds it from anywhere (substring, user content
+    // like conversation titles; cancelled history stays out)
+    for (const tk of store.state.tasks.filter((x) => x.status !== 'cancelled').slice(-30).reverse()) {
+      out.push({
+        id: `task-${tk.id}`,
+        group: t('cmdk.groupTask'),
+        label: tk.title,
+        hint: t(`status.${tk.status}`),
+        icon: <span className={`dot ${statusTone(tk.status)}`} style={{ width: 8, height: 8, borderRadius: '50%', display: 'inline-block', flex: 'none' }} />,
+        run: () => {
+          void store.selectTask(tk.id)
+          onView('board')
+        },
+      })
+    }
     for (const m of VIEW_META) {
       out.push({
         id: `act-view-${m.id}`,

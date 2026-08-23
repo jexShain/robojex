@@ -175,6 +175,7 @@ export const zh: Record<string, string> = {
   'cmdk.groupAction': '动作',
   'cmdk.untitled': '（无标题）',
   'cmdk.newChat': '新对话',
+  'cmdk.groupTask': '任务',
   'cmdk.newTask': '新建任务…',
   'cmdk.newTaskHint': '跳转任务板并聚焦输入框，支持「明天9点 …」语法',
   'cmdk.switchView': '切换视图 · {view}',

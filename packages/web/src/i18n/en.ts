@@ -175,6 +175,7 @@ export const en: Record<string, string> = {
   'cmdk.groupAction': 'Actions',
   'cmdk.untitled': '(untitled)',
   'cmdk.newChat': 'New chat',
+  'cmdk.groupTask': 'Tasks',
   'cmdk.newTask': 'New task…',
   'cmdk.newTaskHint': 'jump to the board with the create input focused; quick-time syntax works',
   'cmdk.switchView': 'Switch view · {view}',
