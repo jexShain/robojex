@@ -200,6 +200,10 @@ test.describe('RoboJex desktop', () => {
     await page.keyboard.press('Control+k')
     await expect(page.getByTestId('cmdk-input')).toBeVisible({ timeout: 3_000 })
     await shot(page, '15-cmdk')
+    // pinyin-initial search: jsc finds the 驾驶舱 switch action
+    await page.getByTestId('cmdk-input').fill('jsc')
+    await expect(page.locator('.cmdk-item', { hasText: '驾驶舱' })).toBeVisible({ timeout: 3_000 })
+    await shot(page, '15-cmdk-pinyin')
     await page.keyboard.press('Escape')
   })
 

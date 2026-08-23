@@ -13,6 +13,7 @@ import type { GearId } from '../state/types'
 import { gearsOrFallback, localizeGears } from '../views/gearDefs'
 import { VIEW_META } from '../views/ViewSwitcher'
 import { Icon, gearIcon } from '../ui/Icon'
+import { matchesInitials } from './pinyin'
 import type { ViewId } from '../views/viewState'
 
 interface CmdItem {
@@ -119,7 +120,9 @@ export function CommandPalette({
       (it) =>
         it.label.toLowerCase().includes(q) ||
         (it.hint ? it.hint.toLowerCase().includes(q) : false) ||
-        it.group.includes(q),
+        it.group.includes(q) ||
+        // pinyin initials: jsc finds 驾驶舱, dh finds 对话 (see pinyin.ts)
+        matchesInitials(it.label, q),
     )
   }, [items, q])
 
