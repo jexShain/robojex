@@ -624,3 +624,25 @@ test.describe('RoboJex desktop', () => {
     expect(new Date(t.dueAt).getHours()).toBe(11)
     await shot(page, '34-quick-time')
   })
+
+  // 35 (family nav): plans are parent + steps — the detail rail walks the
+  // tree: parent link up, step chips down.
+  test('35 details: family links navigate parent ↔ steps', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.request.post('/api/task', { data: { title: '家族导航父卡' } })
+    const parent = await (await page.request.get('/api/state')).json()
+    const pid = parent.tasks.find((tk) => tk.title === '家族导航父卡').id
+    await page.request.post('/api/task', { data: { title: '家族子卡甲', parentId: pid } })
+    await page.request.post('/api/task', { data: { title: '家族子卡乙', parentId: pid } })
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    await page.locator('.board-card', { hasText: '家族子卡甲' }).first().click()
+    await expect(page.locator('.detail-title')).toContainText('家族子卡甲', { timeout: 5_000 })
+    // up to the parent
+    await page.locator('.detail-family .df-link', { hasText: '家族导航父卡' }).click()
+    await expect(page.locator('.detail-title')).toContainText('家族导航父卡', { timeout: 5_000 })
+    // back down to a step chip
+    await page.locator('.df-kids .df-link', { hasText: '家族子卡乙' }).click()
+    await expect(page.locator('.detail-title')).toContainText('家族子卡乙', { timeout: 5_000 })
+    await shot(page, '35-family-nav')
+  })

@@ -110,7 +110,7 @@ function TimeField({ ms, onPick, ariaLabel }: { ms: number | null; onPick(v: num
 }
 
 function TaskDetail() {
-  const { state } = useStore()
+  const { state, selectTask } = useStore()
   const { t } = useT()
   const [cancelErr, setCancelErr] = useState(false)
   const task =
@@ -236,6 +236,37 @@ function TaskDetail() {
           <span className="v summary">{task.resultSummary}</span>
         </div>
       ) : null}
+      {(() => {
+        // family navigation: plans arrive as a parent plus steps — walking
+        // the tree from the detail rail beats hunting cards on the board
+        const parent = task.parentId != null ? state.tasks.find((x) => x.id === task.parentId) : undefined
+        const kids = state.tasks.filter((x) => x.parentId === task.id && x.status !== 'cancelled')
+        if (!parent && kids.length === 0) return null
+        return (
+          <div className="detail-family">
+            {parent ? (
+              <button type="button" className="df-link" onClick={() => selectTask(parent.id)} title={parent.title}>
+                <Icon name="chevronRight" size={10} style={{ transform: 'rotate(-90deg)' }} />
+                <span className="df-tag">{t('detail.parent')}</span>
+                <span className="df-name">{parent.title}</span>
+              </button>
+            ) : null}
+            {kids.length > 0 ? (
+              <div className="df-kids">
+                <span className="df-tag">
+                  <Icon name="chevronDown" size={10} /> {t('detail.kids')}
+                </span>
+                {kids.slice(0, 6).map((k) => (
+                  <button key={k.id} type="button" className="df-link" onClick={() => selectTask(k.id)} title={k.title}>
+                    {k.title}
+                  </button>
+                ))}
+                {kids.length > 6 ? <span className="df-more">+{kids.length - 6}</span> : null}
+              </div>
+            ) : null}
+          </div>
+        )
+      })()}
       {cancellable ? (
         <div className="detail-actions">
           <button

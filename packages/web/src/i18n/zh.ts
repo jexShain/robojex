@@ -367,6 +367,8 @@ export const zh: Record<string, string> = {
   'detail.kResult': '结果',
   'detail.editSched': '开始时间（可编辑）',
   'detail.editDue': '截止时间（可编辑）',
+  'detail.parent': '父卡',
+  'detail.kids': '子卡',
   'status.todo': '待办',
   'status.running': '进行中',
   'status.blocked': '受阻',
