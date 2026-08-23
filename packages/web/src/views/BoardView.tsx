@@ -92,6 +92,12 @@ function BoardCard({
   onRemove(): void
 }) {
   const { t } = useT()
+  // two-step cancel: cancelled is terminal (no un-cancel API), and a hover
+  // trash is one misclick away from it — first click arms the button for
+  // 2.5s (solid red check), second click fires, timeout stands down
+  const [armed, setArmed] = useState(false)
+  const armTimer = useRef(0)
+  useEffect(() => () => window.clearTimeout(armTimer.current), [])
   const { task, children, subtreeBlocked, subtreeRunning, allChildrenDone } = placed.node
   const tone = statusTone(task.status)
   const hasKids = children.length > 0
@@ -131,15 +137,23 @@ function BoardCard({
         {task.status !== 'done' && task.status !== 'cancelled' ? (
           <button
             type="button"
-            className="bc-cancel"
-            title={t('board.cancelTask')}
-            aria-label={fill(t('board.cancelTask'), { t: task.title })}
+            className={`bc-cancel${armed ? ' armed' : ''}`}
+            title={armed ? t('board.confirmCancel') : t('board.cancelTask')}
+            aria-label={armed ? t('board.confirmCancel') : fill(t('board.cancelTask'), { t: task.title })}
+            aria-pressed={armed}
             onClick={(e) => {
               e.stopPropagation()
+              if (!armed) {
+                setArmed(true)
+                window.clearTimeout(armTimer.current)
+                armTimer.current = window.setTimeout(() => setArmed(false), 2_500)
+                return
+              }
+              window.clearTimeout(armTimer.current)
               onRemove()
             }}
           >
-            <Icon name="trash" size={11} />
+            <Icon name={armed ? 'check' : 'trash'} size={11} />
           </button>
         ) : null}
         {hasKids ? (

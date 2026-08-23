@@ -1442,6 +1442,15 @@ body[data-ds-dark-theme] .chip.full {
   color: #fff;
 }
 
+/* armed (first click of the two-step cancel): solid danger with a check,
+   stays visible even if the pointer wanders off the card mid-window */
+.bc-cancel.armed {
+  opacity: 1;
+  background: var(--dsw-alias-state-error-primary, #dc2626);
+  color: #fff;
+  padding: 0 5px;
+}
+
 .board-card.shut .bc-caret svg {
   transform: rotate(-90deg);
 }

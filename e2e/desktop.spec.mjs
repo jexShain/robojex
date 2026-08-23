@@ -357,17 +357,22 @@ test.describe('RoboJex desktop', () => {
     await shot(page, '24-widget')
   })
 
-  // 25 (operator cancel): the board card's hover trash button PUTs
-  // /api/task {status:"cancelled"}; the tasks broadcast updates the store
-  // and the board filter drops the cancelled card from the canvas.
-  test('25 board: hover-cancel retires a card', async ({ page }) => {
+  // 25 (operator cancel): the board card's hover trash is a TWO-STEP cancel
+  // (cancelled is terminal) — first click arms a red confirm, second fires
+  // the PUT /api/task; the tasks broadcast then drops the card.
+  test('25 board: two-step hover-cancel retires a card', async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('conn-status').waitFor()
     await page.locator('[data-testid="view-tab"][data-view="board"]').click()
     const card = page.locator('.board-card', { hasText: '示例任务二' })
     await expect(card).toBeVisible({ timeout: 5_000 })
     await card.hover()
-    await card.locator('.bc-cancel').click()
+    const cancel = card.locator('.bc-cancel')
+    await cancel.click()
+    // armed: red confirm state, card still on the board
+    await expect(cancel).toHaveClass(/armed/)
+    await expect(page.locator('.board-card', { hasText: '示例任务二' })).toHaveCount(1)
+    await cancel.click()
     // cancelled cards are filtered out of the board entirely
     await expect(page.locator('.board-card', { hasText: '示例任务二' })).toHaveCount(0, { timeout: 5_000 })
     await shot(page, '25-board-cancel')

@@ -302,6 +302,7 @@ export const en: Record<string, string> = {
   'board.newPlaceholder': '+ New task — Enter to create',
   'board.create': 'Create task',
   'board.cancelTask': 'Cancel this card ({t})',
+  'board.confirmCancel': 'Click again to confirm — cancel is final',
   'board.filter.all': 'All',
   'board.filter.running': 'Running',
   'board.filter.due-today': 'Due today',
