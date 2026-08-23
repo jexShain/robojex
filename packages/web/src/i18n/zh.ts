@@ -355,6 +355,8 @@ export const zh: Record<string, string> = {
   'detail.tabScreen': '屏幕',
   'detail.close': '关闭详情',
   'detail.selectHint': '请选择一个任务',
+  'detail.cancelTask': '撤销此卡',
+  'detail.cancelErr': '撤销失败，请稍后再试',
   'detail.progress': '进度 {n}%',
   'detail.copyTitle': '复制 {label}',
   'detail.copyBtn': '复制',

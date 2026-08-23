@@ -438,3 +438,20 @@ test.describe('RoboJex desktop', () => {
     expect(delta).toBeLessThan(5 * 3_600_000) // but not off the day
     await shot(page, '28-drag-reschedule')
   })
+
+  // 29 (details cancel): the detail rail's deliberate path — open a card,
+  // cancel from the action row, the board drops it and the row disappears
+  // (cancelled is terminal). Runs last: it consumes the demo card.
+  test('29 details: cancel from the action row retires the card', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    await page.locator('.board-card', { hasText: '进行中的演示任务' }).click()
+    await expect(page.locator('.detail-title')).toContainText('进行中的演示任务', { timeout: 5_000 })
+    await page.locator('.da-cancel').click()
+    // broadcast drops the card from the board and the terminal status
+    // removes the action row entirely
+    await expect(page.locator('.board-card', { hasText: '进行中的演示任务' })).toHaveCount(0, { timeout: 5_000 })
+    await expect(page.locator('.detail-actions')).toHaveCount(0, { timeout: 5_000 })
+    await shot(page, '29-details-cancel')
+  })

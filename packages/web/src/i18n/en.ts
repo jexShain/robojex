@@ -355,6 +355,8 @@ export const en: Record<string, string> = {
   'detail.tabScreen': 'Screen',
   'detail.close': 'Close details',
   'detail.selectHint': 'select a task to see its details',
+  'detail.cancelTask': 'Cancel this card',
+  'detail.cancelErr': 'cancel failed — try again shortly',
   'detail.progress': 'Progress {n}%',
   'detail.copyTitle': 'Copy {label}',
   'detail.copyBtn': 'Copy',

@@ -1,12 +1,13 @@
 // packages/web/src/details/DetailsPanel.tsx — right column: selected task
-// detail (status/verdict/progress/acceptance badges), read-only
-// MISSION/RUBRIC/MEMORY views with copy buttons, and the takeoverd live
-// screen preview. AppFrame controls column visibility (display none).
+// detail (status/verdict/progress/acceptance badges + operator cancel),
+// read-only MISSION/RUBRIC/MEMORY views with copy buttons, and the takeoverd
+// live screen preview. AppFrame controls column visibility (display none).
 
 import { useState } from 'react'
 import { useStore, statusTone } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
+import { Icon } from '../ui/Icon'
 import { TakeoverPreview } from './TakeoverPreview'
 
 type Tab = 'task' | 'files' | 'screen'
@@ -80,12 +81,26 @@ function FileView({ label, text }: { label: string; text: string }) {
 function TaskDetail() {
   const { state } = useStore()
   const { t } = useT()
+  const [cancelErr, setCancelErr] = useState(false)
   const task =
     state.selectedTaskId !== null
       ? state.tasks.find((t) => t.id === state.selectedTaskId) ?? null
       : null
   if (!task) {
     return <div className="detail-hint">{t('detail.selectHint')}</div>
+  }
+  // operator cancel — the board card's hover trash is the fast path; this is
+  // the deliberate one, next to the full card context
+  const cancellable = task.status !== 'done' && task.status !== 'cancelled'
+  const cancel = (): void => {
+    setCancelErr(false)
+    void fetch('/api/task', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: task.id, status: 'cancelled' }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return undefined })
+      .catch(() => setCancelErr(true))
   }
   const verdict = task.verdict ? task.verdict.toLowerCase() : null
   const verdictKey =
@@ -155,6 +170,22 @@ function TaskDetail() {
         <div className="kv">
           <span className="k">result</span>
           <span className="v summary">{task.resultSummary}</span>
+        </div>
+      ) : null}
+      {cancellable ? (
+        <div className="detail-actions">
+          <button
+            type="button"
+            className="da-cancel"
+            title={t('detail.cancelTask')}
+            onClick={cancel}
+          >
+            <Icon name="trash" size={12} />
+            {t('detail.cancelTask')}
+          </button>
+          {cancelErr ? (
+            <span className="da-err" role="alert">{t('detail.cancelErr')}</span>
+          ) : null}
         </div>
       ) : null}
     </div>
