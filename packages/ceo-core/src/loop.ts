@@ -205,6 +205,9 @@ export class SchedulerLoop {
   // keeps not judging it — stop nagging (each nudge is a full paid cycle)
   // until the card actually changes.
   private verifyNudgeState = new Map<string, { key: string; n: number }>();
+  // R76 missed-schedule pump state (throttle + episode cap, verify_due-shaped)
+  private spawnNudgedAt = new Map<string, number>();
+  private spawnNudgeState = new Map<string, { key: string; n: number }>();
 
   mode(): Gate { return this.modeNow; }
 
@@ -284,6 +287,33 @@ export class SchedulerLoop {
       this.push(`due_spawn: ${t.id.slice(0, 8)} ${t.title}${t.dueAt ? ` [due ${fmtClock(t.dueAt)}]` : ""}`);
       this.d.outlet?.hud?.("due_spawn", t.id);
     }
+    // R76 missed-schedule enforcement: due_spawn fires exactly once, but the
+    // live soak showed decide can decline it (a "deep-night deferral" lesson
+    // over-generalized into daytime) — and then nothing ever re-raises the
+    // card. A todo card past its scheduledAt that the one-shot event failed
+    // to launch earns an overdue_spawn nudge every 5 minutes (max 3 per
+    // episode, R73-style), so a schedule is enforced by the pump, not by hope.
+    {
+      const GRACE_MS = 2 * 60_000; // the due_spawn cycle gets 2 minutes to land its spawn
+      for (const t of this.d.board.list()) {
+        if (t.status !== "todo" || t.scheduledAt === null || t.scheduledAt > now - GRACE_MS) { this.spawnNudgedAt.delete(t.id); this.spawnNudgeState.delete(t.id); continue; }
+        const last = this.spawnNudgedAt.get(t.id) ?? 0;
+        if (now - last < 5 * 60_000) continue;
+        const nk = `${t.status}:${t.scheduledAt}`;
+        const ns = this.spawnNudgeState.get(t.id) ?? { key: nk, n: 0 };
+        if (ns.key !== nk) { ns.key = nk; ns.n = 0; }
+        if (ns.n >= 3) continue; // decide keeps refusing: the human hears it once and the card waits
+        ns.n++;
+        this.spawnNudgeState.set(t.id, ns);
+        this.spawnNudgedAt.set(t.id, now);
+        if (ns.n === 3) {
+          this.push(`overdue_spawn: ${t.id.slice(0, 8)} ${t.title} was scheduled ${fmtClock(t.scheduledAt)} and decide declined to launch it 3 times — surface this to the human with the reply action and stop re-nudging`);
+        } else {
+          this.push(`overdue_spawn: ${t.id.slice(0, 8)} ${t.title} was scheduled ${fmtClock(t.scheduledAt)} but is still todo — dispatch it NOW (spawn); the daytime-deferral doctrine only applies BEFORE the scheduled time`);
+        }
+        this.d.outlet?.hud?.("overdue_spawn", t.id);
+      }
+    }
     const NAG_MS = 30 * 60_000;
     for (const t of this.d.board.overdueTasks(now)) {
       if (t.overdueNaggedAt !== null && now - t.overdueNaggedAt < NAG_MS) continue;
@@ -353,8 +383,14 @@ export class SchedulerLoop {
     // material is already in its context); it is not a canned report.
     const d = new Date(now);
     const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    // the sent-marker persists to runtime: a restart inside the window must
+    // not hand the human a second briefing (live soak: two, 50min apart)
+    if (this.morningSent === "" ) {
+      try { this.morningSent = readFileSync(join(this.d.runtimeDir, "morning-sent.txt"), "utf8").trim(); } catch { /* never briefed */ }
+    }
     if (d.getHours() >= 8 && d.getHours() < 11 && this.morningSent !== day) {
       this.morningSent = day;
+      try { writeFileSync(join(this.d.runtimeDir, "morning-sent.txt"), day); } catch { /* best-effort */ }
       this.push("morning_briefing: compose today's digest for the human — yesterday's acceptance verdicts (see AGENT STATS deltas), what changed on the board, durable lessons from MEMORY, and today's plan; deliver it with the reply action, concise and warm");
     }
     // R22: every 6h the boot-time agent inventory may be stale — new CLI
@@ -459,7 +495,7 @@ export class SchedulerLoop {
       });
       // layer 1: cheap patrol triage
       const p = await this.d.llm.chat("patrol", [
-        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; act on a chat: event unless it is a pure greeting or social chatter with no ask — a question about this machine or jex's work (hardware, system, files, processes, tasks, progress) ALWAYS acts (the direct-chat reply alone never settles it: it may be ungrounded), and any request or delegation always acts. When unsure, act — the human's words outrank thrift. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). A 'plan_created:' event means a goal was just decomposed into child steps on the board — always act: dispatch the ready steps (in the listed order when they depend on each other, in parallel when independent). A 'morning_briefing:' event is the daily digest mandate — always act: compose it and deliver with the reply action. An 'agents_rescan:' event means the agent inventory may be stale — act by running the toolscout action. A 'patrol_walk:' event is the quiet house round — act on it (LOOK with tools; reply ONLY if something genuinely needs the human). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
+        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; act on a chat: event unless it is a pure greeting or social chatter with no ask — a question about this machine or jex's work (hardware, system, files, processes, tasks, progress) ALWAYS acts (the direct-chat reply alone never settles it: it may be ungrounded), and any request or delegation always acts. When unsure, act — the human's words outrank thrift. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). An 'overdue_spawn:' event means a scheduled task's time has ARRIVED and it is STILL not dispatched — always act, and dispatch it (spawn) this very cycle: the daytime-deferral doctrine only applies BEFORE the scheduled time, never after. A 'plan_created:' event means a goal was just decomposed into child steps on the board — always act: dispatch the ready steps (in the listed order when they depend on each other, in parallel when independent). A 'morning_briefing:' event is the daily digest mandate — always act: compose it and deliver with the reply action. An 'agents_rescan:' event means the agent inventory may be stale — act by running the toolscout action. A 'patrol_walk:' event is the quiet house round — act on it (LOOK with tools; reply ONLY if something genuinely needs the human). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
       let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; } // patrol cost still booked on parse failure
