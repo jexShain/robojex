@@ -500,7 +500,7 @@ export class ApiServer implements LoopOutlet {
   // -- Settings CRUD -----------------------------------------------------
   // Safe subset of Config keys the UI may read/write. API key is masked on read.
   private static SETTINGS_KEYS = ["baseUrl", "apiKey", "patrolModel", "decideModel",
-    "budgetMode", "dailyTokens", "tickMs", "takeoverUrl", "apiPort", "apiHost", "autonomyGear", "policy"] as const;
+    "budgetMode", "dailyTokens", "tickMs", "takeoverUrl", "apiPort", "apiHost", "autonomyGear", "policy", "thinking"] as const;
 
   private getSettings(res: ServerResponse): void {
     const cfgPath = join(this.d.runtimeDir, "config.json");
@@ -510,6 +510,7 @@ export class ApiServer implements LoopOutlet {
     for (const k of ApiServer.SETTINGS_KEYS) {
       if (k in cfg) safe[k] = k === "apiKey" ? maskKey(String(cfg[k])) : cfg[k];
       else if (k === "policy") safe.policy = "butler"; // effective default — the UI badge needs it even when unset
+      else if (k === "thinking") safe.thinking = false; // effective default: thinking OFF until explicitly enabled
     }
     json(res, 200, safe);
   }
@@ -543,6 +544,9 @@ export class ApiServer implements LoopOutlet {
     if (body.autonomyGear !== undefined && body.autonomyGear !== null && !isGearId(body.autonomyGear)) {
       json(res, 400, { error: `autonomyGear must be one of ${GEAR_IDS.join("|")}` }); return;
     }
+    if (body.thinking !== undefined && body.thinking !== null && typeof body.thinking !== "boolean") {
+      json(res, 400, { error: "thinking must be a boolean" }); return;
+    }
     const cfgPath = join(this.d.runtimeDir, "config.json");
     let cfg: Record<string, unknown> = {};
     try { cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as Record<string, unknown>; } catch { /* ok */ }
@@ -561,6 +565,12 @@ export class ApiServer implements LoopOutlet {
     // (butler = full + blacklist, conservative = mode-driven), no restart
     if ((body.policy === "butler" || body.policy === "conservative") && this.d.loop.setPolicy) {
       this.d.loop.setPolicy(body.policy);
+    }
+    // thinking hot-applies too: the next LLM request (chat stream, patrol,
+    // decide) carries the new mode — no restart needed
+    if (typeof body.thinking === "boolean" && this.d.llm) {
+      this.d.llm.setThinking(body.thinking);
+      note = `thinking ${body.thinking ? "enabled" : "disabled"} (live)`;
     }
     json(res, 200, { ok: true, note });
   }

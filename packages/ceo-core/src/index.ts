@@ -98,6 +98,7 @@ interface Config {
   webhookPort?: number; apiPort?: number; apiHost?: string;
   autonomyGear?: string; // dormant|eco|balanced|focused|turbo (GearController validates)
   policy?: "butler" | "conservative"; // autonomy doctrine (SPEC-BUTLER §1); butler is the default
+  thinking?: boolean; // thinking mode: OFF by default (absent = false); settings hot-applies
 }
 
 // The loop surface main() needs; SchedulerLoop satisfies it structurally and
@@ -127,7 +128,7 @@ const DEFAULT_WEB_DIR = process.env.ROBOJEX_WEB_DIR
   ?? (import.meta.url ? join(dirname(fileURLToPath(import.meta.url)), "..", "..", "web", "dist") : join(dirname(process.execPath), "web"));
 
 export function assembleAndStart(cfg: Config, runtimeDir: string, deps: AssembleDeps = {}): Assembled {
-  const llm = new LLMClient({ baseUrl: cfg.baseUrl ?? "", apiKey: cfg.apiKey ?? "", patrolModel: cfg.patrolModel ?? "", decideModel: cfg.decideModel ?? "" });
+  const llm = new LLMClient({ baseUrl: cfg.baseUrl ?? "", apiKey: cfg.apiKey ?? "", patrolModel: cfg.patrolModel ?? "", decideModel: cfg.decideModel ?? "", thinking: cfg.thinking === true });
   const registry = new AgentRegistry(BUILTIN_AGENTS);
   const orchestrator = new AgentOrchestrator({ llm, runtimeDir, registry });
   orchestrator.reapOrphans(); // detached sub-agents of a crashed jex must die before new work starts

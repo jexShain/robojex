@@ -294,7 +294,7 @@ const server = http.createServer((req, res) => {
     return
   }
   if (p === '/api/settings' && req.method === 'GET') {
-    send(200, { baseUrl: 'https://api.deepseek.com/v1', apiKey: 'sk-1***cdef', patrolModel: 'deepseek-v4-flash', decideModel: 'deepseek-v4-flash', budgetMode: 'burn', dailyTokens: 2000000, tickMs: 60000, takeoverUrl: 'ws://127.0.0.1:7600', apiPort: 7620, apiHost: '127.0.0.1' })
+    send(200, { baseUrl: 'https://api.deepseek.com/v1', apiKey: 'sk-1***cdef', patrolModel: 'deepseek-v4-flash', decideModel: 'deepseek-v4-flash', budgetMode: 'burn', dailyTokens: 2000000, tickMs: 60000, takeoverUrl: 'ws://127.0.0.1:7600', apiPort: 7620, apiHost: '127.0.0.1', thinking: false })
     return
   }
   if (p === '/api/settings' && req.method === 'PUT') {

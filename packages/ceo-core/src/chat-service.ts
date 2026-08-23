@@ -323,7 +323,7 @@ export class ChatService {
       const r = await this.d.llm.chat("patrol", [
         { role: "system", content: "你为一段对话生成简短标题。只输出标题本身：不超过 20 个字，不要引号、句号、emoji 或任何说明文字。" },
         { role: "user", content: `用户消息：${text}\n助手回复：${reply.slice(0, 200)}` },
-      ], { maxTokens: 256 });
+      ], { maxTokens: 256, noThinking: true }); // titles never pay for reasoning
       this.d.budget?.spend(r.usage);
       const t = r.content.trim().split("\n")[0].trim().replace(/^["'「『]+/, "").replace(/["'」』]+$/, "").slice(0, TITLE_MAX);
       if (t.length > 0) return t;

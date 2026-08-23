@@ -419,3 +419,28 @@ test("empty config models fall back per slot (decide needs non-thinking JSON)", 
   expect(c.modelName("decide")).toBe("deepseek-chat");
   expect(c.modelName("decide", "override")).toBe("override");
 });
+
+test("thinking mode: default OFF, config flag enables, setThinking hot-flips, noThinking overrides", async () => {
+  const bodyAt = (f: ReturnType<typeof vi.fn>): Record<string, unknown> =>
+    JSON.parse((f.mock.calls[0]![1] as RequestInit).body as string) as Record<string, unknown>;
+  // 1) absent config = disabled (the product default beats the provider default)
+  const f1 = vi.fn(async () => new Response(okBody, { status: 200 })) as unknown as typeof fetch;
+  const c1 = new LLMClient({ baseUrl: "http://x/v1", apiKey: "k", patrolModel: "p", decideModel: "d" }, f1 as never);
+  await c1.chat("patrol", [{ role: "user", content: "hi" }]);
+  expect(bodyAt(f1 as ReturnType<typeof vi.fn>).thinking).toEqual({ type: "disabled" });
+  // 2) thinking: true = enabled on both chat and stream
+  const f2 = vi.fn(async () => new Response(okBody, { status: 200 })) as unknown as typeof fetch;
+  const c2 = new LLMClient({ baseUrl: "http://x/v1", apiKey: "k", patrolModel: "p", decideModel: "d", thinking: true }, f2 as never);
+  await c2.chat("patrol", [{ role: "user", content: "hi" }]);
+  expect(bodyAt(f2 as ReturnType<typeof vi.fn>).thinking).toEqual({ type: "enabled" });
+  // 3) settings hot-flip takes effect on the next request
+  c2.setThinking(false);
+  (f2 as ReturnType<typeof vi.fn>).mockClear();
+  await c2.chat("patrol", [{ role: "user", content: "hi" }]);
+  expect(bodyAt(f2 as ReturnType<typeof vi.fn>).thinking).toEqual({ type: "disabled" });
+  // 4) noThinking beats an enabled global (title generation never reasons)
+  c2.setThinking(true);
+  (f2 as ReturnType<typeof vi.fn>).mockClear();
+  await c2.chat("patrol", [{ role: "user", content: "hi" }], { noThinking: true });
+  expect(bodyAt(f2 as ReturnType<typeof vi.fn>).thinking).toEqual({ type: "disabled" });
+});

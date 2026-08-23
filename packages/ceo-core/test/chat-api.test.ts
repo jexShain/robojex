@@ -217,3 +217,31 @@ test("unwired routes answer 503 instead of crashing", async () => {
   }
   expect((await fetch(`${base(api)}/api/chat/stop`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(503);
 });
+
+test("thinking setting: GET defaults false (absent config), PUT hot-applies + persists, invalid type 400", async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "robojex-chatapi-"));
+  seedRuntimeFiles(runtimeDir);
+  const setThinking = vi.fn();
+  const llm = { setThinking } as unknown as LLMClient;
+  const api = new ApiServer({
+    port: 0, board: new TaskBoard(join(runtimeDir, "board.sqlite")), budget: new BudgetGovernor("burn"),
+    runtimeDir, loop: { push: vi.fn() }, llm,
+  });
+  servers.push(api);
+  await api.start();
+
+  // absent config: the effective default is OFF (explicit false, not missing)
+  const s0 = await (await fetch(`${base(api)}/api/settings`)).json() as Record<string, unknown>;
+  expect(s0.thinking).toBe(false);
+
+  const res = await fetch(`${base(api)}/api/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ thinking: true }) });
+  expect(res.status).toBe(200);
+  expect(setThinking).toHaveBeenCalledWith(true); // hot-applied: next request carries enabled
+  const cfg = JSON.parse(readFileSync(join(runtimeDir, "config.json"), "utf8")) as Record<string, unknown>;
+  expect(cfg.thinking).toBe(true); // and persisted for the next boot
+  const s1 = await (await fetch(`${base(api)}/api/settings`)).json() as Record<string, unknown>;
+  expect(s1.thinking).toBe(true);
+
+  const bad = await fetch(`${base(api)}/api/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ thinking: "yes" }) });
+  expect(bad.status).toBe(400);
+});

@@ -1,7 +1,7 @@
 // packages/ceo-core/src/llm.ts
 import { createDeadline, createIdleWatchdog, type IdleWatchdog } from "./timeout.js";
 
-export interface LlmConfig { baseUrl: string; apiKey: string; patrolModel: string; decideModel: string; }
+export interface LlmConfig { baseUrl: string; apiKey: string; patrolModel: string; decideModel: string; thinking?: boolean; }
 export type Slot = "patrol" | "decide";
 export interface ChatMsg { role: string; content: string; }
 
@@ -83,7 +83,25 @@ const STREAM_IDLE_MS = 120_000;
 const ATTEMPT_DEADLINE_MS = 180_000;
 
 export class LLMClient {
-  constructor(private cfg: LlmConfig, private fetchImpl: typeof fetch = fetch) {}
+  /** Thinking mode is OFF unless explicitly enabled (user-facing default:
+   *  plain answers, no hidden reasoning burn). Flipped live from settings. */
+  private thinkingEnabled: boolean;
+  constructor(private cfg: LlmConfig, private fetchImpl: typeof fetch = fetch) {
+    this.thinkingEnabled = cfg.thinking === true;
+  }
+
+  /** Settings hot-apply: the next request picks the new mode, no restart. */
+  setThinking(on: boolean): void { this.thinkingEnabled = on; }
+  thinking(): boolean { return this.thinkingEnabled; }
+
+  /** Wire field per the DeepSeek thinking-mode convention (same shape the
+   *  deepseek-harness adapter serializes): always explicit — the product
+   *  default beats the provider default. `force` overrides per call (title
+   *  generation and other cheap passes never pay for reasoning). */
+  private thinkingBody(force?: boolean): { thinking: { type: "enabled" | "disabled" } } {
+    const on = force ?? this.thinkingEnabled;
+    return { thinking: { type: on ? "enabled" : "disabled" } };
+  }
 
   /** The model a call on `slot` would use (override first). Empty config
    *  falls back per slot: patrol wants broad observation (thinking ok);
@@ -96,7 +114,7 @@ export class LLMClient {
     return this.cfg.decideModel || "deepseek-chat"
   }
 
-  async chat(slot: Slot, messages: ChatMsg[], opts: { maxTokens?: number; json?: boolean } = {}):
+  async chat(slot: Slot, messages: ChatMsg[], opts: { maxTokens?: number; json?: boolean; noThinking?: boolean } = {}):
     Promise<{ content: string; usage: { promptTokens: number; completionTokens: number } }> {
     const model = this.modelName(slot);
     let lastErr: unknown = null;
@@ -106,7 +124,7 @@ export class LLMClient {
         const res = await this.fetchImpl(`${this.cfg.baseUrl}/chat/completions`, {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${this.cfg.apiKey}` },
-          body: JSON.stringify({ model, messages, max_tokens: opts.maxTokens ?? 2048, ...(opts.json ? { response_format: { type: "json_object" } } : {}) }),
+          body: JSON.stringify({ model, messages, max_tokens: opts.maxTokens ?? 2048, ...this.thinkingBody(opts.noThinking ? false : undefined), ...(opts.json ? { response_format: { type: "json_object" } } : {}) }),
         });
         if (!res.ok) {
           const body = await res.text().catch(() => ""); // body read can itself fail; the status alone still classifies
@@ -183,6 +201,7 @@ export class LLMClient {
           body: JSON.stringify({
             model, messages, max_tokens: opts.maxTokens ?? 2048, stream: true,
             stream_options: { include_usage: true }, // final chunk carries usage
+            ...this.thinkingBody(), // chat streams honor the global toggle only
           }),
           signal: deadline.signal,
         });

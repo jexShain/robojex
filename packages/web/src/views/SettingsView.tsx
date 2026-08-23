@@ -152,6 +152,9 @@ const SZH = {
     'settings.provider.modelSlotsHint': '巡逻 / 决策使用的模型（重启后端后生效）',
     'settings.provider.patrolModel': '巡逻模型',
     'settings.provider.decideModel': '决策模型',
+    'settings.provider.thinking': '思考模式',
+    'settings.provider.thinking.on': '开 · 模型先推理再作答，思考过程显示在聊天气泡里（更慢、更耗 token）',
+    'settings.provider.thinking.off': '关 · 直接作答（默认，更快更省）',
     'settings.provider.budget': '预算',
     'settings.provider.budget.burn': 'burn 不设限',
     'settings.provider.budget.burn.desc': '不设限燃烧',
@@ -326,6 +329,9 @@ const SEN: Record<SKey, string> = {
   'settings.provider.modelSlotsHint': 'Models used for patrol / decide (applies after backend restart)',
   'settings.provider.patrolModel': 'Patrol model',
   'settings.provider.decideModel': 'Decide model',
+  'settings.provider.thinking': 'Thinking mode',
+  'settings.provider.thinking.on': 'On · the model reasons before answering; reasoning shows in the chat bubble (slower, more tokens)',
+  'settings.provider.thinking.off': 'Off · answer directly (default — faster and cheaper)',
   'settings.provider.budget': 'Budget',
   'settings.provider.budget.burn': 'burn unlimited',
   'settings.provider.budget.burn.desc': 'No cap',
@@ -505,6 +511,7 @@ interface Draft {
   budgetMode: 'burn' | 'budgeted'
   dailyTokens: string
   policy: 'butler' | 'conservative'
+  thinking: boolean
 }
 
 /** Direct-connection draft — localStorage-backed, kept separate from the
@@ -537,6 +544,7 @@ export function SettingsView({ onClose }: { onClose(): void }) {
     budgetMode: 'burn',
     dailyTokens: '',
     policy: 'butler',
+    thinking: false,
   })
   const [directDraft, setDirectDraft] = useState<DirectDraft>(() => ({
     mode: state.direct.mode,
@@ -583,6 +591,7 @@ export function SettingsView({ onClose }: { onClose(): void }) {
           budgetMode: sv.budgetMode,
           dailyTokens: String(sv.dailyTokens),
           policy: sv.policy ?? 'butler',
+          thinking: sv.thinking ?? false,
         })
       })
       .catch((err: unknown) => {
@@ -645,6 +654,7 @@ export function SettingsView({ onClose }: { onClose(): void }) {
       p.dailyTokens = tokensNum
     }
     if ((settings.policy ?? 'butler') !== draft.policy) p.policy = draft.policy
+    if ((settings.thinking ?? false) !== draft.thinking) p.thinking = draft.thinking
     return p
   }, [settings, draft, apiKeyInput, apiKeyReady, tokensNum, tokensValid])
 
@@ -689,6 +699,7 @@ export function SettingsView({ onClose }: { onClose(): void }) {
           budgetMode: sv.budgetMode,
           dailyTokens: String(sv.dailyTokens),
           policy: sv.policy ?? 'butler',
+          thinking: sv.thinking ?? false,
         })
         setApiKeyInput('')
         showToast('ok', s('settings.saved'))
@@ -1241,6 +1252,20 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                           onChange={(e) => setDraft({ ...draft, decideModel: e.target.value })}
                         />
                       </label>
+                      <div className="st-field">
+                        <span className="st-label">{s('settings.provider.thinking')}</span>
+                        <button
+                          type="button"
+                          className={`st-switch${draft.thinking ? ' on' : ''}`}
+                          role="switch"
+                          aria-checked={draft.thinking}
+                          data-testid="settings-thinking"
+                          onClick={() => setDraft({ ...draft, thinking: !draft.thinking })}
+                        >
+                          <span className="st-switch-knob" />
+                        </button>
+                        <span className="st-hint">{s(draft.thinking ? 'settings.provider.thinking.on' : 'settings.provider.thinking.off')}</span>
+                      </div>
                     </Card>
                     <Card title={s('settings.provider.budget')}>
                       <div className="st-chip-row" role="radiogroup" aria-label={s('settings.provider.budget')}>

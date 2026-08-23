@@ -182,6 +182,9 @@ export interface Settings {
   /** autonomy policy (SPEC-BUTLER §1). Optional: cores predating the butler
    * spec omit the field — readers must tolerate undefined. */
   policy?: 'butler' | 'conservative'
+  /** thinking mode: OFF by default (absent = false). Toggled in settings;
+   *  the backend hot-applies it to every LLM request. */
+  thinking?: boolean
 }
 
 /* ─────────────────────────── WS frames ─────────────────────────── */
