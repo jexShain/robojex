@@ -71,7 +71,7 @@ const LOOKING_TOOLS = new Set([
 
 /** Keep only the allowlisted schema lines from a ToolManager schemasBlock
  *  (two header lines + one `name(params) — desc` line per tool). */
-function lookingSchemas(block: string): string {
+export function lookingSchemas(block: string): string {
   const lines = block.split("\n");
   const kept = lines.filter((l, i) => i < 2 || LOOKING_TOOLS.has(l.split("(")[0]?.trim() ?? ""));
   return kept.join("\n");

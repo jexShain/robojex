@@ -5,7 +5,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ChatMsg, LLMClient } from "./llm.js";
 import { overlapTokens, overlapScore } from "./token-match.js";
-import type { TaskBoard } from "./board.js";
+import type { TaskBoard, Task } from "./board.js";
+import { lookingSchemas } from "./chat-service.js";
 import type { ContextAssembler } from "./context.js";
 import type { AgentOrchestrator } from "./orchestrator.js";
 import type { Auditor } from "./auditor.js";
@@ -376,7 +377,15 @@ export class SchedulerLoop {
       if (ns.n === 3) {
         this.d.outlet?.chatOut("jex", `验收悬置：「${t.title}」已完成待验，但我连续 3 轮没能完成裁决，卡片先停等你确认。可直接说「验收 ${t.title.slice(0, 12)} 通过/不通过」，或让我重试。`);
       }
-      this.push(`verify_due: ${t.id.slice(0, 8)} ${t.title} accept: ${t.acceptance.slice(0, 120)}${awaiting ? " [awaiting acceptance since the agent finished — judge it now: FIRST run the check as a tool_call (terminal/read_file/du…), THEN emit the verify action in the SAME cycle with the evidence note]" : ""}`);
+      // R78: from the second nudge on, the focused micro-judge takes the case
+      // (the big decide prompt kept skipping the check-then-verify two-step);
+      // nudge 1 stays on the regular event so the model gets one full-context
+      // shot first
+      if (ns.n >= 2 && this.d.budget.gate() !== "observe-only") {
+        void this.focusedVerify(t);
+      } else {
+        this.push(`verify_due: ${t.id.slice(0, 8)} ${t.title} accept: ${t.acceptance.slice(0, 120)}${awaiting ? " [awaiting acceptance since the agent finished — judge it now: FIRST run the check as a tool_call (terminal/read_file/du…), THEN emit the verify action in the SAME cycle with the evidence note]" : ""}`);
+      }
       this.d.outlet?.hud?.("verify_due", t.id);
     }
     // task_due chase pump (SPEC-BUTLER §6): every tick the board is scanned
@@ -513,7 +522,7 @@ export class SchedulerLoop {
       });
       // layer 1: cheap patrol triage
       const p = await this.d.llm.chat("patrol", [
-        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; act on a chat: event unless it is a pure greeting or social chatter with no ask — a question about this machine or jex's work (hardware, system, files, processes, tasks, progress) ALWAYS acts (the direct-chat reply alone never settles it: it may be ungrounded), and any request or delegation always acts. When unsure, act — the human's words outrank thrift. A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). An 'overdue_spawn:' event means a scheduled task's time has ARRIVED and it is STILL not dispatched — always act, and dispatch it (spawn) this very cycle: the daytime-deferral doctrine only applies BEFORE the scheduled time, never after. A 'plan_created:' event means a goal was just decomposed into child steps on the board — always act: dispatch the ready steps (in the listed order when they depend on each other, in parallel when independent). A 'morning_briefing:' event is the daily digest mandate — always act: compose it and deliver with the reply action. An 'agents_rescan:' event means the agent inventory may be stale — act by running the toolscout action. A 'patrol_walk:' event is the quiet house round — act on it (LOOK with tools; reply ONLY if something genuinely needs the human). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
+        { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; act on a chat: event unless it is a pure greeting or social chatter with no ask — a question about this machine or jex's work (hardware, system, files, processes, tasks, progress) ALWAYS acts (the direct-chat reply alone never settles it: it may be ungrounded), and any request or delegation always acts. When unsure, act — the human's words outrank thrift. A chat carrying an explicit acceptance ruling (验收/判定 + a task name + 通过/不通过/合格/不合格) is a direct order: act and emit the matching verify action in the same cycle (the note can cite the human's ruling itself). A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). An 'overdue_spawn:' event means a scheduled task's time has ARRIVED and it is STILL not dispatched — always act, and dispatch it (spawn) this very cycle: the daytime-deferral doctrine only applies BEFORE the scheduled time, never after. A 'plan_created:' event means a goal was just decomposed into child steps on the board — always act: dispatch the ready steps (in the listed order when they depend on each other, in parallel when independent). A 'morning_briefing:' event is the daily digest mandate — always act: compose it and deliver with the reply action. An 'agents_rescan:' event means the agent inventory may be stale — act by running the toolscout action. A 'patrol_walk:' event is the quiet house round — act on it (LOOK with tools; reply ONLY if something genuinely needs the human). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
       let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; } // patrol cost still booked on parse failure
@@ -603,6 +612,18 @@ export class SchedulerLoop {
               assignee: fwOk ? a.framework : String(a.framework),
               parentId, scheduledAt, dueAt, acceptance,
             });
+            // R79 duplicate guard: an identical live card means decide is
+            // re-ordering work it already ordered (the soak stacked three
+            // same-title download-folder cards). Never blocks the spawn —
+            // the next cycle just SEES the duplication and can merge/verify.
+            {
+              const dup = this.d.board.list().find((x) => x.id !== t.id && x.title === t.title
+                && (x.status === "todo" || x.status === "running" || x.status === "blocked"));
+              if (dup) {
+                console.warn(`[loop] duplicate spawn: "${t.title}" already has card ${dup.id.slice(0, 8)} (${dup.status})`);
+                this.push(`duplicate_spawn: "${t.title}" now has two live cards (${dup.id.slice(0, 8)} ${dup.status} + ${t.id.slice(0, 8)} todo) — verify the old one before spending on the new one, or cancel one`);
+              }
+            }
             taskId = t.id;
             if (!fwOk || !promptOk) {
               const problems: string[] = [];
@@ -812,55 +833,7 @@ export class SchedulerLoop {
               console.error(`[ceo] tool ${name} failed: ${err instanceof Error ? err.message : String(err)}`);
             });
           } else if (a.type === "verify") {
-            if (typeof a.task_id !== "string" || a.task_id.length === 0) throw new Error("invalid verify action: task_id required");
-            const progress = Math.max(0, Math.min(100, Number(a.progress ?? 0)));
-            const verdict = a.verdict;
-            if (verdict !== "pass" && verdict !== "partial" && verdict !== "fail") throw new Error(`invalid verify action: verdict must be pass|partial|fail (got ${JSON.stringify(verdict)})`);
-            const card = this.d.board.list().find((x) => x.id === a.task_id || x.id.startsWith(a.task_id));
-            if (!card) throw new Error(`invalid verify action: no task ${a.task_id} on the board`);
-            const note = typeof a.note === "string" ? a.note : "";
-            // R7 evidence chain: a pass must cite what was actually checked —
-            // a bare "pass" is a judgment without grounds and is refused (the
-            // action-failed event teaches the model the bar for next time)
-            if (verdict === "pass" && note.trim().length < 8) {
-              throw new Error("invalid verify action: a pass verdict must carry an evidence note (one line citing the tool output you checked)");
-            }
-            this.d.board.update(card.id, { progress, verdict, resultSummary: [card.resultSummary, note].filter(Boolean).join(" | ") });
-            // acceptance loop closes here: a pass on a task that finished
-            // cleanly but was held blocked pending acceptance promotes it
-            if (verdict === "pass" && card.status === "blocked" && card.resultSummary.includes("[awaiting acceptance")) {
-              // strip the now-obsolete acceptance instructions from the done card
-              const cleaned = [card.resultSummary, note].filter(Boolean).join(" | ").replace(/\s*\[awaiting acceptance[^\]]*\]/g, "");
-              this.d.board.update(card.id, { status: "done", resultSummary: cleaned });
-            }
-            this.emitTasks();
-            // butler briefing: the acceptance verdict is the line the user is
-            // waiting for — one chat line per verdict, never per progress tweak
-            const mark = verdict === "pass" ? "✓ 通过"
-              : verdict === "fail" ? `✗ 未过——${note.slice(0, 40)}`
-              : `◐ 部分通过——${note.slice(0, 40)}`;
-            this.d.outlet?.chatOut("jex", `验收「${card.title}」：${mark}`);
-            console.log(`[ceo] verify ${card.id.slice(0, 8)} -> ${verdict} ${progress}%${verdict === "pass" && card.status === "blocked" ? " -> done" : ""} ${note.slice(0, 80)}`);
-            // R8 experience ledger: every verdict is one stat line — the
-            // decide pass aggregates them into a per-agent track record, so
-            // staffing starts learning who is good at what (a manager's gut
-            // feeling, but written down and counted)
-            this.appendStat(card.assignee, verdict, card.title);
-            // R7 auto-retry: a failed acceptance is not a dead end — like a
-            // human manager, jex re-dispatches once with the failure folded
-            // into the prompt. Second failure (attempts >= 2) stays on the
-            // board for the human; retrying forever would burn tokens on a
-            // hopeless task.
-            if (verdict === "fail" && card.status !== "done" && card.attempts < 2 && !card.parentId
-              && !this.d.board.list().some((x) => x.parentId === card.id)) {
-              const retried = this.d.board.add({
-                title: `${card.title}（重派#2）`, assignee: card.assignee, parentId: card.id,
-                acceptance: card.acceptance || `${card.title}（完成后 jex 须用只读工具 verify 并给出 verdict）`,
-              });
-              const corrective = `${card.acceptance ? `任务：${card.acceptance}\n` : ""}上一次尝试未通过验收，原因：${note}\n请修正这个问题后完成任务。`;
-              this.launchSpawn(retried.id, card.assignee, retried.title, corrective,
-                `已重派「${card.title}」（第2次尝试，修正：${note.slice(0, 40)}）`, 2);
-            }
+            this.applyVerify(a);
           }
         } catch (e) {
           // one bad action must not kill the rest of the wake: block its task (if any) and move on
@@ -952,6 +925,104 @@ export class SchedulerLoop {
    *  and settle the card when the sub-agent exits (done / blocked + briefing +
    *  re-wake). Shared by the spawn action and the acceptance-loop auto-retry
    *  (R7) — one settlement path, one briefing contract. */
+  /** Shared verify-action executor (decide's action loop and the R78 focused
+   *  pass both land here): validates shape + evidence gate, promotes an
+   *  accepted card to done, briefs the human, banks the stat line, and runs
+   *  the R7 one-shot corrective re-dispatch on fail. */
+  private applyVerify(a: any): void {
+    if (typeof a.task_id !== "string" || a.task_id.length === 0) throw new Error("invalid verify action: task_id required");
+    const progress = Math.max(0, Math.min(100, Number(a.progress ?? 0)));
+    const verdict = a.verdict;
+    if (verdict !== "pass" && verdict !== "partial" && verdict !== "fail") throw new Error(`invalid verify action: verdict must be pass|partial|fail (got ${JSON.stringify(verdict)})`);
+    const card = this.d.board.list().find((x) => x.id === a.task_id || x.id.startsWith(a.task_id));
+    if (!card) throw new Error(`invalid verify action: no task ${a.task_id} on the board`);
+    const note = typeof a.note === "string" ? a.note : "";
+    // R7 evidence chain: a pass must cite what was actually checked —
+    // a bare "pass" is a judgment without grounds and is refused
+    if (verdict === "pass" && note.trim().length < 8) {
+      throw new Error("invalid verify action: a pass verdict must carry an evidence note (one line citing the tool output you checked)");
+    }
+    this.d.board.update(card.id, { progress, verdict, resultSummary: [card.resultSummary, note].filter(Boolean).join(" | ") });
+    // acceptance loop closes here: a pass on a task that finished
+    // cleanly but was held blocked pending acceptance promotes it
+    if (verdict === "pass" && card.status === "blocked" && card.resultSummary.includes("[awaiting acceptance")) {
+      const cleaned = [card.resultSummary, note].filter(Boolean).join(" | ").replace(/\s*\[awaiting acceptance[^\]]*\]/g, "");
+      this.d.board.update(card.id, { status: "done", resultSummary: cleaned });
+    }
+    this.emitTasks();
+    const mark = verdict === "pass" ? "✓ 通过"
+      : verdict === "fail" ? `✗ 未过——${note.slice(0, 40)}`
+      : `◐ 部分通过——${note.slice(0, 40)}`;
+    this.d.outlet?.chatOut("jex", `验收「${card.title}」：${mark}`);
+    console.log(`[ceo] verify ${card.id.slice(0, 8)} -> ${verdict} ${progress}%${verdict === "pass" && card.status === "blocked" ? " -> done" : ""} ${note.slice(0, 80)}`);
+    this.appendStat(card.assignee, verdict, card.title);
+    // R7 auto-retry: a failed acceptance re-dispatches once with the failure
+    // folded into the prompt; the second failure stays for the human.
+    if (verdict === "fail" && card.status !== "done" && card.attempts < 2 && !card.parentId
+      && !this.d.board.list().some((x) => x.parentId === card.id)) {
+      const retried = this.d.board.add({
+        title: `${card.title}（重派#2）`, assignee: card.assignee, parentId: card.id,
+        acceptance: card.acceptance || `${card.title}（完成后 jex 须用只读工具 verify 并给出 verdict）`,
+      });
+      const corrective = `${card.acceptance ? `任务：${card.acceptance}\n` : ""}上一次尝试未通过验收，原因：${note}\n请修正这个问题后完成任务。`;
+      this.launchSpawn(retried.id, card.assignee, retried.title, corrective,
+        `已重派「${card.title}」（第2次尝试，修正：${note.slice(0, 40)}）`, 2);
+    }
+  }
+
+  /** R78 focused acceptance judge: the big decide prompt kept skipping the
+   *  check-then-verify two-step (three stalled cycles in the live soak).
+   *  This micro-pass carries ONLY the card and the read-only tools: round 1
+   *  may run one check tool_call, round 2 must deliver the verdict through
+   *  the same applyVerify gate (evidence note included). Falls back to the
+   *  regular verify_due event when the model misbehaves. */
+  private focusedVerifying = new Set<string>();
+  private async focusedVerify(card: Task): Promise<void> {
+    if (this.focusedVerifying.has(card.id)) return;
+    this.focusedVerifying.add(card.id);
+    try {
+      const fresh = this.d.board.list().find((x) => x.id === card.id);
+      if (!fresh || (fresh.status !== "running" && fresh.status !== "blocked")) return; // settled meanwhile
+      const tools = this.d.builtinTools;
+      const schemas = tools ? lookingSchemas(tools.schemasBlock()) : "";
+      const facts = `任务：${fresh.title}\n验收标准：${fresh.acceptance || "（无明确标准——检查产物是否合理）"}\n执行结果摘要：${fresh.resultSummary.slice(0, 500)}`;
+      const sys = `You are jex's acceptance judge for ONE task card. Reply ONLY JSON, one of:
+{"tool_call":{"tool":"<name>","args":{...}}} — run ONE read-only check first (terminal / read_file / search_files / kanban_list), or
+{"verify":{"task_id":"${fresh.id}","progress":0-100,"verdict":"pass"|"partial"|"fail","note":"one line citing the real tool output you checked"}}
+A pass without an evidence note is refused. After a tool result you MUST answer with the verify object.${schemas ? `\n\nAllowed tools:\n${schemas}` : ""}`;
+      const msgs: ChatMsg[] = [
+        { role: "system", content: sys },
+        { role: "user", content: facts },
+      ];
+      let spent = 0;
+      for (let round = 0; round < 2; round++) {
+        const r = await this.d.llm.chat("decide", msgs, { json: true, maxTokens: 1500 });
+        this.d.budget?.spend(r.usage);
+        spent += r.usage.completionTokens;
+        let parsed: any; try { parsed = JSON.parse(r.content); } catch { break; }
+        if (parsed?.tool_call?.tool && round === 0 && tools) {
+          const name = String(parsed.tool_call.tool);
+          const args = (parsed.tool_call.args && typeof parsed.tool_call.args === "object") ? parsed.tool_call.args : {};
+          let result: string;
+          try { result = await tools.call(name, args as Record<string, unknown>, this.gateForTools()); }
+          catch (e) { result = `error: ${e instanceof Error ? e.message : String(e)}`; }
+          console.log(`[ceo] focused-verify tool ${name} -> ${result.slice(0, 200)}`);
+          msgs.push({ role: "assistant", content: r.content });
+          msgs.push({ role: "user", content: `# TOOL RESULT (${name})\n${result}\n\nNow deliver the verify object.` });
+          continue;
+        }
+        if (parsed?.verify) { this.applyVerify(parsed.verify); return; }
+        break; // neither shape: fall through to the fallback
+      }
+      // micro-pass declined or drifted: the regular event path gets one more shot
+      this.push(`verify_due: ${card.id.slice(0, 8)} ${card.title} accept: ${card.acceptance.slice(0, 120)} [focused judge could not rule — judge it now: FIRST run the check as a tool_call, THEN emit the verify action in the SAME cycle with the evidence note]`);
+    } catch (e) {
+      console.error(`[ceo] focused verify failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      this.focusedVerifying.delete(card.id);
+    }
+  }
+
   private launchSpawn(taskId: string, framework: string, title: string, rawPrompt: string, brief: string, attempt: number): void {
     this.d.board.update(taskId, { status: "running", attempts: attempt });
     this.emitTasks();

@@ -13,6 +13,7 @@ import { ContextAssembler } from "../src/context.js";
 import type { AgentOrchestrator } from "../src/orchestrator.js";
 import { Auditor } from "../src/auditor.js";
 import { BudgetGovernor } from "../src/budget.js";
+import { until } from "./helpers.js";
 
 function makeRig() {
   const dir = mkdtempSync(join(tmpdir(), "rjnc-"));
@@ -36,18 +37,21 @@ function makeRig() {
 const MIN = 60_000;
 
 describe("R73 verify_due nag cap", () => {
-  it("an unchanged card gets 3 nudges then goes quiet until it changes", () => {
+  it("an unchanged card gets 3 nudges then goes quiet until it changes", async () => {
     const rig = makeRig();
     const chats: Array<[string, string]> = [];
     rig.loop.setOutlet({ chatOut: (from: string, text: string) => { chats.push([from, text]); } } as never);
     const t = rig.board.add({ title: "悬置卡", assignee: "hermes", acceptance: "产物核对" });
     rig.board.update(t.id, { status: "blocked", resultSummary: "done [awaiting acceptance: verify]", attempts: 1 });
     const verifyDue = (): number => rig.events.filter((e) => e.startsWith("verify_due:") && e.includes("悬置卡")).length;
-    rig.loop.pumpGantt(Date.now()); expect(verifyDue()).toBe(1);
+    rig.loop.pumpGantt(Date.now()); expect(verifyDue()).toBe(1); // nudge 1: sync event
     expect(chats.length).toBe(0); // nudges 1-2 stay model-facing, no human spam
-    rig.loop.pumpGantt(Date.now() + 6 * MIN); expect(verifyDue()).toBe(2);
+    // R78: nudge 2+ hands the case to the focused micro-judge — its event (if
+    // any) is the async fallback, so await rather than assert synchronously
+    rig.loop.pumpGantt(Date.now() + 6 * MIN);
+    await until(() => verifyDue() >= 2); // junk model -> fallback push lands
     expect(chats.length).toBe(0);
-    rig.loop.pumpGantt(Date.now() + 12 * MIN); expect(verifyDue()).toBe(3);
+    rig.loop.pumpGantt(Date.now() + 12 * MIN); await until(() => verifyDue() >= 3);
     // R77: the cap never parks silently — the third nudge tells the human
     expect(chats.length).toBe(1);
     expect(chats[0]![0]).toBe("jex");
