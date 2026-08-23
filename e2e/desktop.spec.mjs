@@ -182,6 +182,17 @@ test.describe('RoboJex desktop', () => {
     const now = await page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))
     expect(now).toBe(!dark)
     await shot(page, `13-theme-${now ? 'dark' : 'light'}`)
+    // light-mode parity shots for the operator-chrome surfaces (cancel
+    // button, badges, staged chips ride tokens — this catches drift)
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    const anyCard = page.locator('.board-card').first()
+    if (await anyCard.count()) {
+      await anyCard.hover()
+      await shot(page, '13-light-board')
+    }
+    await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    await page.waitForTimeout(300)
+    await shot(page, '13-light-agenda')
   })
 
   test('14 settings modal: open, edit, save', async ({ page }) => {
