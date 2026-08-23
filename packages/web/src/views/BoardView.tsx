@@ -9,6 +9,7 @@ import { statusTone, useStore } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
 import { Icon, verdictIcon } from '../ui/Icon'
+import { parseQuickTime } from './quickTime'
 import type { Task } from '../state/types'
 import {
   type BoardFilter,
@@ -205,15 +206,22 @@ export function BoardView() {
   const [createErr, setCreateErr] = useState<string | null>(null)
 
   const createTask = async (): Promise<void> => {
-    const title = newTitle.trim()
-    if (!title || creating) return
+    const raw = newTitle.trim()
+    if (!raw || creating) return
     setCreating(true)
     setCreateErr(null)
     try {
+      // quick time syntax: 「明天9点 检查磁盘 截止11点」 carries its slot
+      const quick = parseQuickTime(raw)
+      const title = quick?.title ?? raw
       const res = await fetch('/api/task', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title }),
+        body: JSON.stringify({
+          title,
+          ...(quick?.scheduledAt !== undefined ? { scheduledAt: quick.scheduledAt } : {}),
+          ...(quick?.dueAt !== undefined ? { dueAt: quick.dueAt } : {}),
+        }),
       })
       if (!res.ok) {
         const d = (await res.json().catch(() => ({}))) as { error?: string }

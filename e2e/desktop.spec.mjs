@@ -604,3 +604,23 @@ test.describe('RoboJex desktop', () => {
     expect(ba.x + ba.width).toBeLessThanOrEqual(bb.x + 1)
     await shot(page, '33-overlap-lanes')
   })
+
+  // 34 (quick-time create): the board capture box understands a time prefix
+  // and due suffix — one line in, a scheduled card out.
+  test('34 board: quick-time syntax creates a scheduled card', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    const input = page.locator('.board-new input')
+    await input.fill('明天9点 快速排程探针 截止11点')
+    await input.press('Enter')
+    await expect(page.locator('.board-card', { hasText: '快速排程探针' })).toBeVisible({ timeout: 5_000 })
+    const after = await (await page.request.get('/api/state')).json()
+    const t = after.tasks.find((tk) => tk.title === '快速排程探针')
+    expect(t).toBeTruthy()
+    expect(t.title).not.toContain('明天') // token stripped
+    const d = new Date(t.scheduledAt)
+    expect(d.getHours()).toBe(9)
+    expect(new Date(t.dueAt).getHours()).toBe(11)
+    await shot(page, '34-quick-time')
+  })

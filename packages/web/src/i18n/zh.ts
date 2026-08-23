@@ -299,7 +299,7 @@ export const zh: Record<string, string> = {
   'ts.stuck': '死循环警告 — {text}',
 
   /* board view */
-  'board.newPlaceholder': '＋ 新任务，回车创建',
+  'board.newPlaceholder': '＋ 新任务 · 支持「明天9点 检查X 截止11点」',
   'board.create': '创建任务',
   'board.cancelTask': '撤销这张卡（{t}）',
   'board.confirmCancel': '再点一次确认撤销（终态，不可恢复）',

@@ -299,7 +299,7 @@ export const en: Record<string, string> = {
   'ts.stuck': 'Identical-call loop — {text}',
 
   /* board view */
-  'board.newPlaceholder': '+ New task — Enter to create',
+  'board.newPlaceholder': '+ New task · try "9:00 check X due 11:00"',
   'board.create': 'Create task',
   'board.cancelTask': 'Cancel this card ({t})',
   'board.confirmCancel': 'Click again to confirm — cancel is final',
