@@ -329,6 +329,8 @@ export const zh: Record<string, string> = {
   /* agenda / calendar */
   'ag.pendingBadge': '改期同步中…',
   'ag.prevDay': '前一天',
+  'ag.prevWeek': '上一周',
+  'ag.nextWeek': '下一周',
   'ag.nextDay': '后一天',
   'ag.today': '今天',
   'ag.stagedTitle': '拖拽改期正在写入后端',
@@ -411,6 +413,7 @@ export const zh: Record<string, string> = {
   'widget.idle': '空闲 — jex 存活',
   'widget.noSched': '±1 小时窗口内没有安排的任务',
   'widget.clockTitle': '当前时间（与核心对时）',
+  'widget.overdue': '已逾期',
   'widget.cycleLine': '周期：{n} 个动作',
 
   /* store command echoes + local messages */

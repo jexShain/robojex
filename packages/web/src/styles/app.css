@@ -2066,6 +2066,17 @@ body[data-ds-dark-theme] .chip.full {
   height: 40px;
 }
 
+/* week-walk nav rides the corner cell (the grid was locked to this week) */
+.agenda-days .ad-nav {
+  position: absolute;
+  top: 6px;
+  left: clamp(10px, 3%, 32px);
+  z-index: 6;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
 .agenda-days .ad-head {
   height: 40px;
   display: flex;

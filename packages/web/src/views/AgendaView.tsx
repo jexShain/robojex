@@ -447,6 +447,21 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
     const timer = window.setInterval(() => setTick((x) => x + 1), 60_000)
     return () => window.clearInterval(timer)
   }, [])
+  // week walk: the 7-day grid was locked to the current week — next week's
+  // cards were invisible here. Offset by whole weeks, arrows + Home match
+  // the day mode's calendar keys.
+  const [weekOffset, setWeekOffset] = useState(0)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const el = e.target instanceof HTMLElement ? e.target : null
+      if (el && el.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (e.key === 'ArrowLeft') { e.preventDefault(); setWeekOffset((w) => w - 1) }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); setWeekOffset((w) => w + 1) }
+      else if (e.key === 'Home') { e.preventDefault(); setWeekOffset(0) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
   // drag-reschedule, same contract as the day mode: optimistic stage +
   // PATCH, marker retires on the confirming broadcast
   const [pending, setPending] = useState<Map<string, number>>(() => new Map())
@@ -464,7 +479,7 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
   const rootRef = useRef<HTMLDivElement>(null)
 
   const now = Date.now() + state.clockOffset
-  const dayStart = dayStartOf(now)
+  const dayStart = addDaysLocal(dayStartOf(now), weekOffset * 7)
   const tasks = useMemo(
     () =>
       pending.size === 0
@@ -524,6 +539,35 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
 
   return (
     <div className="agenda-days" ref={rootRef}>
+      <div className="ad-nav">
+        <button
+          type="button"
+          className="nav-btn"
+          title={t('ag.prevWeek')}
+          aria-label={t('ag.prevWeek')}
+          onClick={() => setWeekOffset((w) => w - 1)}
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <path d="M10 3.5 5.5 8l4.5 4.5" />
+          </svg>
+        </button>
+        {weekOffset !== 0 ? (
+          <button type="button" className="nav-btn today" onClick={() => setWeekOffset(0)}>
+            {t('ag.today')}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="nav-btn"
+          title={t('ag.nextWeek')}
+          aria-label={t('ag.nextWeek')}
+          onClick={() => setWeekOffset((w) => w + 1)}
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <path d="M6 3.5 10.5 8 6 12.5" />
+          </svg>
+        </button>
+      </div>
       <div className="ad-chips">
         {pending.size > 0 ? (
           <span className="agenda-staged" role="status" title={t('ag.stagedTitle')}>

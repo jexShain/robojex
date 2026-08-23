@@ -329,6 +329,8 @@ export const en: Record<string, string> = {
   /* agenda / calendar */
   'ag.pendingBadge': 'Syncing reschedule…',
   'ag.prevDay': 'Previous day',
+  'ag.prevWeek': 'Previous week',
+  'ag.nextWeek': 'Next week',
   'ag.nextDay': 'Next day',
   'ag.today': 'today',
   'ag.stagedTitle': 'Drag-reschedules are being written to the backend',
@@ -411,6 +413,7 @@ export const en: Record<string, string> = {
   'widget.idle': 'idle — jex is alive',
   'widget.noSched': 'nothing scheduled in the ±1h window',
   'widget.clockTitle': 'local time (core-synced)',
+  'widget.overdue': 'overdue',
   'widget.cycleLine': 'cycle: {n} actions',
 
   /* store command echoes + local messages */

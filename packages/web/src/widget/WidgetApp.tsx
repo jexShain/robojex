@@ -59,6 +59,7 @@ export function WidgetApp(): ReactElement {
   const serverNow = Date.now() + (s.clockOffset ?? 0)
   const running = s.tasks.filter((t) => t.status === 'running')
   const sched = s.tasks.filter((t) => (t.scheduledAt || t.dueAt) && t.status !== 'cancelled')
+  const overdueLabel = t('widget.overdue')
 
   // Clicking a tab both selects it and pins the view (manual intent).
   const pick = (t: Tab): void => {
@@ -118,12 +119,15 @@ export function WidgetApp(): ReactElement {
               // window edge half-clips. A glance widget trades geometric
               // purity for readable pills — clamp the anchor inward.
               const anchor = Math.max(12, Math.min(88, pct))
+              // overdue ring: past-due live cards keep their status fill but
+              // burn at the edge — time pressure survives the glance
+              const over = t.dueAt != null && t.dueAt < serverNow && t.status !== 'done' && t.status !== 'cancelled'
               return (
                 <div
                   key={t.id}
-                  className={`wband st-${t.status}`}
+                  className={`wband st-${t.status}${over ? ' over' : ''}`}
                   style={{ left: `${anchor}%` }}
-                  title={`${t.title} · ${fmtStamp(start, serverNow)}`}
+                  title={`${t.title} · ${fmtStamp(start, serverNow)}${over ? ` · ${overdueLabel}` : ''}`}
                 >
                   {t.title.slice(0, 18)}
                 </div>

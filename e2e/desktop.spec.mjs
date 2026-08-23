@@ -780,3 +780,25 @@ test.describe('RoboJex desktop', () => {
     await expect(page.locator('.detail-title')).toContainText('海底捞针探针', { timeout: 5_000 })
     await shot(page, '40-cmdk-task')
   })
+
+  // 41 (week walk): the 7-day grid was locked to the current week — next
+  // week's cards were invisible. Arrows shift whole weeks; Home returns.
+  test('41 days mode: arrows walk weeks, Home returns', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    const state0 = await (await page.request.get('/api/state')).json()
+    const now = state0.now ?? Date.now()
+    // a card 10 days out: invisible this week, visible after one ArrowRight
+    await page.request.post('/api/task', { data: { title: '下周探针', scheduledAt: now + 10 * 86_400_000 } })
+    await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    await page.locator('.agenda-toolbar .seg button', { hasText: '7 天' }).click()
+    await expect(page.locator('.ad-head.today')).toBeVisible({ timeout: 5_000 })
+    await expect(page.locator('.ad-col .agenda-block', { hasText: '下周探针' })).toHaveCount(0)
+
+    await page.keyboard.press('ArrowRight')
+    await expect(page.locator('.agenda-days .nav-btn.today')).toBeVisible({ timeout: 3_000 })
+    await expect(page.locator('.ad-col .agenda-block', { hasText: '下周探针' })).toBeVisible({ timeout: 3_000 })
+    await shot(page, '41-week-walk')
+    await page.keyboard.press('Home')
+    await expect(page.locator('.ad-col .agenda-block', { hasText: '下周探针' })).toHaveCount(0, { timeout: 3_000 })
+  })

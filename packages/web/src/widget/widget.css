@@ -145,6 +145,12 @@
   background: var(--dsw-alias-state-error-primary, #dc2626);
 }
 
+/* Overdue live cards: status fill stays, error ring burns at the edge. */
+.wband.over {
+  box-shadow: 0 0 0 1.5px var(--dsw-alias-state-error-primary, #dc2626),
+    0 0 8px color-mix(in srgb, var(--dsw-alias-state-error-primary, #dc2626) 45%, transparent);
+}
+
 /* Now line — vertical, centered at 50%; 60s transition smooths drift. */
 .wnow {
   position: absolute;
