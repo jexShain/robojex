@@ -186,6 +186,7 @@ const SZH = {
     'settings.shortcuts.title': '快捷键',
     'settings.shortcuts.desc': '标注（桌面版）的仅在桌面端生效，其余为界面内快捷键。',
     'settings.shortcuts.cmdk': '命令面板',
+    'settings.shortcuts.views': '切换视图（指挥中心→驾驶舱）',
     'settings.shortcuts.esc': '关闭弹层',
     'settings.shortcuts.newline': '换行',
     'settings.shortcuts.history': '输入历史',
@@ -363,6 +364,7 @@ const SEN: Record<SKey, string> = {
   'settings.shortcuts.title': 'Shortcuts',
   'settings.shortcuts.desc': 'Rows marked (Desktop) only apply to the desktop shell; the rest work in-app.',
   'settings.shortcuts.cmdk': 'Command palette',
+  'settings.shortcuts.views': 'Switch view (command → cockpit)',
   'settings.shortcuts.esc': 'Close overlay',
   'settings.shortcuts.newline': 'Newline',
   'settings.shortcuts.history': 'Input history',
@@ -482,6 +484,7 @@ const SECTIONS: { id: SecId; icon: IconName; labelKey: SKey }[] = [
 
 const SHORTCUTS: { keys: string[]; descKey: SKey }[] = [
   { keys: ['Ctrl', 'K'], descKey: 'settings.shortcuts.cmdk' },
+  { keys: ['Ctrl', '1–6'], descKey: 'settings.shortcuts.views' },
   { keys: ['Esc'], descKey: 'settings.shortcuts.esc' },
   { keys: ['Shift', 'Enter'], descKey: 'settings.shortcuts.newline' },
   { keys: ['↑', '↓'], descKey: 'settings.shortcuts.history' },

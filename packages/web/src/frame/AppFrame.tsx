@@ -131,18 +131,31 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
     return () => mq.removeEventListener('change', onChange)
   }, [])
 
-  /* global Ctrl/⌘+K toggles the palette */
+  /* global Ctrl/⌘+K toggles the palette; Ctrl/⌘+1..6 jumps views in
+   * VIEW_META order (Electron owns these — no browser tab conflict) */
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      const mod = e.ctrlKey || e.metaKey
+      if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setSettingsOpen(false)
         setPaletteOpen((o) => !o)
+        return
+      }
+      if (mod && e.key >= '1' && e.key <= '9') {
+        const idx = Number(e.key) - 1
+        const target = VIEW_META[idx]
+        if (target) {
+          e.preventDefault()
+          setPaletteOpen(false)
+          setSettingsOpen(false)
+          changeView(target.id)
+        }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [changeView])
 
   /* selecting a task reveals the details column/drawer */
   useEffect(() => {

@@ -168,6 +168,12 @@ test.describe('RoboJex desktop', () => {
       await page.locator(`[data-testid="view-tab"][data-view="${view}"]`).click()
       await expect(page.locator(`[data-testid="view-tab"][data-view="${view}"]`)).toHaveAttribute('data-active', 'true')
     }
+    // Ctrl+1..6 jumps views in VIEW_META order (command/chat/board/agenda/
+    // activity/cockpit) — a desktop-owned shortcut
+    await page.keyboard.press('Control+4')
+    await expect(page.locator('[data-testid="view-tab"][data-view="agenda"]')).toHaveAttribute('data-active', 'true')
+    await page.keyboard.press('Control+1')
+    await expect(page.locator('[data-testid="view-tab"][data-view="command"]')).toHaveAttribute('data-active', 'true')
     await page.locator('[data-testid="view-tab"][data-view="board"]').click()
     await shot(page, '12-board')
     await page.locator('[data-testid="view-tab"][data-view="cockpit"]').click()
