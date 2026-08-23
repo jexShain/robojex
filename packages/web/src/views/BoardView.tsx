@@ -23,6 +23,13 @@ import { fmtStamp } from './timefmt'
 /** Filter ids map to board.filter.* dictionary keys. */
 const FILTERS: BoardFilter[] = ['all', 'running', 'due-today']
 
+/** The picked filter survives reloads — re-picking it every session is the
+ *  kind of small tax that makes a daily tool feel forgetful. */
+function loadBoardFilter(): BoardFilter {
+  const raw = window.localStorage.getItem('robojex-board-filter')
+  return FILTERS.includes(raw as BoardFilter) ? (raw as BoardFilter) : 'all'
+}
+
 function Badges({ task, now }: { task: Task; now: number }) {
   const { t } = useT()
   return (
@@ -186,7 +193,10 @@ function BoardCard({
 export function BoardView() {
   const { state, selectTask } = useStore()
   const { t } = useT()
-  const [filter, setFilter] = useState<BoardFilter>('all')
+  const [filter, setFilter] = useState<BoardFilter>(loadBoardFilter)
+  useEffect(() => {
+    window.localStorage.setItem('robojex-board-filter', filter)
+  }, [filter])
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
   // + new-task inline entry (POST /api/task; the tasks broadcast updates the
   // store, so no local list patching is needed)
