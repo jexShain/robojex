@@ -15,7 +15,7 @@ const INITIALS: Record<string, string> = {
   语: 'y', 言: 'y', 挡: 'd', 位: 'w', 休: 'x', 眠: 'm', 省: 's', 电: 'd',
   均: 'j', 衡: 'h', 专: 'z', 注: 'z', 狂: 'k', 暴: 'b', 未: 'w', 命: 'm',
   名: 'm', 循: 'x', 环: 'h', 模: 'm', 式: 's', 群: 'q', 组: 'z', 搜: 's',
-  索: 's',
+  索: 's', 文: 'w', 英: 'y',
 }
 
 /** Per-char initials of a label: hanzi map through the table, latin chars

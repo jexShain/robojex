@@ -7,6 +7,8 @@ describe('pinyin initials matcher', () => {
     expect(initialsOf('对话')).toBe('dh')
     expect(initialsOf('任务板')).toBe('rwb')
     expect(initialsOf('指挥中心')).toBe('zhzx')
+    expect(initialsOf('中文')).toBe('zw')
+    expect(initialsOf('英文')).toBe('yw')
   })
 
   it('latin passes through lowercased, digits/punct drop', () => {
