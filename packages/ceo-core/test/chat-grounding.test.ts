@@ -217,7 +217,8 @@ test("blocked tool result feeds back as the TOOL RESULT — the model answers on
   expect(frames(res).at(-1)).toMatchObject({ type: "done" });
   expect(frames(res).filter((e) => e.type === "content").map((e) => e.delta).join("")).toBe("这台机器上我不能执行删除命令");
   const fed = rig.llmState.roundMessages[1]!.find((m) => m.role === "user" && m.content.startsWith("# TOOL RESULT (terminal)"));
-  expect(fed!.content).toContain("blocked destructive command");
+  // R80: the chat-level read-only guard intercepts `rm` before the manager
+  expect(fed!.content).toContain("READ-ONLY");
 });
 
 test("round cap: a model that always sentinels is cut off after 3 tool rounds", async () => {
@@ -336,4 +337,24 @@ test("R74: matching MEMORY lessons ride the grounding prompt; no match injects n
   await run(rig, { conversationId: conv2.id, text: "讲个笑话" });
   const sys2 = rig.llmState.roundMessages.at(-1)![0]!.content;
   expect(sys2).not.toContain("# 管家经验");
+});
+
+test("R80: the chat terminal is read-only — redirection and write heads are refused, reads pass", async () => {
+  const { tools, calls } = fakeTools("should-never-run-for-writes");
+  const rig = mkRig([
+    { content: ['<<tool:terminal>> {"command":"echo pwned > /tmp/rj-x.txt"}'] },
+    { content: ["好"] },
+  ], { tools });
+  const conv = rig.store.create();
+  await run(rig, { conversationId: conv.id, text: "写入一个文件" });
+  // the write never reached the tool layer: the guard refused it inline
+  expect(calls.length).toBe(0);
+  const fedBack = rig.llmState.roundMessages[1] ?? [];
+  const toolResult = fedBack.find((m) => m.role === "user" && m.content.startsWith("# TOOL RESULT"));
+  expect(String(toolResult?.content)).toContain("READ-ONLY");
+  // ground rules ride the system prompt
+  const sys = rig.llmState.roundMessages[0]![0]!.content;
+  expect(sys).toContain("date");            // time must be grounded
+  expect(sys).toContain("已转交管家");       // dispatch/remember claims banned
+  expect(sys).toContain("STATS.md");        // track-record pointer
 });

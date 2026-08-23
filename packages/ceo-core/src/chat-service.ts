@@ -55,7 +55,13 @@ const TOOL_PREVIEW_MAX = 400; // chars of tool output shipped in the done frame 
 const LIVE_LOOKUP_DOC = `# LIVE LOOKUP (grounding)
 You have LIVE tools for facts about THIS machine. If answering needs real-time system data (hardware, OS, files, processes, network, task progress), NEVER invent it: output EXACTLY one line
 <<tool:terminal>> {"command":"nvidia-smi"}
-and nothing else — the sentinel line must be the VERY FIRST characters of your reply (no narration before it). The tool name and every parameter name must be copied EXACTLY from the Allowed tools list below (e.g. the terminal tool takes "command", not "arg" or "cmd"). The system runs it and feeds you the real result; then answer grounded in it. One tool per reply. Live lookup is read-only — writing files or mutating the board belongs to the butler loop, not to this chat. If no live data is needed, just answer normally (no sentinel).`;
+and nothing else — the sentinel line must be the VERY FIRST characters of your reply (no narration before it). The tool name and every parameter name must be copied EXACTLY from the Allowed tools list below (e.g. the terminal tool takes "command", not "arg" or "cmd"). The system runs it and feeds you the real result; then answer grounded in it. One tool per reply. Live lookup is read-only — writing files or mutating the board belongs to the butler loop, not to this chat. If no live data is needed, just answer normally (no sentinel).
+Grounding rules (learned the hard way):
+- The CURRENT TIME is real-time data you do not know: answer any 时间/几点/日期 question ONLY after running \`date\` (never guess).
+- Never claim an action is 已完成/已记住/已写入 unless its tool result is in front of you THIS reply. Dispatch-type requests ("创建任务/派发/整理") are handled by the butler in the background: say 已转交管家安排 and stop — do NOT narrate fake completion.
+- "记住 X" requests: say 已转交管家记录 — the butler banks it asynchronously; do not claim it is already stored.
+- Requests to MODIFY a board card (改期/改名/取消): you have no write tools here — say 已转交管家处理 and let the butler steer it.
+- The agent track record lives in the file ${"{STATS_PATH}"} — read_file it when asked about 战绩/通过率.`;
 
 // Read-only tools the chat channel may invoke (R11): facts only. Everything
 // write-class — write_file/patch, kanban mutations, delegate_task,
@@ -71,6 +77,25 @@ const LOOKING_TOOLS = new Set([
 
 /** Keep only the allowlisted schema lines from a ToolManager schemasBlock
  *  (two header lines + one `name(params) — desc` line per tool). */
+/** R80 chat-channel terminal guard: this surface is READ-ONLY by doctrine,
+ *  and shell redirection (`>`, `>>`, `| tee`, `truncate`, `dd`) or a
+ *  mutating command head turns a "lookup" into a write. Refused commands
+ *  return guidance instead of executing; the fed-back result teaches the
+ *  model to re-ask read-only. Mutating work belongs to the butler's spawns. */
+const WRITE_HEADS = /^(sudo|doas|cp|mv|rm|rmdir|mkdir|touch|chmod|chown|chgrp|ln|truncate|dd|shred|sync|kill|pkill|killall|shutdown|reboot|poweroff|mount|umount|mkfs|fdisk|parted|apt|apt-get|pip|pip3|npm|yarn|pnpm|git|tar|zip|unzip|gzip|gunzip|7z|crontab|systemctl|service|export|set|source|tee|wget|scp|sftp|rsync|ftp)\b/i;
+export function chatTerminalGuard(cmd: string): string | null {
+  if (/[>]{1,2}\s*\S|\btee\s+-a?\b|\btruncate\s|\bdd\s|2>\s*\S/.test(cmd)) {
+    return "error: the chat terminal is READ-ONLY — redirection/写盘被拒绝。需要写入/修改时，直接告诉管家派工（对话即委托），不要在本通道执行写命令。改用只读命令（cat/ls/head/du…）继续查询。";
+  }
+  for (const seg of cmd.split(/[|;&]|&&|\|\|/)) {
+    const head = seg.trim().split(/\s+/)[0] ?? "";
+    if (head && WRITE_HEADS.test(head)) {
+      return `error: the chat terminal is READ-ONLY — 命令 \`${head}\` 属于修改类，被拒绝。查询请用只读命令；执行修改请直接让管家派工。`;
+    }
+  }
+  return null;
+}
+
 export function lookingSchemas(block: string): string {
   const lines = block.split("\n");
   const kept = lines.filter((l, i) => i < 2 || LOOKING_TOOLS.has(l.split("(")[0]?.trim() ?? ""));
@@ -145,7 +170,8 @@ export class ChatService {
     // desktop control) belong to the orchestration loop, never to a chat
     // stream: a conversational reply must not side-effect the system.
     const schemas = tools ? lookingSchemas(tools.schemasBlock()) : "";
-    const grounding = tools && schemas ? `\n\n${LIVE_LOOKUP_DOC}\n\nAllowed tools:\n${schemas}` : "";
+    const statsPath = this.d.runtimeDir ? join(this.d.runtimeDir, "STATS.md") : "STATS.md";
+    const grounding = tools && schemas ? `\n\n${LIVE_LOOKUP_DOC.replace("{STATS_PATH}", statsPath)}\n\nAllowed tools:\n${schemas}` : "";
     const memo = this.memoryNote(rawText); // R74: relevant lessons make the first tool call the right one
     const llmMessages = [
       { role: "system", content: chatPrompt(this.d.gear.current()) + grounding + memo },
@@ -244,7 +270,16 @@ export class ChatService {
           else if (!parsed) result = `error: unparseable arguments on the sentinel line: ${line.slice(0, 120)}`;
           if (result === null) {
             send({ type: "tool", name, args: JSON.stringify(args), state: "running" });
-            result = await tools!.call(name, args, this.d.gate?.() ?? "full"); // ToolManager truncates to 8KB
+            // R80 read-only gate: the chat channel's terminal must never
+            // mutate anything — the scenario loop caught `echo x > file`
+            // sailing through the looking gate via shell redirection.
+            if (name === "terminal") {
+              const refused = chatTerminalGuard(String(args.command ?? ""));
+              if (refused) result = refused;
+            }
+            if (result === null) {
+              result = await tools!.call(name, args, this.d.gate?.() ?? "full"); // ToolManager truncates to 8KB
+            }
             send({ type: "tool", name, state: "done", preview: result.slice(0, TOOL_PREVIEW_MAX) });
           }
           llmMessages.push({ role: "assistant", content: line }); // the sentinel, verbatim
