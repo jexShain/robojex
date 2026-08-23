@@ -1138,7 +1138,7 @@ test("R82 time errands: scheduled spawn defers, due wake replies to the human an
   const runtimeDir = makeRuntime();
   const chats: string[] = [];
   const spawned: unknown[] = [];
-  const future = new Date(Date.now() + 3_600_000).toISOString();
+  const future = new Date(Date.now() + 1_500).toISOString(); // near: phase 2 wakes AFTER this moment
   let cardId = ""; // set after phase 1; the due-wake fake reads it back
   const chat = vi.fn(async (slot: string, msgs: { content: string }[]) => {
     if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
@@ -1149,7 +1149,7 @@ test("R82 time errands: scheduled spawn defers, due wake replies to the human an
         { type: "verify", task_id: cardId, progress: 100, verdict: "pass", note: "本周期已用 reply 直接通知用户，提醒送达" },
       ] }), usage: { promptTokens: 50, completionTokens: 20 } };
     }
-    if (ctx.includes("chat: 明天下午3点提醒我喝水")) {
+    if (/^chat: 明天下午3点提醒我喝水$/m.test(ctx)) { // line-anchored: RECENT CYCLES replays the text with a "[HH:MM] wake=" prefix
       return { content: JSON.stringify({ actions: [
         { type: "spawn", framework: "hermes", title: "提醒我喝水", prompt: "到点提醒用户喝水", scheduledAt: future, accept: "到点已通知用户" },
       ] }), usage: { promptTokens: 50, completionTokens: 20 } };
@@ -1173,8 +1173,10 @@ test("R82 time errands: scheduled spawn defers, due wake replies to the human an
   expect(chats.some((c) => c.includes("已排程") && c.includes("提醒我喝水"))).toBe(true);
 
   // phase 2: the Gantt pump wakes at due time — a reminder needs no agent:
-  // the reply reaches the human and a todo-pass closes the card (R82)
+  // the reply reaches the human and a todo-pass closes the card (R82).
+  // (Sleep past scheduledAt so the R85 premature-pass gate sees it as due.)
   cardId = card.id;
+  await new Promise((r) => setTimeout(r, 1_800));
   await loop.runOnce(`due_spawn: ${card.id.slice(0, 8)} 提醒我喝水`);
   expect(spawned).toHaveLength(0); // the doctrine path: reply, not dispatch
   expect(chats.some((c) => c.includes("该喝水了"))).toBe(true);
@@ -1285,6 +1287,48 @@ test("R84b bare builtin-tool actions route onto tool_call; unknown types fail lo
     await new Promise((r) => setTimeout(r, 30)); // tool_call is fire-and-forget
     expect(calls).toEqual([{ name: "job_start", args: { command: "sleep 1", timeout: 60 } }]);
     expect(events.some((e) => e.includes("unknown action type") && e.includes("frobnicate"))).toBe(true);
+    loop.stop();
+  } finally { err.mockRestore(); }
+});
+
+test("R85 premature pass refused: a scheduled card cannot pass before its time; rulings bypass triage", async () => {
+  const runtimeDir = makeRuntime();
+  const chats: string[] = [];
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  // triage always says none — the ruling bypass must still reach decide
+  let tid = "";
+  const chat = vi.fn(async (slot: string, msgs: { content: string }[]) => {
+    if (slot === "patrol") return { content: '{"action":"none"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    const ctx = msgs.at(-1)!.content;
+    if (ctx.includes("chat: 验收")) {
+      return { content: JSON.stringify({ actions: [
+        { type: "verify", task_id: tid, progress: 100, verdict: "pass", note: "人类裁决：用户亲眼确认通过" },
+      ] }), usage: { promptTokens: 50, completionTokens: 20 } };
+    }
+    return { content: JSON.stringify({ actions: [
+      { type: "verify", task_id: tid, progress: 100, verdict: "pass", note: "还没到点但我觉得没问题" },
+    ] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  try {
+    const loop = new SchedulerLoop({
+      llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+      orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+      auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+    });
+    loop.setOutlet({ chatOut: (_f, text) => chats.push(text), frame: () => {}, hud: () => {} } as never);
+    const board = (loop as unknown as { d: { board: TaskBoard } }).d.board;
+    // a card scheduled an hour out: passing it now must be refused
+    const t = board.add({ title: "提前卡", assignee: "hermes", scheduledAt: Date.now() + 3_600_000, acceptance: "done" });
+    await loop.runOnce("chat: 顺手验一下提前卡");
+    let card = board.list().find((x) => x.id === t.id)!;
+    expect(card.verdict).toBe("unchecked"); // refused: scheduledAt in the future
+    expect(card.status).toBe("todo");
+    // the human's explicit ruling lands anyway — triage said none, the bypass carried it
+    tid = t.id; // verify resolves by id; the fake reads it back
+    await loop.runOnce("chat: 验收 提前卡 通过，我亲眼看过");
+    card = board.list().find((x) => x.id === t.id)!;
+    expect(card.verdict).toBe("pass");
+    expect(card.status).toBe("done"); // a human ruling outranks the clock
     loop.stop();
   } finally { err.mockRestore(); }
 });
