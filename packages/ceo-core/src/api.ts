@@ -302,6 +302,7 @@ export class ApiServer implements LoopOutlet {
     if (path === "/api/stats" && req.method === "GET") { this.getStats(res); return; }
     if (path === "/api/mission" && req.method === "POST") { await this.postMission(req, res); return; }
     if (path === "/api/task" && req.method === "POST") { await this.postTask(req, res); return; }
+    if (path === "/api/task" && req.method === "PUT") { await this.putTask(req, res); return; }
     if (path === "/api/mode" && req.method === "POST") { await this.postMode(req, res); return; }
     if (path === "/api/settings" && req.method === "GET") { this.getSettings(res); return; }
     if (path === "/api/settings" && req.method === "PUT") { await this.putSettings(req, res); return; }
@@ -479,6 +480,26 @@ export class ApiServer implements LoopOutlet {
     const t = this.d.board.add({ title: body.title, parentId, ...times });
     this.broadcast({ t: "tasks", tasks: this.d.board.list().map(taskView) });
     json(res, 202, { ok: true, task: taskView(t) });
+  }
+
+  // PUT /api/task: operator cancel — { id, status: "cancelled" }. The agent
+  // has its archive action; this is the operator's mirror (create existed,
+  // cancel did not — a mis-planned card had no retreat path). Idempotent on
+  // already-cancelled; done is history and refuses with 409.
+  private async putTask(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
+    if (typeof body.id !== "string" || body.id.length === 0) { json(res, 400, { error: "id must be a non-empty task id" }); return; }
+    if (body.status !== undefined && body.status !== "cancelled") { json(res, 400, { error: "only status \"cancelled\" is supported" }); return; }
+    const hit = this.d.board.list().find((t) => t.id === body.id);
+    if (!hit) { json(res, 404, { error: "no such task" }); return; }
+    if (hit.status === "done") { json(res, 409, { error: "task is done — history is immutable" }); return; }
+    if (hit.status !== "cancelled") {
+      this.d.board.update(hit.id, { status: "cancelled", resultSummary: [hit.resultSummary, "[cancelled by operator]"].filter(Boolean).join(" | ") });
+      this.broadcast({ t: "tasks", tasks: this.d.board.list().map(taskView) });
+    }
+    const now = this.d.board.list().find((t) => t.id === hit.id)!;
+    json(res, 202, { ok: true, task: taskView(now) });
   }
 
   private async postMode(req: IncomingMessage, res: ServerResponse): Promise<void> {

@@ -53,9 +53,11 @@
 }
 
 .widget-head nav button {
+  flex: 1;
+  text-align: center;
   font: 12px/1 var(--ds-font-family-code, monospace);
   color: var(--dsw-alias-label-secondary);
-  padding: 4px 10px;
+  padding: 5px 6px;
   border-radius: 6px;
   transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out),
     color var(--ds-transition-duration-fast) var(--ds-ease-in-out);

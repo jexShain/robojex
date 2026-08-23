@@ -378,6 +378,7 @@ export const zh: Record<string, string> = {
   'widget.unpin': '取消固定 — 恢复自动轮换',
   'widget.expand': '展开为主控制台',
   'widget.idle': '空闲 — jex 存活',
+  'widget.noSched': '±1 小时窗口内没有安排的任务',
   'widget.cycleLine': '周期：{n} 个动作',
 
   /* store command echoes + local messages */

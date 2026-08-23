@@ -97,10 +97,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/state') {
     send(200, {
       now: Date.now(),
-      tasks: [
-        { id: 't1', title: '示例任务一', status: 'done', resultSummary: '完成', createdAt: Date.now() - 3600_000, parentId: null, scheduledAt: null, dueAt: null, progress: 100, verdict: 'pass' },
-        { id: 't2', title: '示例任务二', status: 'running', resultSummary: '', createdAt: Date.now() - 1800_000, parentId: null, scheduledAt: Date.now() + 3600_000, dueAt: Date.now() + 7200_000, progress: 40, verdict: 'unchecked' },
-      ],
+      tasks: seedTasks(),
       budget: { mode: 'burn', dailyTokens: 2_000_000, spentToday: 12345, line: 'burn · 12,345 tok' },
       mode: 'observe',
       mission: '# MISSION\nmock mission',
@@ -358,13 +355,23 @@ server.on('upgrade', (req, socket, head) => {
   })
 })
 
+/** Seeded task list, shared by /api/state and stateSnapshot(). Times are
+ *  relative to "now" so time-band UIs (widget gantt, command-center strip)
+ *  always have a band inside their ±1h window: t3 spans the now-line, t2
+ *  sits visible-but-late at ~45min out. */
+function seedTasks() {
+  const now = Date.now()
+  return [
+    { id: 't1', title: '示例任务一', status: 'done', resultSummary: '完成', createdAt: now - 3600_000, parentId: null, scheduledAt: null, dueAt: null, progress: 100, verdict: 'pass' },
+    { id: 't2', title: '示例任务二', status: 'running', resultSummary: '', createdAt: now - 1800_000, parentId: null, scheduledAt: now + 45 * 60_000, dueAt: now + 90 * 60_000, progress: 40, verdict: 'unchecked' },
+    { id: 't3', title: '进行中的演示任务', status: 'todo', resultSummary: '', createdAt: now - 2400_000, parentId: null, scheduledAt: now - 30 * 60_000, dueAt: now + 30 * 60_000, progress: 10, verdict: 'unchecked' },
+  ]
+}
+
 function stateSnapshot() {
   return {
     now: Date.now(),
-    tasks: [
-      { id: 't1', title: '示例任务一', status: 'done', resultSummary: '完成', createdAt: Date.now() - 3600_000, parentId: null, scheduledAt: null, dueAt: null, progress: 100, verdict: 'pass' },
-      { id: 't2', title: '示例任务二', status: 'running', resultSummary: '', createdAt: Date.now() - 1800_000, parentId: null, scheduledAt: Date.now() + 3600_000, dueAt: Date.now() + 7200_000, progress: 40, verdict: 'unchecked' },
-    ],
+    tasks: seedTasks(),
     budget: { mode: 'burn', dailyTokens: 2_000_000, spentToday: 12345, line: 'burn · 12,345 tok' },
     mode: 'observe',
     mission: '# MISSION\nmock mission',

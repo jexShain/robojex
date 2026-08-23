@@ -1197,6 +1197,7 @@ test("R82b spawn times: relative durations parse, UTC drift heals, garbage stays
     if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
     return { content: JSON.stringify({ actions: [
       { type: "spawn", framework: "hermes", title: "相对三分钟", prompt: "x", scheduledAt: "+3m" },
+      { type: "spawn", framework: "hermes", title: "相对九点半", prompt: "x", scheduledAt: "+9.5h" },
       { type: "spawn", framework: "hermes", title: "漂移自愈", prompt: "x", scheduledAt: driftedWall },
       { type: "spawn", framework: "hermes", title: "垃圾时间", prompt: "x", scheduledAt: "not-a-time" },
     ] }), usage: { promptTokens: 50, completionTokens: 20 } };
@@ -1212,6 +1213,9 @@ test("R82b spawn times: relative durations parse, UTC drift heals, garbage stays
     const rel = board.list().find((x) => x.title === "相对三分钟")!;
     expect(rel.scheduledAt!).toBeGreaterThan(now + 2 * 60_000);   // +3m honored
     expect(rel.scheduledAt!).toBeLessThan(now + 5 * 60_000);
+    const frac = board.list().find((x) => x.title === "相对九点半")!;
+    expect(frac.scheduledAt!).toBeGreaterThan(now + 9 * 3_600_000);   // fractional +9.5h honored (soak bug: integer-only regex dropped it)
+    expect(frac.scheduledAt!).toBeLessThan(now + 10 * 3_600_000);
     const healed = board.list().find((x) => x.title === "漂移自愈")!;
     expect(healed.scheduledAt!).toBeGreaterThan(now);             // healed into the future
     expect(healed.scheduledAt!).toBeLessThan(now + 7 * 86_400_000);

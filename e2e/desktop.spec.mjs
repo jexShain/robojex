@@ -314,3 +314,41 @@ test.describe('RoboJex desktop', () => {
     }
     await shot(page, '23-icon-system')
   })
+
+  // 24 (widget): the /widget mini console at its real 400x600 viewport —
+  // heartbeat, three tabs render their panes, pin toggles, expand returns
+  // to the main window, and the icon sweep holds here too.
+  test('24 widget: tabs, pin, expand at 400x600', async ({ page }) => {
+    await page.setViewportSize({ width: 400, height: 600 })
+    await page.goto('/widget')
+    await page.locator('.widget-root').waitFor({ timeout: 10_000 })
+    await expect(page.locator('.hud-heart')).toBeVisible()
+    // gantt is the boot tab: bands area + centerline + at least one
+    // in-window band (mock seeds a task spanning the now-line)
+    await expect(page.locator('.widget-gantt')).toBeVisible()
+    await expect(page.locator('.wnow')).toBeVisible()
+    await expect(page.locator('.wband').first()).toBeVisible()
+    // rings pane (idle copy when nothing runs — both are valid states)
+    await page.locator('.widget-head nav button').nth(1).click()
+    await expect(page.locator('.widget-rings')).toBeVisible()
+    // feed pane renders the list (mock seeds transcript entries)
+    await page.locator('.widget-head nav button').nth(2).click()
+    await expect(page.locator('.widget-feed')).toBeVisible()
+    // pin: manual tab pick already pinned it — toggle back off
+    const pin = page.locator('.widget-pin')
+    await expect(pin).toHaveAttribute('aria-pressed', 'true')
+    await pin.click()
+    await expect(pin).toHaveAttribute('aria-pressed', 'false')
+    // expand returns to the main console (sidebar is an overlay drawer under
+    // 900px, so widen before asserting on sidebar-anchored testids)
+    await page.locator('.widget-expand').click()
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await expect(page.getByTestId('view-tab').first()).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByTestId('conn-status')).toBeVisible({ timeout: 10_000 })
+    // back to the widget for the shot + icon check (expand navigated away)
+    await page.goto('/widget')
+    await page.setViewportSize({ width: 400, height: 600 })
+    await page.locator('.widget-root').waitFor()
+    await expect(page.locator('[data-icon-fallback]')).toHaveCount(0)
+    await shot(page, '24-widget')
+  })

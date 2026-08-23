@@ -180,6 +180,37 @@ test("POST /api/task: 202 creates a todo card with tree/schedule fields and broa
   c.ws.close();
 });
 
+test("PUT /api/task: operator cancel retires a card + broadcasts; idempotent, done refuses, bad shapes 4xx", async () => {
+  const rig = mkRig();
+  const live = rig.board.add({ title: "mis-planned" });
+  const fin = rig.board.add({ title: "finished" });
+  rig.board.update(fin.id, { status: "done" });
+  const loop = { push: vi.fn() };
+  const api = makeApi(rig, loop);
+  await api.start();
+  const c = wsCollect(api);
+  await c.opened;
+
+  const put = (body: unknown): Promise<Response> =>
+    fetch(`http://127.0.0.1:${api.port}/api/task`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  const ok = await put({ id: live.id });
+  expect(ok.status).toBe(202);
+  expect(rig.board.list().find((t) => t.id === live.id)).toMatchObject({ status: "cancelled" });
+  await until(() => c.frames.some((f) => f.t === "tasks"));
+  expect((c.frames.find((f) => f.t === "tasks")!.tasks as StateFrame["tasks"])!.find((t) => t.id === live.id)).toMatchObject({ status: "cancelled" });
+
+  const again = await put({ id: live.id, status: "cancelled" }); // idempotent replay
+  expect(again.status).toBe(202);
+  const done = await put({ id: fin.id });
+  expect(done.status).toBe(409); // history is immutable
+  for (const [body, code] of [[{}, 400], [{ id: 42 }, 400], [{ id: "missing" }, 404], [{ id: live.id, status: "todo" }, 400]] as [unknown, number][]) {
+    const r = await put(body);
+    expect(r.status, `body ${JSON.stringify(body)}`).toBe(code);
+  }
+  c.ws.close();
+});
+
 test("POST /api/chat: 202, enqueues 'chat: <text>', broadcasts chat_out(user); WS {t:'chat'} frame is equivalent; bad input 400", async () => {
   const rig = mkRig();
   const loop = { push: vi.fn() };

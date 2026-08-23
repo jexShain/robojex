@@ -11,6 +11,7 @@ import { fill } from '../i18n'
 import { Providers } from '../Providers'
 import { Icon } from '../ui/Icon'
 import type { TranscriptItem } from '../state/types'
+import { fmtStamp } from '../views/timefmt'
 
 // Three rotating tabs. Pinned stops the 8s auto-advance.
 type Tab = 'gantt' | 'rings' | 'feed'
@@ -50,6 +51,7 @@ export function WidgetApp(): ReactElement {
   const alive = s.lastHud !== null || s.transcript.some((t) => t.kind === 'cycle')
   const serverNow = Date.now() + (s.clockOffset ?? 0)
   const running = s.tasks.filter((t) => t.status === 'running')
+  const sched = s.tasks.filter((t) => t.scheduledAt || t.dueAt)
 
   // Clicking a tab both selects it and pins the view (manual intent).
   const pick = (t: Tab): void => {
@@ -93,30 +95,35 @@ export function WidgetApp(): ReactElement {
         </button>
       </header>
 
-      {tab === 'gantt' && (
-        <div className="widget-gantt">
-          {s.tasks
-            .filter((t) => t.scheduledAt || t.dueAt)
-            .map((t) => {
+      {tab === 'gantt' &&
+        (sched.length === 0 ? (
+          <p className="widle">{t('widget.noSched')}</p>
+        ) : (
+          <div className="widget-gantt">
+            {sched.map((t) => {
               const start = t.scheduledAt ?? t.dueAt!
               const pct = Math.max(
                 0,
                 Math.min(100, ((start - (serverNow - WINDOW_MS / 2)) / WINDOW_MS) * 100),
               )
+              // pills anchor via translateX(-50%); one parked exactly on a
+              // window edge half-clips. A glance widget trades geometric
+              // purity for readable pills — clamp the anchor inward.
+              const anchor = Math.max(12, Math.min(88, pct))
               return (
                 <div
                   key={t.id}
                   className={`wband st-${t.status}`}
-                  style={{ left: `${pct}%` }}
-                  title={t.title}
+                  style={{ left: `${anchor}%` }}
+                  title={`${t.title} · ${fmtStamp(start, serverNow)}`}
                 >
                   {t.title.slice(0, 18)}
                 </div>
               )
             })}
-          <div className="wnow" style={{ left: '50%' }} />
-        </div>
-      )}
+            <div className="wnow" style={{ left: '50%' }} />
+          </div>
+        ))}
 
       {tab === 'rings' && (
         <div className="widget-rings">

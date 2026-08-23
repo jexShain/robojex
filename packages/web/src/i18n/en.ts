@@ -378,6 +378,7 @@ export const en: Record<string, string> = {
   'widget.unpin': 'unpin — resume auto-rotate',
   'widget.expand': 'expand to console',
   'widget.idle': 'idle — jex is alive',
+  'widget.noSched': 'nothing scheduled in the ±1h window',
   'widget.cycleLine': 'cycle: {n} actions',
 
   /* store command echoes + local messages */

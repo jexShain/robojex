@@ -1265,9 +1265,12 @@ A pass without an evidence note is refused. After a tool result you MUST answer 
   private spawnTime(v: unknown, field: "scheduledAt" | "dueAt"): number | undefined {
     if (v === undefined || v === null || v === "") return undefined;
     if (typeof v === "string") {
-      // R82: relative durations ("+3m" "+90s" "+2h" "+1d") sidestep model
-      // date arithmetic entirely — "3分钟后" becomes "+3m", no clock math
-      const rel = /^\+(\d+)\s*(s|min|m|h|d|w)$/i.exec(v.trim());
+      // R82: relative durations ("+3m" "+90s" "+2h" "+1d" "+9.5h") sidestep
+      // model date arithmetic entirely — "3分钟后" becomes "+3m", no clock
+      // math. Fractions allowed: soak caught "+9.5h" (a 23:30 plan for 09:00)
+      // falling through the integer-only match and silently dropping the
+      // schedule, which re-planned the whole morning as duplicates.
+      const rel = /^\+(\d+(?:\.\d+)?)\s*(s|min|m|h|d|w)$/i.exec(v.trim());
       if (rel) {
         const units: Record<string, number> = { s: 1_000, m: 60_000, min: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 };
         return Date.now() + Number(rel[1]) * (units[rel[2].toLowerCase()] ?? 60_000);
