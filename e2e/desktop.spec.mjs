@@ -493,3 +493,34 @@ test.describe('RoboJex desktop', () => {
     await expect(page.locator('.detail-actions')).toHaveCount(0, { timeout: 5_000 })
     await shot(page, '29-details-cancel')
   })
+
+  // 30 (days drag): the 7-day mode supports the same drag-reschedule — a
+  // vertical drag inside a column PATCHes scheduledAt with the new day+time.
+  // Uses a fresh task (POST) so it is independent of scenario 29's cancel.
+  test('30 days mode: drag-reschedule lands via PATCH', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    const SCHED = Date.now() + 2 * 3_600_000 // today, +2h (inside the 7-col window)
+    const created = await (await page.request.post('/api/task', {
+      data: { title: '拖拽改期七天探针', scheduledAt: SCHED, dueAt: SCHED + 3_600_000 },
+    })).json()
+    await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    await page.locator('.agenda-toolbar .seg button').nth(1).click()
+    const block = page.locator('.agenda-block', { hasText: '拖拽改期七天探针' }).first()
+    await expect(block).toBeVisible({ timeout: 5_000 })
+    const box = await block.boundingBox()
+    expect(box).toBeTruthy()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    for (let i = 1; i <= 8; i++) {
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + i * 15, { steps: 2 })
+    }
+    await page.mouse.up()
+    await expect(page.locator('.agenda-days .agenda-staged')).toHaveCount(0, { timeout: 10_000 })
+    const after = await (await page.request.get('/api/state')).json()
+    const moved = after.tasks.find((tk) => tk.id === created.task?.id || tk.title === '拖拽改期七天探针')
+    const delta = moved.scheduledAt - SCHED
+    expect(delta).toBeGreaterThan(45 * 60_000)
+    expect(delta).toBeLessThan(6 * 3_600_000)
+    await shot(page, '30-days-drag')
+  })

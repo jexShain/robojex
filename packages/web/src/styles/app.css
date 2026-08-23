@@ -1868,6 +1868,23 @@ body[data-ds-dark-theme] .chip.full {
   gap: 0 6px;
   padding: 0 clamp(10px, 3%, 32px) 24px 6px;
   align-content: start;
+  position: relative;
+}
+
+/* in-flight / error chips float over the days grid (the day mode shows them
+   in its subbar; days mode has none, so they ride the top-right corner) */
+.agenda-days .ad-chips {
+  position: absolute;
+  top: 6px;
+  right: clamp(10px, 3%, 32px);
+  z-index: 6;
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.agenda-days .ad-chips:empty {
+  display: none;
 }
 
 .agenda-days .ad-corner {

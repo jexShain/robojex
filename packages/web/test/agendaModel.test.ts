@@ -43,6 +43,19 @@ describe('blocksForDay', () => {
     expect(b!.spansBeyond).toBe(false)
   })
 
+  // R111: a cancelled card is dead weight that would sit on the calendar
+  // intercepting drags and clicks of live blocks underneath (found live by
+  // e2e ordering: a cancelled card dragged ON TOP of a fresh one).
+  test('cancelled tasks render no blocks — roots, children, and side list', () => {
+    const live = T({ id: 'live', scheduledAt: at(10) })
+    const dead = T({ id: 'dead', status: 'cancelled', scheduledAt: at(10) })
+    const deadKid = T({ id: 'dead-kid', status: 'cancelled', parentId: 'live', scheduledAt: at(10, 30) })
+    const blocks = blocksForDay([live, dead, deadKid], DAY0)
+    expect(blocks.map((b) => b.task.id)).toEqual(['live'])
+    expect(blocks[0]!.childBlocks).toHaveLength(0) // cancelled child filtered too
+    expect(unscheduledTasks([T({ id: 'u1' }), T({ id: 'u2', status: 'cancelled' })]).map((t) => t.id)).toEqual(['u1'])
+  })
+
   test('height spans sched→due and floors at 30 minutes', () => {
     const [long] = blocksForDay([T({ scheduledAt: at(9), dueAt: at(11, 30) })], DAY0)
     expect(long!.heightPct).toBeCloseTo((2.5 * 3_600_000 / DAY_MS) * 100)

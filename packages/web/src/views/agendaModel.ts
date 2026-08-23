@@ -118,12 +118,14 @@ export function blocksForDay(tasks: Task[], day0: number, now: number): AgendaBl
       childBlocks: [],
     }
     for (const c of parentMap.get(t.id) ?? []) {
+      if (c.status === 'cancelled') continue
       if (inDay(c.scheduledAt)) block.childBlocks.push(makeBlock(c, depth + 1))
     }
     return block
   }
 
   for (const t of tasks) {
+    if (t.status === 'cancelled') continue // zombie blocks intercept drags/clicks of live cards
     if (!inDay(t.scheduledAt)) continue
     if (nestedInDay(t)) continue // rendered inside an ancestor's block
     out.push(makeBlock(t, treeDepth(t, byId, depthCache)))
@@ -134,7 +136,7 @@ export function blocksForDay(tasks: Task[], day0: number, now: number): AgendaBl
 /** Tasks with no scheduledAt — the Day view's "no time" side list. */
 export function unscheduledTasks(tasks: Task[]): Task[] {
   return tasks
-    .filter((t) => t.scheduledAt == null)
+    .filter((t) => t.scheduledAt == null && t.status !== 'cancelled')
     .sort((a, b) => a.createdAt - b.createdAt)
 }
 

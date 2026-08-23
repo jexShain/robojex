@@ -35,6 +35,41 @@ const DRAG_THRESHOLD = 4
 
 const toneOf = (t: Task): string => `tone-${statusTone(t.status)}`
 
+/** Fire the reschedule PATCH and manage the in-flight marker; a refused
+ *  write reverts the optimistic stage and surfaces the dropped time.
+ *  Shared by the day and days modes. */
+function sendReschedule(
+  id: string,
+  newTime: number,
+  setPending: (update: (m: Map<string, number>) => Map<string, number>) => void,
+  setStageErr: (v: string) => void,
+): void {
+  setPending((m) => new Map(m).set(id, newTime))
+  void fetch('/api/task', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id, scheduledAt: newTime }),
+  })
+    .then((r) => { if (!r.ok) throw new Error(`PATCH /api/task -> ${r.status}`); return undefined })
+    .catch(() => {
+      setPending((m) => { const c = new Map(m); c.delete(id); return c })
+      setStageErr(new Date(newTime).toLocaleTimeString())
+    })
+}
+
+/** Retire pending markers the tasks broadcast confirmed (the card now
+ *  carries the staged time, or left the board). Returns the same Map
+ *  instance when nothing changed so React state can skip the update. */
+function retireConfirmed(pending: Map<string, number>, tasks: Task[]): Map<string, number> {
+  if (pending.size === 0) return pending
+  const next = new Map(pending)
+  for (const [id, time] of pending) {
+    const t = tasks.find((x) => x.id === id)
+    if (t && (t.scheduledAt === time || t.status === 'done' || t.status === 'cancelled')) next.delete(id)
+  }
+  return next.size === pending.size ? pending : next
+}
+
 /** Tooltip text: resultSummary when the task produced one, else the basics. */
 function blockTip(t: Task): string {
   if (t.resultSummary) return t.resultSummary
@@ -214,18 +249,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
       const trackH = 24 * h
       const newTime = snapTo(yToTime(y, trackH, day0, zoom, scrollHours), snapMinutes(zoom))
       // optimistic stage + real write (see `pending` above)
-      setPending((m) => new Map(m).set(dragBlock.task.id, newTime))
-      void fetch('/api/task', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id: dragBlock.task.id, scheduledAt: newTime }),
-      })
-        .then((r) => { if (!r.ok) throw new Error(`PATCH /api/task -> ${r.status}`); return undefined })
-        .catch(() => {
-          // write refused: revert the optimistic stage, surface the old time
-          setPending((m) => { const c = new Map(m); c.delete(dragBlock.task.id); return c })
-          setStageErr(new Date(newTime).toLocaleTimeString())
-        })
+      sendReschedule(dragBlock.task.id, newTime, setPending, setStageErr)
     }
     setDragBlock(null)
     isDragging.current = false
@@ -234,15 +258,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
   // the tasks broadcast is the source of truth: once a card carries the
   // staged time (or left the board), its in-flight badge retires
   useEffect(() => {
-    setPending((m) => {
-      if (m.size === 0) return m
-      const next = new Map(m)
-      for (const [id, time] of m) {
-        const t = state.tasks.find((x) => x.id === id)
-        if (t && (t.scheduledAt === time || t.status === 'done' || t.status === 'cancelled')) next.delete(id)
-      }
-      return next.size === m.size ? m : next
-    })
+    setPending((m) => retireConfirmed(m, state.tasks))
   }, [state.tasks])
 
   useEffect(() => {
@@ -380,19 +396,101 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
 
 function DaysView({ onOpen }: { onOpen(id: string): void }) {
   const { state } = useStore()
-  const { lang } = useT()
+  const { t, lang } = useT()
   const [, setTick] = useState(0)
   useEffect(() => {
     const timer = window.setInterval(() => setTick((x) => x + 1), 60_000)
     return () => window.clearInterval(timer)
   }, [])
+  // drag-reschedule, same contract as the day mode: optimistic stage +
+  // PATCH, marker retires on the confirming broadcast
+  const [pending, setPending] = useState<Map<string, number>>(() => new Map())
+  const [stageErr, setStageErr] = useState<string | null>(null)
+  useEffect(() => {
+    if (stageErr === null) return
+    const timer = window.setTimeout(() => setStageErr(null), 4_000)
+    return () => window.clearTimeout(timer)
+  }, [stageErr])
+  useEffect(() => {
+    setPending((m) => retireConfirmed(m, state.tasks))
+  }, [state.tasks])
+  const [drag, setDrag] = useState<{ block: AgendaBlock; x: number; y: number } | null>(null)
+  const dragStart = useRef({ x: 0, y: 0, moved: false })
+  const rootRef = useRef<HTMLDivElement>(null)
+
   const now = Date.now() + state.clockOffset
   const dayStart = dayStartOf(now)
-  const cols = dayColumns(state.tasks, dayStart, now)
+  const tasks = useMemo(
+    () =>
+      pending.size === 0
+        ? state.tasks
+        : state.tasks.map((t) =>
+            pending.has(t.id) ? { ...t, scheduledAt: pending.get(t.id) ?? null } : t,
+          ),
+    [state.tasks, pending],
+  )
+  const cols = useMemo(() => dayColumns(tasks, dayStart, now), [tasks, dayStart, now])
   const line = nowPct(dayStart, now)
 
+  const onDragStart = useCallback((e: PointerEvent, block: AgendaBlock) => {
+    dragStart.current = { x: e.clientX, y: e.clientY, moved: false }
+    setDrag({ block, x: e.clientX, y: e.clientY })
+    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+  }, [])
+  const onPointerMove = useCallback((e: PointerEvent) => {
+    if (
+      Math.abs(e.clientX - dragStart.current.x) > DRAG_THRESHOLD ||
+      Math.abs(e.clientY - dragStart.current.y) > DRAG_THRESHOLD
+    ) {
+      dragStart.current.moved = true
+    }
+    if (dragStart.current.moved) setDrag((d) => (d ? { ...d, x: e.clientX, y: e.clientY } : d))
+  }, [])
+  const onPointerUp = useCallback((e: PointerEvent) => {
+    const moved = dragStart.current.moved
+    dragStart.current.moved = false
+    // side effects live OUTSIDE the setState updater — React StrictMode
+    // double-invokes updaters and would fire the PATCH twice
+    if (drag && moved) {
+      // whichever column track the pointer is over wins: its data-day0 is
+      // the target day, the y-fraction within the track is the time
+      const track = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)
+        ?.closest('.ad-track') as HTMLElement | null
+      const day0 = track?.dataset.day0 !== undefined ? Number(track.dataset.day0) : NaN
+      if (track && Number.isFinite(day0)) {
+        const rect = track.getBoundingClientRect()
+        const frac = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+        const newTime = snapTo(day0 + frac * 86_400_000, 15)
+        sendReschedule(drag.block.task.id, newTime, setPending, setStageErr)
+      }
+    }
+    setDrag(null)
+  }, [drag])
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    el.addEventListener('pointermove', onPointerMove as unknown as EventListener)
+    el.addEventListener('pointerup', onPointerUp as unknown as EventListener)
+    return () => {
+      el.removeEventListener('pointermove', onPointerMove as unknown as EventListener)
+      el.removeEventListener('pointerup', onPointerUp as unknown as EventListener)
+    }
+  }, [onPointerMove, onPointerUp])
+
   return (
-    <div className="agenda-days">
+    <div className="agenda-days" ref={rootRef}>
+      <div className="ad-chips">
+        {pending.size > 0 ? (
+          <span className="agenda-staged" role="status" title={t('ag.stagedTitle')}>
+            {fill(t('ag.staged'), { n: pending.size })}
+          </span>
+        ) : null}
+        {stageErr ? (
+          <span className="agenda-staged err" role="alert" title={stageErr}>
+            {fill(t('ag.stageErr'), { t: stageErr })}
+          </span>
+        ) : null}
+      </div>
       <div className="ad-corner" />
       {cols.map((c) => {
         const head = dayColHead(c.day0, lang)
@@ -412,14 +510,31 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
       </div>
       {cols.map((c) => (
         <div key={c.day0} className={`ad-col${c.today ? ' today' : ''}`}>
-          <div className="ad-track" style={{ height: 24 * DAYS_HOUR_H }}>
+          <div
+            className="ad-track"
+            data-day0={c.day0}
+            style={{ height: 24 * DAYS_HOUR_H }}
+          >
             {c.blocks.map((b) => (
-              <AgendaBlockView key={b.task.id} block={b} now={now} compact onOpen={onOpen} />
+              <AgendaBlockView
+                key={b.task.id}
+                block={b}
+                now={now}
+                compact
+                pending={pending.has(b.task.id)}
+                onOpen={onOpen}
+                onDragStart={onDragStart}
+              />
             ))}
             {c.today && line !== null ? <NowLine pct={line} now={now} /> : null}
           </div>
         </div>
       ))}
+      {drag && dragStart.current.moved ? (
+        <div className="drag-ghost" style={{ position: 'fixed', top: drag.y - 12, left: drag.x + 12, zIndex: 9999, pointerEvents: 'none' }}>
+          {drag.block.task.title}
+        </div>
+      ) : null}
     </div>
   )
 }
