@@ -944,6 +944,11 @@ export class SchedulerLoop {
           if (taskId) { this.d.board.update(taskId, { status: "blocked", resultSummary: `action failed: ${reason}`, attempts: 1 }); this.emitTasks(); }
         }
       }
+      // R85b: a human ruling is an order, not a suggestion. Live soak: decide
+      // woke (bypass worked), narrated "验收通过 ✓ 已结算" — and emitted ZERO
+      // verify actions. Same philosophy as R76b enforcement: if the model
+      // talked instead of ruling, the code settles the verdict itself.
+      if (isRuling) this.enforceRuling(eventSummary);
       cost = await this.maybeAudit({ promptTokens: p.usage.promptTokens + dec.usage.promptTokens, completionTokens: p.usage.completionTokens + dec.usage.completionTokens }, parsed.actions ?? []);
     } catch (e) {
       // R16: a failed cycle feeds the vitals the next decide pass reads —
@@ -972,6 +977,33 @@ export class SchedulerLoop {
     if (j === this.lastJobsJson) return;
     this.lastJobsJson = j;
     this.d.outlet?.frame({ t: "jobs", jobs });
+  }
+
+  /** R85b mechanical ruling settlement: parse the human's verdict + target
+   *  card from the ruling event and, when the board still disagrees, land
+   *  the verdict code-side (same evidence path as every other verify). */
+  private enforceRuling(eventSummary: string): void {
+    const text = eventSummary.split(";").map((s) => s.trim()).find((x) => x.startsWith("chat: ")) ?? eventSummary;
+    const verdict = /不通过|不合格/.test(text) ? "fail" : /通过|合格/.test(text) ? "pass" : "";
+    if (!verdict) return;
+    // target: the live card whose title appears in the ruling (longest
+    // match wins); a lone live card needs no name at all
+    const live = this.d.board.list().filter((t) => ["todo", "running", "blocked"].includes(t.status));
+    const named = live
+      .filter((t) => text.includes(t.title) || t.title.split(/[（(]/)[0].length >= 2 && text.includes(t.title.split(/[（(]/)[0]))
+      .sort((a, b) => b.title.length - a.title.length);
+    const target = named[0] ?? (live.length === 1 ? live[0] : undefined);
+    if (!target) return;
+    // already settled this cycle by decide's own verify? then nothing to do
+    const now = this.d.board.list().find((t) => t.id === target.id)!;
+    if (now.status === "done" || now.status === "cancelled" || now.verdict === verdict) return;
+    try {
+      console.log(`[ceo] ruling enforcement: ${verdict} on 「${target.title}」 (decide did not settle it)`);
+      this.applyVerify({ task_id: target.id, progress: verdict === "pass" ? 100 : Math.min(now.progress, 50), verdict, note: `人类裁决（原话）：${text.slice(5, 100)}` }, true);
+    } catch (e) {
+      // an unparseable ruling shape is not worth a crashed cycle
+      console.warn(`[ceo] ruling enforcement skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   /** R20 queue drain: promote the oldest queued spawn once a slot is free.

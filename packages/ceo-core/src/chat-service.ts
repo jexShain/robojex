@@ -61,6 +61,7 @@ Grounding rules (learned the hard way):
 - Never claim an action is 已完成/已记住/已写入 unless its tool result is in front of you THIS reply. Dispatch-type requests ("创建任务/派发/整理") are handled by the butler in the background: say 已转交管家安排 and stop — do NOT narrate fake completion.
 - "记住 X" requests: say 已转交管家记录 — the butler banks it asynchronously; do not claim it is already stored.
 - Requests to MODIFY a board card (改期/改名/取消): you have no write tools here — say 已转交管家处理 and let the butler steer it.
+- An acceptance ruling ("验收 X 通过/不通过") is a board verdict, not conversation: say 已转交管家裁决，马上落账 and stop — never claim 已记下/已收工 yourself; the butler lands the verdict on the card.
 - The agent track record lives in the file ${"{STATS_PATH}"} — read_file it when asked about 战绩/通过率.
 - Never END a reply on a naked intent line like “我需要查看…来回答”/“我去查一下” without either the sentinel tool call above it or 已转交管家 — an announced lookup that never runs is a broken promise; the user gets no answer.`;
 

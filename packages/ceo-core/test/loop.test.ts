@@ -1332,3 +1332,29 @@ test("R85 premature pass refused: a scheduled card cannot pass before its time; 
     loop.stop();
   } finally { err.mockRestore(); }
 });
+
+test("R85b ruling enforcement: decide narrating without verify still settles the card code-side", async () => {
+  const runtimeDir = makeRuntime();
+  const chats: string[] = [];
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"none"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    // the live failure shape: a reply that CLAIMS the ruling landed, no verify
+    return { content: JSON.stringify({ actions: [
+      { type: "reply", text: "桌面整理验收通过 ✓ 已确认，收工。" },
+    ] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  loop.setOutlet({ chatOut: (_f, text) => chats.push(text), frame: () => {}, hud: () => {} } as never);
+  const board = (loop as unknown as { d: { board: TaskBoard } }).d.board;
+  board.add({ title: "整理桌面文件夹（重派#2）", assignee: "hermes", acceptance: "根目录清空" });
+  await loop.runOnce("chat: 验收 整理桌面文件夹 通过，桌面我刚看过");
+  const card = board.list().find((t) => t.title.includes("重派#2"))!;
+  expect(card.verdict).toBe("pass");          // the code landed what decide only narrated
+  expect(card.status).toBe("done");
+  expect(chats.some((c) => c.includes("验收「整理桌面文件夹（重派#2）」") && c.includes("通过"))).toBe(true);
+  loop.stop();
+});
