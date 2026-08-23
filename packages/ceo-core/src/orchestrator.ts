@@ -8,7 +8,7 @@ import type { AgentRegistry } from "./agent-registry.js";
 
 export type Framework = string;
 const DEFAULT_CMDS: Record<string, (p: string) => string> = {
-  "hermes": (p) => `hermes -p ${shq(p)} --yolo`,
+  "hermes": (p) => `hermes -z ${shq(p)} --yolo`,
   "claude-code": (p) => `claude -p ${shq(p)} --dangerously-skip-permissions`,
 };
 function shq(s: string): string { return `'${s.replace(/'/g, "'\\''")}'`; }

@@ -22,7 +22,7 @@ export interface KnownAgent {
 
 export const KNOWN_AGENTS: KnownAgent[] = [
   { name: "claude-code", aliases: ["claude"], cmd: "claude -p {prompt} --dangerously-skip-permissions", blurb: "Claude Code — Anthropic's coding agent, strong at repo-wide edits, tests and git", capabilities: ["coding", "review", "git"] },
-  { name: "hermes", aliases: ["hermes"], cmd: "hermes -p {prompt} --yolo", blurb: "Hermes — general-purpose agent with tool use", capabilities: ["general", "coding", "web"] },
+  { name: "hermes", aliases: ["hermes"], cmd: "hermes -z {prompt} --yolo", blurb: "Hermes — general-purpose agent with tool use", capabilities: ["general", "coding", "web"] },
   { name: "opencode", aliases: ["opencode"], cmd: "opencode --quiet -p {prompt}", blurb: "OpenCode — open-source coding agent (TUI/CLI)", capabilities: ["coding"] },
   { name: "omp", aliases: ["omp"], cmd: "omp {prompt}", blurb: "omp — local agent CLI runner", capabilities: ["general"] },
   { name: "codex", aliases: ["codex"], cmd: "codex --quiet --full-auto {prompt}", blurb: "OpenAI Codex CLI — autonomous coding agent", capabilities: ["coding", "review"] },

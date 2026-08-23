@@ -12,7 +12,7 @@ export interface AgentSpec {
 export const BUILTIN_AGENTS: AgentSpec[] = [
   {
     name: "hermes",
-    cmd: "hermes -p {prompt} --yolo",
+    cmd: "hermes -z {prompt} --yolo",
     capabilities: ["general", "coding", "web"],
     description: "Hermes Agent — general-purpose AI assistant with tool use",
   },
