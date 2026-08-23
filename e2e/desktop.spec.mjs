@@ -848,3 +848,20 @@ test.describe('RoboJex desktop', () => {
     const anim = await page.evaluate(() => getComputedStyle(document.querySelector('.board-card')).animationName)
     expect(anim).toBe('none')
   })
+
+  // 44 (a11y): the settings sheet traps Tab the same way — a modal that
+  // leaks focus to the page behind it isn't a modal.
+  test('44 a11y: settings modal focus trap', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.getByTestId('settings-open').click()
+    await expect(page.getByTestId('settings-modal')).toBeVisible()
+    const inModal = () =>
+      page.evaluate(() => !!document.activeElement?.closest('[data-testid="settings-modal"]'))
+    for (let i = 0; i < 15; i++) await page.keyboard.press('Tab')
+    expect(await inModal()).toBe(true)
+    await page.keyboard.press('Shift+Tab')
+    expect(await inModal()).toBe(true)
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('settings-modal')).toBeHidden()
+  })

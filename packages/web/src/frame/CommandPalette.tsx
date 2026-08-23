@@ -15,6 +15,7 @@ import { VIEW_META } from '../views/ViewSwitcher'
 import { Icon, gearIcon } from '../ui/Icon'
 import { matchesInitials } from './pinyin'
 import { requestBoardFocus } from '../views/boardFocus'
+import { trapTab } from '../ui/focusTrap'
 import type { ViewId } from '../views/viewState'
 
 interface CmdItem {
@@ -44,6 +45,7 @@ export function CommandPalette({
   const [active, setActive] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const items = useMemo<CmdItem[]>(() => {
     const out: CmdItem[] = []
@@ -183,22 +185,9 @@ export function CommandPalette({
       onClose()
       return
     }
-    // focus trap: Tab must not escape the dialog into the page behind it.
-    // The input and item buttons are the cycle; wrap at both ends.
+    // focus trap: Tab must not escape the dialog into the page behind it
     if (e.key === 'Tab') {
-      const focusables = Array.from(
-        listRef.current?.querySelectorAll<HTMLButtonElement>('.cmdk-item') ?? [],
-      )
-      const first: HTMLElement | null = inputRef.current
-      const last: HTMLElement | null = focusables.length > 0 ? focusables[focusables.length - 1] : first
-      const cur = document.activeElement
-      if (!e.shiftKey && cur === last) {
-        e.preventDefault()
-        first?.focus()
-      } else if (e.shiftKey && cur === first) {
-        e.preventDefault()
-        last?.focus()
-      }
+      trapTab(e, panelRef.current)
       return
     }
     if (e.key === 'ArrowDown') {
@@ -255,6 +244,7 @@ export function CommandPalette({
     >
       <div
         className="cmdk-panel"
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={t('cmdk.aria')}

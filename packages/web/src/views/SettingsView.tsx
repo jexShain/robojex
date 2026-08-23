@@ -16,6 +16,7 @@ import type { Settings } from '../state/types'
 import { Icon, gearIcon } from '../ui/Icon'
 import type { IconName } from '../ui/Icon'
 import { gearsOrFallback } from './gearDefs'
+import { trapTab } from '../ui/focusTrap'
 import { setThemePref, themeSnapshot, THEME_EVENT } from '../state/theme'
 import type { ThemePref } from '../state/theme'
 import { useT } from '../i18n'
@@ -633,11 +634,16 @@ export function SettingsView({ onClose }: { onClose(): void }) {
     if (sec === 'appearance') setThemePrefState(themeSnapshot().pref)
   }, [sec])
 
-  // Esc closes (focus lives inside the modal, so the keydown lands here).
+  const modalRef = useRef<HTMLDivElement | null>(null)
+  // Esc closes (focus lives inside the modal, so the keydown lands here);
+  // Tab wraps inside the dialog — a modal that leaks focus to the page
+  // behind it isn't a modal.
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Escape') {
       e.preventDefault()
       onClose()
+    } else if (e.key === 'Tab') {
+      trapTab(e, modalRef.current)
     }
   }
 
@@ -815,7 +821,10 @@ export function SettingsView({ onClose }: { onClose(): void }) {
         aria-label={s('settings.title')}
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        ref={(el) => el?.focus()}
+        ref={(el) => {
+          modalRef.current = el
+          el?.focus()
+        }}
       >
         <div className="st-head">
           <span className="st-title">
