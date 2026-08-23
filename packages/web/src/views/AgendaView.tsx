@@ -110,11 +110,21 @@ function AgendaBlockView({
     block.isOverdue ? 'overdue' : '',
     block.isUpcoming ? 'upcoming' : '',
   ].filter(Boolean).join(' ')
+  // overlap packing: a packed block takes a lane slice of the track instead
+  // of the full left-10/right-10 strip
+  const packed =
+    block.laneCount != null && block.laneCount > 1 && block.lane != null
+      ? {
+          left: `calc(10px + ${(block.lane / block.laneCount).toFixed(4)} * (100% - 20px))`,
+          width: `calc(${(1 / block.laneCount).toFixed(4)} * (100% - 20px))`,
+          right: 'auto' as const,
+        }
+      : {}
   return (
     <button
       type="button"
       className={cls}
-      style={{ top: `${block.topPct}%`, height: `${block.heightPct}%`, marginLeft: indent }}
+      style={{ top: `${block.topPct}%`, height: `${block.heightPct}%`, marginLeft: indent, ...packed }}
       data-tip={blockTip(t)}
       title={compact ? `${range} ${t.title}` : undefined}
       onClick={() => onOpen(t.id)}

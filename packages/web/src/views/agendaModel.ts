@@ -40,6 +40,11 @@ export interface AgendaBlock {
   treeDepth: number
   /** Child tasks of this block's task, for tree grouping. */
   childBlocks: AgendaBlock[]
+  /** Overlap packing: which lane this block takes when cards share a moment
+   *  (0-based). Absent when the block owns the whole track width. */
+  lane?: number
+  /** Overlap packing: lanes in this block's overlap cluster (≥2 when set). */
+  laneCount?: number
 }
 
 /** Build a parent→children map for tree grouping. */
@@ -130,7 +135,38 @@ export function blocksForDay(tasks: Task[], day0: number, now: number): AgendaBl
     if (nestedInDay(t)) continue // rendered inside an ancestor's block
     out.push(makeBlock(t, treeDepth(t, byId, depthCache)))
   }
-  return out.sort((a, b) => a.topPct - b.topPct)
+  out.sort((a, b) => a.topPct - b.topPct)
+  packOverlapLanes(out)
+  return out
+}
+
+/** Greedy overlap lanes per cluster: cards sharing a moment split the track
+ *  width instead of painting over each other. A cluster closes when a block
+ *  starts after every lane's current end; lane reuse follows the same rule. */
+function packOverlapLanes(blocks: AgendaBlock[]): void {
+  let clusterEnd = -1
+  let cluster: AgendaBlock[] = []
+  let laneEnds: number[] = []
+  const closeCluster = (): void => {
+    for (const c of cluster) c.laneCount = laneEnds.length
+    cluster = []
+    laneEnds = []
+  }
+  for (const b of blocks) {
+    if (cluster.length > 0 && b.topPct > clusterEnd) closeCluster()
+    const end = b.topPct + b.heightPct
+    cluster.push(b)
+    clusterEnd = Math.max(clusterEnd, end)
+    let lane = laneEnds.findIndex((e) => e <= b.topPct + 0.001)
+    if (lane === -1) {
+      laneEnds.push(end)
+      b.lane = laneEnds.length - 1
+    } else {
+      laneEnds[lane] = end
+      b.lane = lane
+    }
+  }
+  if (cluster.length > 0) closeCluster()
 }
 
 /** Tasks with no scheduledAt — the Day view's "no time" side list. */

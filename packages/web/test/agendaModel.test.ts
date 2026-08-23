@@ -46,6 +46,21 @@ describe('blocksForDay', () => {
   // R111: a cancelled card is dead weight that would sit on the calendar
   // intercepting drags and clicks of live blocks underneath (found live by
   // e2e ordering: a cancelled card dragged ON TOP of a fresh one).
+  test('overlap packing: cards sharing a moment split lanes, not paint order', () => {
+    const a = T({ id: 'a', scheduledAt: at(9), dueAt: at(10) })
+    const b = T({ id: 'b', scheduledAt: at(9, 30), dueAt: at(11) })
+    const c = T({ id: 'c', scheduledAt: at(10, 30), dueAt: at(12) })
+    const blocks = blocksForDay([a, b, c], DAY0)
+    const by = (id: string) => blocks.find((x) => x.task.id === id)!
+    // one cluster, two lanes; c reuses lane 0 once a ended
+    expect(by('a')).toMatchObject({ lane: 0, laneCount: 2 })
+    expect(by('b')).toMatchObject({ lane: 1, laneCount: 2 })
+    expect(by('c')).toMatchObject({ lane: 0, laneCount: 2 })
+    // apart cards keep the whole track
+    const solo = blocksForDay([T({ id: 'x', scheduledAt: at(1) }), T({ id: 'y', scheduledAt: at(20) })], DAY0)
+    expect(solo.every((x) => x.laneCount === 1)).toBe(true)
+  })
+
   test('cancelled tasks render no blocks — roots, children, and side list', () => {
     const live = T({ id: 'live', scheduledAt: at(10) })
     const dead = T({ id: 'dead', status: 'cancelled', scheduledAt: at(10) })

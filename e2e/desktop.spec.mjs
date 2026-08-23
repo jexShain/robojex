@@ -584,3 +584,23 @@ test.describe('RoboJex desktop', () => {
     const s2 = await (await page.request.get('/api/state')).json()
     expect(s2.tasks.find((tk) => tk.title === '详情改期探针').scheduledAt).toBeNull()
   })
+
+  // 33 (overlap packing): two cards sharing a moment split the track into
+  // side-by-side lanes instead of painting over each other.
+  test('33 agenda: overlapping cards split lanes, not z-order', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    const base = Date.now() + 60 * 60_000
+    await page.request.post('/api/task', { data: { title: '重叠甲卡', scheduledAt: base, dueAt: base + 3_600_000 } })
+    await page.request.post('/api/task', { data: { title: '重叠乙卡', scheduledAt: base + 20 * 60_000, dueAt: base + 2 * 3_600_000 } })
+    await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    const a = page.locator('.agenda-block', { hasText: '重叠甲卡' }).first()
+    const b = page.locator('.agenda-block', { hasText: '重叠乙卡' }).first()
+    await expect(a).toBeVisible({ timeout: 5_000 })
+    await expect(b).toBeVisible()
+    const ba = await a.boundingBox()
+    const bb = await b.boundingBox()
+    // same moment, different lanes: horizontal ranges are disjoint
+    expect(ba.x + ba.width).toBeLessThanOrEqual(bb.x + 1)
+    await shot(page, '33-overlap-lanes')
+  })
