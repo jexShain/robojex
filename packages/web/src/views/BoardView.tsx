@@ -243,7 +243,7 @@ export function BoardView() {
           disabled={!newTitle.trim() || creating}
           onClick={() => void createTask()}
         >
-          {creating ? '…' : '＋'}
+          {creating ? '…' : <Icon name="plus" size={13} />}
         </button>
       </div>
       {createErr ? (

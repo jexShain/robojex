@@ -350,7 +350,7 @@ function Swimlanes({
                   title={doneCollapsed ? t('cc.expandDone') : t('cc.collapseDone')}
                   onClick={onToggleDone}
                 >
-                  {doneCollapsed ? '▸' : '▾'}
+                  <Icon name={doneCollapsed ? 'chevronRight' : 'chevronDown'} size={12} />
                 </button>
               ) : null}
             </header>
@@ -405,7 +405,7 @@ function ThinkItem({
         <time className="cc-item-time">{hhmmss(entry.ts)}</time>
         <span className={`cc-item-kind k-${entry.kind}`}>{t(`cc.think.${entry.kind}`)}</span>
         <span className="cc-item-text">{entry.text}</span>
-        {hasDetail ? <span className="cc-item-chev">{expanded ? '▾' : '▸'}</span> : null}
+        {hasDetail ? <span className="cc-item-chev"><Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={12} /></span> : null}
       </button>
       {expanded && hasDetail ? <pre className="cc-item-detail">{entry.detail}</pre> : null}
     </div>

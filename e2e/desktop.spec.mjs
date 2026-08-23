@@ -298,3 +298,19 @@ test.describe('RoboJex desktop', () => {
     await expect(page.getByTestId('tool-chip').first()).toContainText('4060')
     await shot(page, '22-tool-chip')
   })
+
+  // 23 (icon system): every view renders real svg icons — the fallback span
+  // (data-icon-fallback) only appears for unknown icon names, i.e. a typo in
+  // an IconName. Zero across all six views or the chrome is silently missing
+  // glyphs. Also guards against emoji regressions in lane headers.
+  test('23 icon system: no fallback glyphs on any view', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    for (const view of ['command', 'chat', 'board', 'agenda', 'activity', 'cockpit']) {
+      await page.locator(`[data-testid="view-tab"][data-view="${view}"]`).click()
+      await page.waitForTimeout(300)
+      const fallbacks = await page.locator('[data-icon-fallback]').count()
+      expect(fallbacks, `view ${view} rendered ${fallbacks} fallback icons`).toBe(0)
+    }
+    await shot(page, '23-icon-system')
+  })

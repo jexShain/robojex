@@ -43,18 +43,10 @@ function PinIcon(): JSX.Element {
   )
 }
 function PencilIcon(): JSX.Element {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-    </svg>
-  )
+  return <Icon name="pencil" size={13} />
 }
 function TrashIcon(): JSX.Element {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-    </svg>
-  )
+  return <Icon name="trash" size={13} />
 }
 function SearchIcon(): JSX.Element {
   return (
@@ -322,7 +314,7 @@ export function Sidebar(props: {
         data-testid="sidebar-new-chat"
         onClick={() => void newConversation()}
       >
-        <span className="plus" aria-hidden="true">＋</span>{t('side.newChat')}
+        <span className="plus" aria-hidden="true"><Icon name="plus" size={12} /></span>{t('side.newChat')}
       </button>
 
       <div className="sb-search">

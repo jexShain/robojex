@@ -89,7 +89,7 @@ export function WidgetApp(): ReactElement {
           title={t('widget.expand')}
           aria-label={t('widget.expand')}
         >
-          ⤢
+          <Icon name="maximize" size={12} />
         </button>
       </header>
 

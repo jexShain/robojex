@@ -578,7 +578,7 @@ export function ChatView() {
 
       {jump && messages.length > 0 ? (
         <button type="button" className="cv-jump" onClick={scrollToBottom} aria-label={t('chat.backToBottom')}>
-          <span className="arrow">↓</span> {t('chat.backToBottom')}
+          <span className="arrow"><Icon name="arrowDown" size={12} /></span> {t('chat.backToBottom')}
         </button>
       ) : null}
 

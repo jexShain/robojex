@@ -78,7 +78,7 @@ function ThinkingEntry({
         <span className="ts-time">{time}</span>
         <span className="ts-label">{step.label}</span>
         {step.detail ? (
-          <span className="ts-chevron">{expanded ? '▾' : '▸'}</span>
+          <span className="ts-chevron"><Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={12} /></span>
         ) : null}
       </div>
       {expanded && step.detail ? (
