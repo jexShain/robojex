@@ -141,7 +141,7 @@ test("default hermes path passes the prompt exactly once (no double append)", as
     const r = await o.spawn("hermes", "unique prompt marker zq7", { timeoutMs: 5000 });
     expect(r.exitCode).toBe(0);
     const argv = readFileSync(argvFile, "utf8").trim().split("\n");
-    expect(argv).toEqual(["-p", "unique prompt marker zq7", "--yolo"]);
+    expect(argv).toEqual(["-z", "unique prompt marker zq7", "--yolo"]);
     expect(argv.filter((a) => a === "unique prompt marker zq7").length).toBe(1); // prompt appears once
   } finally {
     process.env.PATH = prevPath;
