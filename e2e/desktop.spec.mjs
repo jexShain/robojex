@@ -681,3 +681,29 @@ test.describe('RoboJex desktop', () => {
     await page.keyboard.press('Escape')
     await expect(page.locator('.detail-title')).toHaveCount(0)
   })
+
+  // 37 (CmdK new task): palette → board create-input focus handoff. Both
+  // paths matter: cross-view (fresh mount consumes the pending request) and
+  // same-view (live event while already on board). xjrw = 新建任务 initials.
+  test('37 cmdk: new-task hands focus to the board create input (cross-view and same-view)', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+
+    // cross-view: from chat, Ctrl+K → xjrw → Enter lands on board, input focused
+    await page.keyboard.press('Control+k')
+    await page.getByTestId('cmdk-input').fill('xjrw')
+    await expect(page.locator('.cmdk-item', { hasText: '新建任务' })).toBeVisible({ timeout: 3_000 })
+    await page.keyboard.press('Enter')
+    await expect(page.locator('[data-testid="view-tab"][data-view="board"]')).toHaveAttribute('data-active', 'true', { timeout: 5_000 })
+    await expect(page.locator('.board-new input')).toBeVisible()
+    await expect(page.locator('.board-new input')).toBeFocused()
+    await page.keyboard.type('焦点探针甲')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.board-card', { hasText: '焦点探针甲' })).toBeVisible({ timeout: 5_000 })
+
+    // same-view: already on board, the live event must still take focus
+    await page.keyboard.press('Control+k')
+    await page.getByTestId('cmdk-input').fill('xjrw')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.board-new input')).toBeFocused()
+  })

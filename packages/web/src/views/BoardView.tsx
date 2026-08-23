@@ -10,6 +10,7 @@ import { useT } from '../i18n'
 import { fill } from '../i18n'
 import { Icon, verdictIcon } from '../ui/Icon'
 import { parseQuickTime } from './quickTime'
+import { takeBoardFocus } from './boardFocus'
 import type { Task } from '../state/types'
 import {
   type BoardFilter,
@@ -204,6 +205,10 @@ export function BoardView() {
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
   const [createErr, setCreateErr] = useState<string | null>(null)
+  // CmdK "new task" handoff: focus the create input (on mount after a view
+  // switch, or live when already on board)
+  const newInputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => takeBoardFocus(() => newInputRef.current?.focus()), [])
 
   const createTask = async (): Promise<void> => {
     const raw = newTitle.trim()
@@ -293,6 +298,7 @@ export function BoardView() {
     <div className="board-toolbar">
       <div className="board-new" data-testid="board-new-task">
         <input
+          ref={newInputRef}
           className="bn-input"
           value={newTitle}
           placeholder={t('board.newPlaceholder')}

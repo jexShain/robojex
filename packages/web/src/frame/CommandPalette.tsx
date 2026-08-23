@@ -14,6 +14,7 @@ import { gearsOrFallback, localizeGears } from '../views/gearDefs'
 import { VIEW_META } from '../views/ViewSwitcher'
 import { Icon, gearIcon } from '../ui/Icon'
 import { matchesInitials } from './pinyin'
+import { requestBoardFocus } from '../views/boardFocus'
 import type { ViewId } from '../views/viewState'
 
 interface CmdItem {
@@ -71,6 +72,17 @@ export function CommandPalette({
       run: () => {
         void store.newConversation()
         onView('chat')
+      },
+    })
+    out.push({
+      id: 'act-new-task',
+      group: t('cmdk.groupAction'),
+      label: t('cmdk.newTask'),
+      hint: t('cmdk.newTaskHint'),
+      icon: <Icon name="plus" size={14} />,
+      run: () => {
+        requestBoardFocus()
+        onView('board')
       },
     })
     for (const m of VIEW_META) {
