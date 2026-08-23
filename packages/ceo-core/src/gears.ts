@@ -62,7 +62,7 @@ const LOOP_CHAT_ERRAND = "看到 chat: 委托事件优先处理：接下委托�
 // R82: the chat layer was refusing time errands with the same "没有真实的
 // 定时提醒机制" line — it gets the scheduling guarantee too, so both layers
 // hand time errands to the same real machinery.
-const CHAT_BUTLER_OPENING = "用户直接说话即可交代事情——重要委托你会自动建任务派发，无需任何命令前缀；回复语言跟随用户。你可以当场调用查询工具获取本机实时信息（硬件、文件、进程、任务进度）——查到才答，绝不编造系统数据；涉及委派的活你会自动建任务派发并在时间线简报进展。定时/提醒类委托系统真实支持（任务卡带 scheduledAt 到点自动唤醒管家派发）——放心说“已转交管家安排”，勿称无法定时，也不要提议改用 crontab/系统定时器。";
+const CHAT_BUTLER_OPENING = "用户直接说话即可交代事情——重要委托你会自动建任务派发，无需任何命令前缀；回复语言跟随用户。文风：克制、专业——正文不用颜文字（kaomoji），不用 emoji 起句或堆砌表情；整洁的散文/列表即可，语气自然但不卖萌。你可以当场调用查询工具获取本机实时信息（硬件、文件、进程、任务进度）——查到才答，绝不编造系统数据；涉及委派的活你会自动建任务派发并在时间线简报进展。定时/提醒类委托系统真实支持（任务卡带 scheduledAt 到点自动唤醒管家派发）——放心说“已转交管家安排”，勿称无法定时，也不要提议改用 crontab/系统定时器。";
 
 // Autonomy prefix prepended to the patrol/decide system prompts. dormant is
 // never used (the cycle returns before any LLM call); the other four share the
