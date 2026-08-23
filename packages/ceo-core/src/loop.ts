@@ -302,14 +302,26 @@ export class SchedulerLoop {
         const nk = `${t.status}:${t.scheduledAt}`;
         const ns = this.spawnNudgeState.get(t.id) ?? { key: nk, n: 0 };
         if (ns.key !== nk) { ns.key = nk; ns.n = 0; }
-        if (ns.n >= 3) continue; // decide keeps refusing: the human hears it once and the card waits
+        if (ns.n >= 3) continue; // already force-launched by the code below; the pump stays quiet
         ns.n++;
         this.spawnNudgeState.set(t.id, ns);
         this.spawnNudgedAt.set(t.id, now);
-        if (ns.n === 3) {
-          this.push(`overdue_spawn: ${t.id.slice(0, 8)} ${t.title} was scheduled ${fmtClock(t.scheduledAt)} and decide declined to launch it 3 times — surface this to the human with the reply action and stop re-nudging`);
-        } else {
+        if (ns.n <= 2) {
           this.push(`overdue_spawn: ${t.id.slice(0, 8)} ${t.title} was scheduled ${fmtClock(t.scheduledAt)} but is still todo — dispatch it NOW (spawn); the daytime-deferral doctrine only applies BEFORE the scheduled time`);
+        } else {
+          // nudge 3: decide had two cycles and kept promising without
+          // dispatching (live soak: a reply action with "马上派" and no
+          // spawn). A schedule must not depend on the model's mood — the
+          // loop launches the card itself. The card carries its own title
+          // + acceptance, so dispatching it is exactly what was scheduled.
+          const names = this.d.orchestrator.getRegistry()?.names() ?? [];
+          const fw = names.includes(t.assignee) ? t.assignee : "hermes";
+          const acceptance = t.acceptance || `${t.title.slice(0, 80)}（完成后 jex 须用只读工具 verify 并给出 verdict）`;
+          if (!t.acceptance) this.d.board.update(t.id, { acceptance });
+          this.launchSpawn(t.id, fw, t.title,
+            this.withMemory(`请完成任务：${t.title}`, t.title),
+            `排程执法：「${t.title}」到点未派发（decide 两次未执行），已由 jex 直接派给 ${fw}，验收：${acceptance.slice(0, 40)}${acceptance.length > 40 ? "…" : ""}`,
+            t.attempts || 1);
         }
         this.d.outlet?.hud?.("overdue_spawn", t.id);
       }

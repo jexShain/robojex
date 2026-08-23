@@ -50,15 +50,12 @@ describe("R76 overdue_spawn enforcement", () => {
     expect(nudges()).toBe(1);
     rig.loop.pumpGantt(t0 + 6 * MIN);  // nudge 2
     expect(nudges()).toBe(2);
-    rig.loop.pumpGantt(t0 + 12 * MIN); // nudge 3 — escalation wording
-    expect(nudges()).toBe(3);
-    expect(rig.events.some((e) => e.includes("declined to launch it 3 times"))).toBe(true);
-    rig.loop.pumpGantt(t0 + 18 * MIN); // capped: quiet, the human heard it
-    expect(nudges()).toBe(3);
-    // the card finally launches: the episode resets, no more nudges
-    rig.board.update(t.id, { status: "running" });
-    rig.loop.pumpGantt(t0 + 24 * MIN);
-    expect(nudges()).toBe(3);
+    rig.loop.pumpGantt(t0 + 12 * MIN); // nudge 3 — the loop force-launches the card itself
+    expect(nudges()).toBe(2);          // no third event: enforcement replaced the nag
+    const card = rig.board.list().find((x) => x.id === t.id)!;
+    expect(card.status).toBe("running"); // schedule enforced in code, not by the model's mood
+    rig.loop.pumpGantt(t0 + 18 * MIN); // launched: the pump stays quiet
+    expect(nudges()).toBe(2);
     rig.loop.stop();
   });
 
