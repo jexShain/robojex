@@ -195,6 +195,29 @@ function TaskDetail() {
       .then((r) => { if (!r.ok) throw new Error(String(r.status)); return undefined })
       .catch(() => setCancelErr(true))
   }
+  // rename: a typo shouldn't cost cancel+recreate (times and children would
+  // go with it). Inline edit on the title, same PATCH as the time fields.
+  const renamable = task.status !== 'done' && task.status !== 'cancelled'
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [renameErr, setRenameErr] = useState(false)
+  const renameRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (editing) renameRef.current?.focus()
+  }, [editing])
+  const commitRename = (): void => {
+    const raw = draft.trim()
+    setEditing(false)
+    if (!raw || raw === task.title) return
+    setRenameErr(false)
+    void fetch('/api/task', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: task.id, title: raw }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return undefined })
+      .catch(() => setRenameErr(true))
+  }
   const verdict = task.verdict ? task.verdict.toLowerCase() : null
   const verdictKey =
     verdict && (VERDICT_KEYS as readonly string[]).includes(verdict)
@@ -209,7 +232,41 @@ function TaskDetail() {
   const progress = typeof task.progress === 'number' ? Math.max(0, Math.min(100, Math.round(task.progress))) : null
   return (
     <div>
-      <h2 className="detail-title">{task.title}</h2>
+      {editing ? (
+        <input
+          ref={renameRef}
+          className="detail-title-input"
+          value={draft}
+          aria-label={t('detail.rename')}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitRename()
+            else if (e.key === 'Escape') setEditing(false)
+          }}
+          onBlur={commitRename}
+        />
+      ) : (
+        <div className="detail-title-row">
+          <h2 className="detail-title">{task.title}</h2>
+          {renamable ? (
+            <button
+              type="button"
+              className="dt-edit"
+              title={t('detail.rename')}
+              aria-label={t('detail.rename')}
+              onClick={() => {
+                setDraft(task.title)
+                setEditing(true)
+              }}
+            >
+              <Icon name="pencil" size={12} />
+            </button>
+          ) : null}
+        </div>
+      )}
+      {renameErr ? (
+        <span className="da-err" role="alert">{t('detail.renameErr')}</span>
+      ) : null}
       {(verdictKey || progress !== null) && (
         <div className="detail-badges">
           {progress !== null ? (

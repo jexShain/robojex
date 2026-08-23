@@ -802,3 +802,26 @@ test.describe('RoboJex desktop', () => {
     await page.keyboard.press('Home')
     await expect(page.locator('.ad-col .agenda-block', { hasText: '下周探针' })).toHaveCount(0, { timeout: 3_000 })
   })
+
+  // 42 (rename): a typo shouldn't cost cancel+recreate — the title edits
+  // inline in the detail rail (times and children survive).
+  test('42 details: inline rename PATCHes the title', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.request.post('/api/task', { data: { title: '改名探针旧名' } })
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    await page.locator('.board-card', { hasText: '改名探针旧名' }).first().click()
+    await expect(page.locator('.detail-title')).toContainText('改名探针旧名', { timeout: 5_000 })
+
+    await page.locator('.dt-edit').click()
+    const input = page.locator('.detail-title-input')
+    await expect(input).toBeFocused()
+    await input.fill('改名探针新名')
+    await input.press('Enter')
+
+    await expect(page.locator('.detail-title')).toContainText('改名探针新名', { timeout: 5_000 })
+    const after = await (await page.request.get('/api/state')).json()
+    expect(after.tasks.find((tk) => tk.title === '改名探针旧名')).toBeFalsy()
+    expect(after.tasks.find((tk) => tk.title === '改名探针新名')).toBeTruthy()
+    await shot(page, '42-rename')
+  })

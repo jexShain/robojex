@@ -1148,6 +1148,55 @@ body[data-ds-dark-theme] .chip.full {
   cursor: default;
 }
 
+/* title row: h2 + quiet pencil; the input replaces the row while editing */
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.detail-title-row .detail-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.dt-edit {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--rj-radius-sm, 6px);
+  color: var(--dsw-alias-label-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.detail-title-row:hover .dt-edit,
+.dt-edit:focus-visible {
+  opacity: 1;
+}
+
+.dt-edit:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.detail-title-input {
+  width: 100%;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-state-business-primary);
+  border-radius: var(--rj-radius-sm, 6px);
+  padding: 4px 8px;
+  margin-bottom: 4px;
+}
+
 /* operator action row on the task detail tab */
 .detail-actions {
   display: flex;

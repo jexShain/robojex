@@ -517,28 +517,40 @@ export class ApiServer implements LoopOutlet {
     json(res, 202, { ok: true, task: taskView(now) });
   }
 
-  // PATCH /api/task: operator reschedule — { id, scheduledAt?, dueAt? } with
-  // epoch-ms numbers (null clears). The agenda's drag-to-reschedule had been
-  // staging drops locally with nowhere to land them; this is the landing, with
-  // the same pump re-arm as the agent's reschedule action (future moves defer,
-  // now/past moves re-arm due_spawn). done/cancelled are history: 409.
+  // PATCH /api/task: operator card edit — { id, scheduledAt?, dueAt?, title? }
+  // with epoch-ms numbers (null clears) and a rename (same shape rule as
+  // POST: non-empty, ≤200 bytes). Times land through the loop's reschedule
+  // (pump re-arm included); a typo fix no longer costs cancel+recreate,
+  // which would orphan the card's times and children. done/cancelled are
+  // history: 409.
   private async patchTask(req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body: Record<string, unknown>;
     try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
     if (typeof body.id !== "string" || body.id.length === 0) { json(res, 400, { error: "id must be a non-empty task id" }); return; }
-    if (body.scheduledAt === undefined && body.dueAt === undefined) { json(res, 400, { error: "scheduledAt or dueAt (epoch ms or null) is required" }); return; }
+    const hasTimes = body.scheduledAt !== undefined || body.dueAt !== undefined;
+    if (!hasTimes && body.title === undefined) { json(res, 400, { error: "scheduledAt, dueAt, or title is required" }); return; }
     for (const k of ["scheduledAt", "dueAt"] as const) {
       const v = body[k];
       if (v !== undefined && v !== null && typeof v !== "number") { json(res, 400, { error: `${k} must be epoch ms or null` }); return; }
     }
+    if (body.title !== undefined && (typeof body.title !== "string" || body.title.trim().length === 0 || Buffer.byteLength(body.title, "utf8") > 200)) {
+      json(res, 400, { error: "title must be a non-empty string of at most 200 bytes" });
+      return;
+    }
     const hit = this.d.board.list().find((t) => t.id === body.id);
     if (!hit) { json(res, 404, { error: "no such task" }); return; }
     if (hit.status === "done" || hit.status === "cancelled") { json(res, 409, { error: `task is ${hit.status} — history is immutable` }); return; }
-    if (!this.d.loop.rescheduleById) { json(res, 503, { error: "loop not wired for reschedule" }); return; }
-    this.d.loop.rescheduleById(hit.id, {
-      ...(body.scheduledAt !== undefined ? { scheduledAt: body.scheduledAt as number | null } : {}),
-      ...(body.dueAt !== undefined ? { dueAt: body.dueAt as number | null } : {}),
-    });
+    const resched = this.d.loop.rescheduleById; // captured: board.update below would blur property narrowing
+    if (hasTimes && !resched) { json(res, 503, { error: "loop not wired for reschedule" }); return; }
+    if (body.title !== undefined) this.d.board.update(hit.id, { title: body.title });
+    if (hasTimes) {
+      resched!(hit.id, {
+        ...(body.scheduledAt !== undefined ? { scheduledAt: body.scheduledAt as number | null } : {}),
+        ...(body.dueAt !== undefined ? { dueAt: body.dueAt as number | null } : {}),
+      });
+    } else {
+      this.broadcast({ t: "tasks", tasks: this.d.board.list().map(taskView) });
+    }
     const now = this.d.board.list().find((t) => t.id === hit.id)!;
     json(res, 202, { ok: true, task: taskView(now) });
   }

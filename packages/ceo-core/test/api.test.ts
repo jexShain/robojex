@@ -295,6 +295,55 @@ test("PATCH /api/task: operator reschedule lands on the board via the loop; hist
   c.ws.close();
 });
 
+test("PATCH /api/task title: rename lands and broadcasts; combo with times applies both; bad shapes 4xx", async () => {
+  const rig = mkRig();
+  const live = rig.board.add({ title: "typo city" });
+  const fin = rig.board.add({ title: "finished" });
+  rig.board.update(fin.id, { status: "done" });
+  const rescheduled: Array<{ id: string; times: { scheduledAt?: number | null; dueAt?: number | null } }> = [];
+  const loop = {
+    push: vi.fn(),
+    rescheduleById: (id: string, times: { scheduledAt?: number | null; dueAt?: number | null }) => {
+      rescheduled.push({ id, times });
+      rig.board.update(id, times);
+    },
+  };
+  const api = makeApi(rig, loop);
+  await api.start();
+  const c = wsCollect(api);
+  await c.opened;
+
+  const patch = (body: unknown): Promise<Response> =>
+    fetch(`http://127.0.0.1:${api.port}/api/task`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  const r = await patch({ id: live.id, title: "fixed title" });
+  expect(r.status).toBe(202);
+  expect(rig.board.list().find((t) => t.id === live.id)!.title).toBe("fixed title");
+  await until(() => c.frames.some((f) => f.t === "tasks"));
+  expect((c.frames.find((f) => f.t === "tasks")!.tasks as StateFrame["tasks"])!.find((t) => t.id === live.id)!.title).toBe("fixed title");
+  expect(rescheduled).toHaveLength(0); // pure rename takes the direct path
+
+  const T0 = 1_787_000_000_000;
+  const combo = await patch({ id: live.id, title: "combo title", scheduledAt: T0 });
+  expect(combo.status).toBe(202);
+  const now = rig.board.list().find((t) => t.id === live.id)!;
+  expect(now.title).toBe("combo title");
+  expect(now.scheduledAt).toBe(T0);
+  expect(rescheduled).toEqual([{ id: live.id, times: { scheduledAt: T0 } }]);
+
+  for (const [body, code] of [
+    [{ id: live.id, title: "   " }, 400],
+    [{ id: live.id, title: 42 }, 400],
+    [{ id: live.id, title: "x".repeat(201) }, 400],
+    [{ id: fin.id, title: "nope" }, 409],
+    [{ id: "missing", title: "x" }, 404],
+  ] as [unknown, number][]) {
+    const rr = await patch(body);
+    expect(rr.status, `body ${JSON.stringify(body)}`).toBe(code);
+  }
+  c.ws.close();
+});
+
 test("POST /api/chat: 202, enqueues 'chat: <text>', broadcasts chat_out(user); WS {t:'chat'} frame is equivalent; bad input 400", async () => {
   const rig = mkRig();
   const loop = { push: vi.fn() };

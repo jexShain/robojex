@@ -370,6 +370,8 @@ export const zh: Record<string, string> = {
   'detail.doneErr': '标记完成失败，请稍后再试',
   'detail.addStep': '添加步骤',
   'detail.addStepErr': '添加失败，请稍后再试',
+  'detail.rename': '重命名',
+  'detail.renameErr': '重命名失败，请稍后再试',
   'detail.kId': 'ID',
   'detail.kStatus': '状态',
   'detail.kCreated': '创建',

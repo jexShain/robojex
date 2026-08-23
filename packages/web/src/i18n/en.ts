@@ -370,6 +370,8 @@ export const en: Record<string, string> = {
   'detail.doneErr': 'mark-done failed — try again shortly',
   'detail.addStep': 'Add a step',
   'detail.addStepErr': 'could not add the step — try again shortly',
+  'detail.rename': 'Rename',
+  'detail.renameErr': 'rename failed — try again shortly',
   'detail.kId': 'ID',
   'detail.kStatus': 'Status',
   'detail.kCreated': 'Created',
