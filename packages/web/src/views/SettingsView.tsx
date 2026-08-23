@@ -13,6 +13,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from '../state/api'
 import { useStore } from '../state/store'
 import type { Settings } from '../state/types'
+import { Icon, gearIcon } from '../ui/Icon'
+import type { IconName } from '../ui/Icon'
 import { gearsOrFallback } from './gearDefs'
 import { setThemePref, themeSnapshot, THEME_EVENT } from '../state/theme'
 import type { ThemePref } from '../state/theme'
@@ -467,15 +469,15 @@ const TECH_STACK = 'React 18 · TypeScript · Vite · Electron · ceo-core (Node
 
 type SecId = 'general' | 'appearance' | 'chat' | 'butler' | 'provider' | 'data' | 'shortcuts' | 'about'
 
-const SECTIONS: { id: SecId; icon: string; labelKey: SKey }[] = [
-  { id: 'general', icon: '⚙️', labelKey: 'settings.nav.general' },
-  { id: 'appearance', icon: '🎨', labelKey: 'settings.nav.appearance' },
-  { id: 'chat', icon: '💬', labelKey: 'settings.nav.chat' },
-  { id: 'butler', icon: '🤵', labelKey: 'settings.nav.butler' },
-  { id: 'provider', icon: '⚡', labelKey: 'settings.nav.provider' },
-  { id: 'data', icon: '🗄️', labelKey: 'settings.nav.data' },
-  { id: 'shortcuts', icon: '⌨️', labelKey: 'settings.nav.shortcuts' },
-  { id: 'about', icon: 'ℹ️', labelKey: 'settings.nav.about' },
+const SECTIONS: { id: SecId; icon: IconName; labelKey: SKey }[] = [
+  { id: 'general', icon: 'settings', labelKey: 'settings.nav.general' },
+  { id: 'appearance', icon: 'sun', labelKey: 'settings.nav.appearance' },
+  { id: 'chat', icon: 'message', labelKey: 'settings.nav.chat' },
+  { id: 'butler', icon: 'scale', labelKey: 'settings.nav.butler' },
+  { id: 'provider', icon: 'zap', labelKey: 'settings.nav.provider' },
+  { id: 'data', icon: 'database', labelKey: 'settings.nav.data' },
+  { id: 'shortcuts', icon: 'terminal', labelKey: 'settings.nav.shortcuts' },
+  { id: 'about', icon: 'gauge', labelKey: 'settings.nav.about' },
 ]
 
 const SHORTCUTS: { keys: string[]; descKey: SKey }[] = [
@@ -813,7 +815,9 @@ export function SettingsView({ onClose }: { onClose(): void }) {
         ref={(el) => el?.focus()}
       >
         <div className="st-head">
-          <span className="st-title">⚙ {s('settings.title')}</span>
+          <span className="st-title">
+            <Icon name="settings" size={14} /> {s('settings.title')}
+          </span>
           <button
             type="button"
             className="st-close"
@@ -838,7 +842,9 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                 data-sec={it.id}
                 onClick={() => setSec(it.id)}
               >
-                <span className="st-nav-icon">{it.icon}</span>
+                <span className="st-nav-icon">
+                  <Icon name={it.icon} size={14} />
+                </span>
                 <span>{s(it.labelKey)}</span>
               </button>
             ))}
@@ -1017,7 +1023,9 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                         onClick={() => void store.changeGear(g.id)}
                         aria-pressed={state.gear === g.id}
                       >
-                        <span className="sg-emoji">{g.emoji}</span>
+                        <span className="sg-emoji">
+                          <Icon name={gearIcon(g.id)} size={18} />
+                        </span>
                         <span className="sg-name">{g.name}</span>
                         <span className="sg-id">{g.id} · L{g.level}</span>
                         <span className="sg-desc">{g.desc}</span>
@@ -1072,7 +1080,11 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                         data-testid="settings-policy-butler"
                         onClick={() => setDraft({ ...draft, policy: 'butler' })}
                       >
-                        🤵 {s('settings.butler.policy.butler')}
+                        {/* div keeps icon+label on one flex row (.st-radio span
+                            is reserved for the small desc line) */}
+                        <div>
+                          <Icon name="heart" size={13} /> {s('settings.butler.policy.butler')}
+                        </div>
                         <span>{s('settings.butler.policy.butler.desc')}</span>
                       </button>
                       <button
@@ -1083,7 +1095,9 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                         data-testid="settings-policy-conservative"
                         onClick={() => setDraft({ ...draft, policy: 'conservative' })}
                       >
-                        🛡 {s('settings.butler.policy.conservative')}
+                        <div>
+                          <Icon name="ban" size={13} /> {s('settings.butler.policy.conservative')}
+                        </div>
                         <span>{s('settings.butler.policy.conservative.desc')}</span>
                       </button>
                     </div>
@@ -1100,7 +1114,7 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                     {gears.map((g) => (
                       <div key={g.id} className={`st-gear-tr${state.gear === g.id ? ' cur' : ''}`}>
                         <span className="st-gear-name">
-                          {g.emoji} {g.name}
+                          <Icon name={gearIcon(g.id)} size={14} /> {g.name}
                         </span>
                         <span className="st-gear-tick">
                           {g.tickMs > 0 ? `${g.tickMs / 1000}s` : s('settings.butler.gear.stopped')}
@@ -1113,7 +1127,9 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                 </Card>
                 <div className="st-card st-card-note">
                   <div className="st-card-head">
-                    <span className="st-card-title">💡 {s('settings.butler.more.title')}</span>
+                    <span className="st-card-title">
+                      <Icon name="brain" size={13} /> {s('settings.butler.more.title')}
+                    </span>
                   </div>
                   <div className="st-card-body">
                     <p className="st-note-body">{s('settings.butler.more.body')}</p>
@@ -1134,7 +1150,8 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                       data-testid="direct-mode-gateway"
                       onClick={() => setDirectDraft({ ...directDraft, mode: 'gateway' })}
                     >
-                      🛡 {s('settings.provider.mode.gateway')}<em>{s('settings.provider.mode.gateway.desc')}</em>
+                      <Icon name="database" size={13} /> {s('settings.provider.mode.gateway')}
+                      <em>{s('settings.provider.mode.gateway.desc')}</em>
                     </button>
                     <button
                       type="button"
@@ -1144,7 +1161,8 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                       data-testid="direct-mode-direct"
                       onClick={() => setDirectDraft({ ...directDraft, mode: 'direct' })}
                     >
-                      🌐 {s('settings.provider.mode.direct')}<em>{s('settings.provider.mode.direct.desc')}</em>
+                      <Icon name="zap" size={13} /> {s('settings.provider.mode.direct')}
+                      <em>{s('settings.provider.mode.direct.desc')}</em>
                     </button>
                   </div>
                   {directDraft.mode === 'direct' ? (
@@ -1276,7 +1294,7 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                           aria-checked={draft.budgetMode === 'burn'}
                           onClick={() => setDraft({ ...draft, budgetMode: 'burn' })}
                         >
-                          🔥 {s('settings.provider.budget.burn')}
+                          <Icon name="zap" size={13} /> {s('settings.provider.budget.burn')}
                         </button>
                         <button
                           type="button"
@@ -1285,7 +1303,7 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                           aria-checked={draft.budgetMode === 'budgeted'}
                           onClick={() => setDraft({ ...draft, budgetMode: 'budgeted' })}
                         >
-                          📊 {s('settings.provider.budget.budgeted')}
+                          <Icon name="gauge" size={13} /> {s('settings.provider.budget.budgeted')}
                         </button>
                       </div>
                       <label className="st-field">
@@ -1385,7 +1403,9 @@ export function SettingsView({ onClose }: { onClose(): void }) {
               <section className="st-section" data-testid="settings-section" data-sec="about">
                 <h3>{s('settings.about.title')}</h3>
                 <div className="st-about">
-                  <div className="st-about-orb">🤖</div>
+                  <div className="st-about-orb">
+                    <Icon name="gauge" size={26} />
+                  </div>
                   <div className="st-about-name">RoboJex</div>
                   <div className="st-about-ver">version {state.version || '—'}</div>
                   <p className="st-about-desc">{s('settings.about.desc')}</p>
@@ -1419,7 +1439,15 @@ export function SettingsView({ onClose }: { onClose(): void }) {
             {saving ? s('settings.saving') : dirty ? s('settings.dirty') : s('settings.clean')}
           </span>
           <button type="button" className="st-save" disabled={!canSave} onClick={save}>
-            {saving ? `⏳ ${s('settings.saving')}` : `💾 ${s('settings.save')}`}
+            {saving ? (
+              <>
+                <Icon name="clock" size={13} /> {s('settings.saving')}
+              </>
+            ) : (
+              <>
+                <Icon name="archive" size={13} /> {s('settings.save')}
+              </>
+            )}
           </button>
         </div>
 

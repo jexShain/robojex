@@ -2,7 +2,7 @@
 // conversation bucketing (📌置顶 first, 今天/昨天/近 7 天/更早 by local
 // calendar day) and the bilingual (zh | en) relative-time formatter.
 import { describe, expect, test } from 'vitest'
-import { groupConversations, groupLabel, relTime, startOfDay } from '../src/sidebar/grouping'
+import { GROUP_ICON, groupConversations, groupLabel, relTime, startOfDay } from '../src/sidebar/grouping'
 import type { Conversation } from '../src/state/types'
 
 let n = 0
@@ -86,12 +86,14 @@ describe('groupConversations', () => {
 
   test('group labels follow the lang argument (zh default)', () => {
     const groups = groupConversations([C({ id: 'p', pinned: 1, updatedAt: at(0) })], NOW, 'en')
-    expect(groups[0]!.label).toBe('📌 Pinned')
+    expect(groups[0]!.label).toBe('Pinned')
     expect(groupLabel('today', 'en')).toBe('Today')
     expect(groupLabel('week', 'en')).toBe('Last 7 days')
     expect(groupLabel('older', 'en')).toBe('Older')
+    // the pin glyph moved from the label string to GROUP_ICON (rendered as SVG)
+    expect(GROUP_ICON.pinned).toBe('pin')
     // default stays Chinese — the existing zh UI is unchanged
-    expect(groupConversations([C({ id: 'p', pinned: 1 })], NOW)[0]!.label).toBe('📌 置顶')
+    expect(groupConversations([C({ id: 'p', pinned: 1 })], NOW)[0]!.label).toBe('置顶')
   })
 })
 

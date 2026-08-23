@@ -18,6 +18,7 @@ import { gearsOrFallback, localizeGears } from '../views/gearDefs'
 import { filterSlash, SlashMenu } from './SlashMenu'
 import type { SlashEntry } from './SlashMenu'
 import { extractGearTokens, trailingMention } from './gearTokens'
+import { Icon, gearIcon } from '../ui/Icon'
 import './chat.css'
 
 const MAX_HEIGHT = 264 // ~10 rows at 1.6 × 16.5px
@@ -304,7 +305,7 @@ export function InputBar() {
             >
               <span className="dot" style={{ background: `var(--rj-gear-${g.level})` }} />
               <span className="nm">
-                {g.emoji} {g.name}
+                <Icon name={gearIcon(g.id)} size={13} /> {g.name}
               </span>
               <span className="tok">@{g.id}</span>
             </button>
@@ -330,7 +331,7 @@ export function InputBar() {
               <span className="bar" />
               <span className="info">
                 <span className="nm">
-                  {g.emoji} {g.name}
+                  <Icon name={gearIcon(g.id)} size={14} /> {g.name}
                 </span>
                 <span className="ds">{g.desc}</span>
               </span>
@@ -399,7 +400,7 @@ export function InputBar() {
                 style={{ background: `var(--rj-gear-${gearDef.level})`, boxShadow: `0 0 6px var(--rj-gear-${gearDef.level})` }}
               />
               <span className="chip-label">
-                {gearDef.emoji} {gearDef.name}
+                <Icon name={gearIcon(gearDef.id)} size={13} /> {gearDef.name}
               </span>
               <svg className="caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
                 <path d="M4 10l4-4 4 4" />

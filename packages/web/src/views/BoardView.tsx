@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { statusTone, useStore } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
+import { Icon, verdictIcon } from '../ui/Icon'
 import type { Task } from '../state/types'
 import {
   type BoardFilter,
@@ -28,24 +29,19 @@ function Badges({ task, now }: { task: Task; now: number }) {
     <>
       {task.scheduledAt != null ? (
         <span className="bc-badge sched" title={fill(t('board.schedBadge'), { t: fmtStamp(task.scheduledAt, now) })}>
-          ⏱ {fmtStamp(task.scheduledAt, now)}
+          <Icon name="clock" size={11} /> {fmtStamp(task.scheduledAt, now)}
         </span>
       ) : null}
       {task.dueAt != null ? (
         <span className="bc-badge due" title={fill(t('board.dueBadge'), { t: fmtStamp(task.dueAt, now) })}>
-          ⏳ {fmtStamp(task.dueAt, now)}
+          <Icon name="clock" size={11} /> {fmtStamp(task.dueAt, now)}
         </span>
       ) : null}
     </>
   )
 }
 
-const VERDICT_GLYPH: Record<string, string> = {
-  pass: '✓',
-  partial: '◐',
-  fail: '✗',
-  unchecked: '○',
-}
+const VERDICTS = new Set(['pass', 'partial', 'fail', 'unchecked'])
 
 /** Card-corner progress ring (20px SVG) + verdict badge. The ring fill arcs
  * by task.progress; stroke color follows the verdict semantics:
@@ -53,7 +49,7 @@ const VERDICT_GLYPH: Record<string, string> = {
 function ProgressRing({ task }: { task: Task }) {
   const { t } = useT()
   const verdict = (task.verdict ?? 'unchecked').toLowerCase()
-  const v = VERDICT_GLYPH[verdict] ? verdict : 'unchecked'
+  const v = VERDICTS.has(verdict) ? verdict : 'unchecked'
   const progress = typeof task.progress === 'number' ? Math.max(0, Math.min(100, task.progress)) : 0
   return (
     <div className="bc-progress">
@@ -69,7 +65,9 @@ function ProgressRing({ task }: { task: Task }) {
         />
         <text x="18" y="21" textAnchor="middle" className="ring-txt">{progress}</text>
       </svg>
-      <span className={`bc-verdict v-${v}`} title={`verdict: ${v}`}>{VERDICT_GLYPH[v]}</span>
+      <span className={`bc-verdict v-${v}`} title={`verdict: ${v}`}>
+        <Icon name={verdictIcon(v)} size={11} />
+      </span>
     </div>
   )
 }
@@ -147,7 +145,7 @@ function BoardCard({
         ) : null}
         {subtreeBlocked && tone !== 'failed' ? (
           <span className="bc-warn" title={t('board.childBlocked')}>
-            ⚠
+            <Icon name="ban" size={11} />
           </span>
         ) : null}
       </div>
@@ -248,7 +246,11 @@ export function BoardView() {
           {creating ? '…' : '＋'}
         </button>
       </div>
-      {createErr ? <span className="bn-err" title={createErr}>⚠ {createErr}</span> : null}
+      {createErr ? (
+        <span className="bn-err" title={createErr}>
+          <Icon name="x" size={11} /> {createErr}
+        </span>
+      ) : null}
       <div className="seg" role="group" aria-label={t('board.filterAria')}>
           {FILTERS.map((f) => (
             <button

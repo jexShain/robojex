@@ -11,24 +11,26 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
+import { Icon } from '../ui/Icon'
+import type { IconName } from '../ui/Icon'
 import type { ServerFrame, TranscriptItem } from '../state/types'
 import type { ThinkingStep } from './thinkingModel'
 import { frameToThinkingSteps } from './thinkingModel'
 
 const MAX_STEPS = 400
 
-const ICONS: Record<ThinkingStep['kind'], string> = {
-  patrol: '🔍',
-  deciding: '🧠',
-  decision: '✅',
-  spawn: '⚡',
-  reply: '💬',
+const ICONS: Record<ThinkingStep['kind'], IconName> = {
+  patrol: 'search',
+  deciding: 'brain',
+  decision: 'check',
+  spawn: 'zap',
+  reply: 'message',
   // backend event kinds (thinkingModel.eventKindOf)
-  plan: '🧩',
-  stall: '⛔',
-  morning: '🌅',
-  awaiting: '⚖️',
-  stuck: '🔁',
+  plan: 'grid',
+  stall: 'ban',
+  morning: 'sun',
+  awaiting: 'scale',
+  stuck: 'repeat',
 }
 
 function stepsForItem(item: TranscriptItem, t: (key: string) => string): ThinkingStep[] {
@@ -70,7 +72,9 @@ function ThinkingEntry({
   return (
     <div className={['ts-entry', 'rj-animate-in', `ts-${step.kind}`].filter(Boolean).join(' ')}>
       <div className="ts-main" onClick={onToggle}>
-        <span className="ts-icon">{ICONS[step.kind]}</span>
+        <span className="ts-icon">
+          <Icon name={ICONS[step.kind]} size={14} />
+        </span>
         <span className="ts-time">{time}</span>
         <span className="ts-label">{step.label}</span>
         {step.detail ? (
@@ -151,7 +155,9 @@ export function ThinkingStream({ embedded = false }: { embedded?: boolean }) {
       ) : null}
       {steps.length === 0 ? (
         <div className="ts-empty">
-          <div className="ts-empty-icon">🧠</div>
+          <div className="ts-empty-icon">
+            <Icon name="brain" size={36} />
+          </div>
           <p>{t('ts.empty')}</p>
         </div>
       ) : (

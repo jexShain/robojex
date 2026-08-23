@@ -5,7 +5,7 @@ build/
 dist-electron/
 dist/
 docs/superpowers/
-e2e-screenshots/
+e2e-screenshots*/
 e2e-v3.mjs
 hermes-agent/
 node_modules/

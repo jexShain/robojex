@@ -396,7 +396,16 @@ function buildTrayMenu() {
 
 function createTray() {
   try {
-    const img = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_B64}`);
+    // brand-consistent: real app icon scaled down when present, embedded
+    // gradient as the bare-checkout fallback
+    let img;
+    const iconPath = path.join(__dirname, 'icon.png');
+    if (fs.existsSync(iconPath)) {
+      img = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
+    }
+    if (!img || img.isEmpty()) {
+      img = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_B64}`);
+    }
     if (img.isEmpty()) throw new Error('tray image decode failed');
     tray = new Tray(img);
     tray.setToolTip('RoboJex');

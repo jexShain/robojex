@@ -107,7 +107,7 @@ const server = http.createServer((req, res) => {
       rubric: '# RUBRIC\nmock rubric',
       memory: '# MEMORY\nmock memory',
       chat: [],
-      version: 'e2e-mock',
+      version: '0.0.0-mock',
       tickN: 3,
       gear: gearNow,
     })
@@ -371,7 +371,7 @@ function stateSnapshot() {
     rubric: '# RUBRIC\nmock rubric',
     memory: '# MEMORY\nmock memory',
     chat: [],
-    version: 'e2e-mock',
+    version: '0.0.0-mock',
     tickN: 3,
     gear: gearNow,
   }

@@ -27,17 +27,21 @@ export function fmtStamp(ms: number, ref: number): string {
   return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${fmtClock(ms)}`
 }
 
-/** Day-view header label, `Aug 20` style. */
-export function fmtDayLabel(ms: number): string {
+const CN_WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'] as const
+
+/** Day-view header label: `8月20日` (zh, default) / `Aug 20` (en). */
+export function fmtDayLabel(ms: number, lang: 'zh' | 'en' = 'zh'): string {
   const d = new Date(ms)
-  return `${d.toLocaleDateString('en-US', { month: 'short' })} ${d.getDate()}`
+  return lang === 'en'
+    ? `${d.toLocaleDateString('en-US', { month: 'short' })} ${d.getDate()}`
+    : `${d.getMonth() + 1}月${d.getDate()}日`
 }
 
-/** Days-column header pieces: two-digit day-of-month + short weekday. */
-export function dayColHead(ms: number): { day: string; weekday: string } {
+/** Days-column header pieces: two-digit day + single-char weekday (一…日). */
+export function dayColHead(ms: number, lang: 'zh' | 'en' = 'zh'): { day: string; weekday: string } {
   const d = new Date(ms)
   return {
     day: pad2(d.getDate()),
-    weekday: d.toLocaleDateString('en-US', { weekday: 'short' }),
+    weekday: lang === 'en' ? d.toLocaleDateString('en-US', { weekday: 'short' }) : CN_WEEKDAYS[d.getDay()],
   }
 }

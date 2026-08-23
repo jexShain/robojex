@@ -14,6 +14,8 @@ import { fill } from '../i18n'
 import type { Message } from '../state/types'
 import { Markdown } from './Markdown'
 import { InputBar } from './InputBar'
+import { Icon } from '../ui/Icon'
+import type { IconName } from '../ui/Icon'
 import './chat.css'
 
 /* ── icons (inline, 24×24 stroke) ── */
@@ -188,7 +190,9 @@ function ThinkingBlock({ msg, wasLive }: { msg: Message; wasLive: boolean }): JS
         onClick={toggle}
       >
         <ChevronIcon />
-        <span className="brain" aria-hidden="true">💭</span>
+        <span className="brain" aria-hidden="true">
+          <Icon name="brain" size={13} />
+        </span>
         <span className="think-label">{label}</span>
       </button>
       <div className="think-body" data-testid="think-body">
@@ -227,7 +231,7 @@ function ToolSteps({ msg }: { msg: Message }): JSX.Element | null {
             aria-label={`${s.name} — ${running ? t('chat.toolRunning') : t('chat.toolDone')}`}
           >
             <div className="tool-chip-head">
-              <span className="mag" aria-hidden="true">🔍</span>
+              <span className="mag" aria-hidden="true"><Icon name="search" size={12} /></span>
               <span className="tool-name">{s.name}</span>
               {s.args ? (
                 <span className="tool-args" title={s.args}>
@@ -446,13 +450,14 @@ function AgentTimelineCard({ msg }: { msg: Message }): JSX.Element {
 
 /* ── empty state ── */
 
-/** Example prompt cards — icons fixed, titles/texts live in the dictionaries
- * (chat.ex.*) so the sent prompt follows the interface language). */
-const EXAMPLES: { icon: string; key: string }[] = [
-  { icon: '🤖', key: 'know' },
-  { icon: '💡', key: 'concept' },
-  { icon: '🧭', key: 'plan' },
-  { icon: '⚡', key: 'code' },
+/** Example prompt cards — icon names fixed (rendered via <Icon/>), titles/
+ * texts live in the dictionaries (chat.ex.*) so the sent prompt follows the
+ * interface language). */
+const EXAMPLES: { icon: IconName; key: string }[] = [
+  { icon: 'brain', key: 'know' },
+  { icon: 'sun', key: 'concept' },
+  { icon: 'grid', key: 'plan' },
+  { icon: 'terminal', key: 'code' },
 ]
 
 function EmptyState({ onPick }: { onPick(text: string): void }): JSX.Element {
@@ -478,7 +483,7 @@ function EmptyState({ onPick }: { onPick(text: string): void }): JSX.Element {
             onClick={() => onPick(t(`chat.ex.${p.key}.text`))}
           >
             <span className="cv-prompt-head">
-              <span className="ico" aria-hidden="true">{p.icon}</span>
+              <span className="ico" aria-hidden="true"><Icon name={p.icon} size={14} /></span>
               {t(`chat.ex.${p.key}.title`)}
             </span>
             <span className="cv-prompt-text">{t(`chat.ex.${p.key}.text`)}</span>
@@ -580,7 +585,7 @@ export function ChatView() {
       <div className="cv-inputzone">
         {streamErr ? (
           <div className="cv-stream-err">
-            <span aria-hidden="true">⚠</span>
+            <Icon name="x" size={13} />
             <span className="msg">{streamErr}</span>
             <button type="button" className="cv-err-retry" onClick={() => void regenerateLast()}>
               {t('chat.retry')}

@@ -1,11 +1,14 @@
 // packages/web/src/views/activityModel.ts — pure functions that ingest raw
 // WebSocket frames and produce ActivityItem[] for the ActivityFeed panel.
 
+import type { IconName } from '../ui/Icon'
+
 export type ActivityItem = {
   id: string
   ts: number
   type: 'cycle' | 'spawn' | 'task_done' | 'task_blocked' | 'chat' | 'mode' | 'budget' | 'tick' | 'think'
-  icon: string
+  /** Icon-set name (rendered via <Icon/> — same vocabulary as verdictIcon). */
+  icon: IconName
   /** Dynamic text (task titles, budget lines) — rendered as-is, untranslated. */
   title: string
   /** i18n key for fixed labels (act.*); takes precedence over `title`. */
@@ -37,7 +40,7 @@ function actionToItem(a: { type: string; text?: string; title?: string; [key: st
         id: `spawn-${ts}-${String(a.title ?? '').slice(0, 20)}`,
         ts,
         type: 'spawn',
-        icon: '●',
+        icon: 'zap',
         title: a.title ?? '',
         labelKey: a.title ? undefined : 'act.spawned',
         detail: typeof a.framework === 'string' ? a.framework : undefined,
@@ -48,7 +51,7 @@ function actionToItem(a: { type: string; text?: string; title?: string; [key: st
         id: `task_done-${ts}-${String(a.title ?? '').slice(0, 20)}`,
         ts,
         type: 'task_done',
-        icon: '✓',
+        icon: 'check',
         title: a.title ?? '',
         labelKey: a.title ? undefined : 'act.done',
         detail: typeof a.summary === 'string' ? a.summary : a.text,
@@ -59,7 +62,7 @@ function actionToItem(a: { type: string; text?: string; title?: string; [key: st
         id: `task_blocked-${ts}-${String(a.title ?? '').slice(0, 20)}`,
         ts,
         type: 'task_blocked',
-        icon: '✗',
+        icon: 'x',
         title: a.title ?? '',
         labelKey: a.title ? undefined : 'act.blocked',
         detail: typeof a.error === 'string' ? a.error : a.text,
@@ -70,7 +73,7 @@ function actionToItem(a: { type: string; text?: string; title?: string; [key: st
         id: `chat-${ts}`,
         ts,
         type: 'chat',
-        icon: '●',
+        icon: 'message',
         title: '',
         labelKey: 'act.replied',
         detail: typeof a.text === 'string' ? a.text : undefined,
@@ -81,7 +84,7 @@ function actionToItem(a: { type: string; text?: string; title?: string; [key: st
         id: `think-${ts}`,
         ts,
         type: 'think',
-        icon: '●',
+        icon: 'brain',
         title: '',
         labelKey: 'act.thinking',
         color: 'blue',
@@ -105,7 +108,7 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
       id: `cycle-${now}-${wake}`,
       ts: now,
       type: 'cycle',
-      icon: '●',
+      icon: 'repeat',
       title: '',
       labelKey: 'act.wake',
       labelParam: wake,
@@ -128,7 +131,7 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
         id: `chat-${now}-${text.slice(0, 20)}`,
         ts: now,
         type: 'chat',
-        icon: '●',
+        icon: 'message',
         title: '',
         labelKey: 'act.replied',
         detail: text || undefined,
@@ -141,7 +144,7 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
       id: `mode-${now}`,
       ts: now,
       type: 'mode',
-      icon: '●',
+      icon: 'settings',
       title: '',
       labelKey: 'act.modeLine',
       labelParam: mode,
@@ -154,7 +157,7 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
         id: `budget-${now}`,
         ts: now,
         type: 'budget',
-        icon: '●',
+        icon: 'database',
         title: line,
         color: 'dim',
       })
@@ -170,7 +173,7 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
           id: `task_done-${now}-${String(task.title ?? '').slice(0, 20)}`,
           ts: now,
           type: 'task_done',
-          icon: '✓',
+          icon: 'check',
           title: task.title ?? '',
           labelKey: task.title ? undefined : 'act.done',
           detail: typeof task.resultSummary === 'string' ? task.resultSummary : undefined,
@@ -181,7 +184,7 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
           id: `task_blocked-${now}-${String(task.title ?? '').slice(0, 20)}`,
           ts: now,
           type: 'task_blocked',
-          icon: '✗',
+          icon: 'x',
           title: task.title ?? '',
           labelKey: task.title ? undefined : 'act.blocked',
           color: 'red',
@@ -193,7 +196,7 @@ export function ingestFrame(frame: Record<string, unknown>, items: ActivityItem[
       id: `tick-${now}`,
       ts: now,
       type: 'tick',
-      icon: '●',
+      icon: 'clock',
       title: '',
       labelKey: 'act.heartbeat',
       color: 'dim',

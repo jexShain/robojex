@@ -10,6 +10,7 @@ import * as api from '../state/api'
 import { useStore } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
+import { Icon, gearIcon } from '../ui/Icon'
 import type { DayUsage } from '../state/types'
 import { gearsOrFallback, localizeGears } from './gearDefs'
 import { ThinkingStream } from './ThinkingStream'
@@ -40,7 +41,7 @@ function fmtTick(ms: number, t: (key: string) => string): string {
   return `${Math.round(ms / 1000)} s`
 }
 
-function GearDial({ level, emoji }: { level: number; emoji: string }) {
+function GearDial({ level, gearId }: { level: number; gearId: string }) {
   const { t } = useT()
   const arc = `M ${CX - R} ${CY} A ${R} ${R} 0 0 1 ${CX + R} ${CY}`
   const frac = (level / 4) * 100
@@ -99,9 +100,11 @@ function GearDial({ level, emoji }: { level: number; emoji: string }) {
         <circle cx={CX} cy={CY - 74} r={3.5} />
       </g>
       <circle cx={CX} cy={CY} r={7} className="cp-hub" />
-      <text x={CX} y={CY - 34} textAnchor="middle" className="cp-emoji">
-        {emoji}
-      </text>
+      {/* gear glyph at the dial center — nested svg positioned over the dial
+       * (same spot the emoji <text> used to occupy) */}
+      <g transform={`translate(${CX - 11}, ${CY - 45})`}>
+        <Icon name={gearIcon(gearId)} size={22} />
+      </g>
     </svg>
   )
 }
@@ -227,7 +230,7 @@ export function GearPanel() {
       {/* ── dial + facts ── */}
       <section className="cp-top">
         <div className="cp-dial-wrap">
-          <GearDial level={cur.level} emoji={cur.emoji} />
+          <GearDial level={cur.level} gearId={cur.id} />
         </div>
         <div className="cp-facts">
           <div className="cp-facts-title">
@@ -237,22 +240,24 @@ export function GearPanel() {
                 <path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M12.4 3.6l-1.2 1.2M4.8 11.2l-1.2 1.2" />
               </svg>
             </span>
-            <span className="cp-cur-emoji">{cur.emoji}</span>
+            <span className="cp-cur-emoji">
+              <Icon name={gearIcon(cur.id)} size={18} />
+            </span>
             <span className="cp-cur-name" style={{ color: `var(--rj-gear-${cur.level})` }}>
               {cur.name}
             </span>
           </div>
           <p className="cp-cur-desc">{cur.desc}</p>
           <div className="cp-facts-kv">
-            <span className="k">cost</span>
+            <span className="k" title={t('cp.tipCost')}>cost</span>
             <span className="v">{cur.cost}</span>
-            <span className="k">tick</span>
+            <span className="k" title={t('cp.tipTick')}>tick</span>
             <span className="v">
               {fmtTick(cur.tickMs, t)}{fill(t('cp.applied'), { x: fmtTick(state.gearAppliedTickMs, t) })}
             </span>
-            <span className="k">decide</span>
+            <span className="k" title={t('cp.tipDecide')}>decide</span>
             <span className="v">{cur.decideMaxTokens > 0 ? `${cur.decideMaxTokens} tok` : '—'}</span>
-            <span className="k">patrol</span>
+            <span className="k" title={t('cp.tipPatrol')}>patrol</span>
             <span className="v">
               {cur.patrolEvery > 0 ? fill(t('cp.patrolEvery'), { n: cur.patrolEvery }) : t('cp.patrolOff')}
             </span>
@@ -268,7 +273,9 @@ export function GearPanel() {
                 aria-pressed={g.id === state.gear}
                 title={`${g.name} · ${g.desc}`}
               >
-                <span>{g.emoji}</span>
+                <span>
+                  <Icon name={gearIcon(g.id)} size={14} />
+                </span>
                 <span className="cp-quick-name">{g.name}</span>
               </button>
             ))}

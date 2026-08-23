@@ -1,0 +1,26 @@
+feat(web): premium SVG icon system + locale truth + metric tooltips (R87/R88)
+
+R87 — chrome-wide emoji purge, zero new deps:
+- new ui/Icon.tsx: 26 hand-inlined 24x24 stroke icons (Lucide flavor,
+  currentColor), gearIcon(id)/verdictIcon(v) semantic mappers; backend
+  emoji fields stay in contracts but the UI never renders them
+- chat/frame/sidebar/widget + views/i18n fully swept (thinking folds,
+  tool chips, gear popovers/chips, palette rows, group headers, tray-
+  adjacent chrome, settings sections, verdict badges, activity feed,
+  board/cockpit/status glyphs, emoji stripped from zh/en copy)
+- model MESSAGE text may still contain emoji — content, not chrome
+
+R88 — PM/visual review fixes (five-view zai-vision audit, hallucinations
+cross-checked against source before acting):
+- Gantt/Agenda weekday heads en-US -> CJK single chars, date heads
+  -> 8月24日, with lang param so en locale keeps Mon/Aug 20
+- cockpit cost/tick/decide/patrol chips get zh/en title tooltips
+- e2e mock version 'e2e-mock' -> '0.0.0-mock' (sidebar read v0.0.0-mock)
+- tray icon: real icon.png scaled to 16px first, embedded gradient as
+  bare-checkout fallback
+- ChatStream.tsx flagged dead (superseded by ChatView), left for owner
+
+Verified: vitest 633/633, web tsc 0 errors, e2e 22/22 (fresh shots),
+playwright DOM probe confirms cc-day heads render 24/一..30/日.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>

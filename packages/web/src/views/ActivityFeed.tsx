@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react'
 import { useStore } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
+import { Icon } from '../ui/Icon'
 import { formatTime } from './activityModel'
 import type { ActivityItem } from '../state/types'
 
@@ -32,7 +33,9 @@ function ItemRow({ item }: { item: ActivityItem }) {
      <div className={`activity-dot ${item.color}`} />
      <div className="activity-content">
        <div className="activity-item-title">
-         {item.type === 'task_done' ? '✓ ' : item.type === 'task_blocked' ? '✗ ' : null}
+         {item.type === 'task_done' || item.type === 'task_blocked' ? (
+           <Icon name={item.icon} size={12} style={{ marginRight: 4 }} />
+         ) : null}
          {label}
          {fw ? <span className={`fw-badge ${fw}`}>{fw}</span> : null}
        </div>

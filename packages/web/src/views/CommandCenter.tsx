@@ -14,6 +14,7 @@ import * as api from '../state/api'
 import { useStore } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
+import { Icon, gearIcon, verdictIcon } from '../ui/Icon'
 import type { JobInfo, Task, TranscriptItem } from '../state/types'
 import { gearsOrFallback, localizeGears } from './gearDefs'
 import {
@@ -167,19 +168,14 @@ function toThinkEntries(item: TranscriptItem, t: (key: string) => string): Think
 
 /* ── small pieces ── */
 
-const VERDICT_GLYPH: Record<string, string> = {
-  pass: '✓',
-  partial: '◐',
-  fail: '✗',
-  unchecked: '○',
-}
+const VERDICTS = new Set(['pass', 'partial', 'fail', 'unchecked'])
 
 /** Card-corner progress ring + verdict glyph (18px, same vocabulary as the
  * board view's ring). */
 function MiniRing({ task }: { task: Task }) {
   const { t } = useT()
   const verdict = (task.verdict ?? '').toLowerCase()
-  const v = VERDICT_GLYPH[verdict] ? verdict : 'unchecked'
+  const v = VERDICTS.has(verdict) ? verdict : 'unchecked'
   const progress = typeof task.progress === 'number' ? Math.max(0, Math.min(100, Math.round(task.progress))) : 0
   return (
     <span className="cc-ring-wrap" title={fill(t('cc.ringTitle'), { n: progress, v })}>
@@ -187,7 +183,11 @@ function MiniRing({ task }: { task: Task }) {
         <circle cx="18" cy="18" r="15.9" className="ring-bg" />
         <circle cx="18" cy="18" r="15.9" className={`ring-fg v-${v}`} strokeDasharray={`${progress} 100`} pathLength={100} />
       </svg>
-      {task.verdict ? <span className={`cc-verdict v-${v}`}>{VERDICT_GLYPH[v]}</span> : null}
+      {task.verdict ? (
+        <span className={`cc-verdict v-${v}`}>
+          <Icon name={verdictIcon(v)} size={11} />
+        </span>
+      ) : null}
     </span>
   )
 }
@@ -198,13 +198,13 @@ function RelTime({ task, now }: { task: Task; now: number }) {
   if (task.dueAt != null)
     return (
       <span className="cc-time due" title={t('cc.due')}>
-        ⏳ {fmtRel(task.dueAt, now, lang)}
+        <Icon name="clock" size={11} /> {fmtRel(task.dueAt, now, lang)}
       </span>
     )
   if (task.scheduledAt != null)
     return (
       <span className="cc-time sched" title={t('cc.start')}>
-        ⏱ {fmtRel(task.scheduledAt, now, lang)}
+        <Icon name="clock" size={11} /> {fmtRel(task.scheduledAt, now, lang)}
       </span>
     )
   return (
@@ -227,13 +227,13 @@ function GanttBand({
   selectedId: string | null
   onSelect(id: string): void
 }) {
-  const { t } = useT()
+  const { t, lang } = useT()
   // window derivation is cheap (dayStartOf + 7 head cells) — no memo needed
   const win = ganttWindow(now)
   const days: { key: number; head: { day: string; weekday: string }; today: boolean }[] = []
   for (let i = 0; i < win.days; i++) {
     const ms = win.start + i * 86_400_000
-    days.push({ key: ms, head: dayColHead(ms), today: i === 0 })
+    days.push({ key: ms, head: dayColHead(ms, lang), today: i === 0 })
   }
   const nowPct = Math.max(0, Math.min(100, ((now - win.start) / (win.end - win.start)) * 100))
 
@@ -457,7 +457,9 @@ function ThinkLog() {
       <div className="cc-log-list" ref={scrollRef} onScroll={onScroll}>
         {entries.length === 0 ? (
           <div className="cc-log-empty">
-            <div className="cc-log-empty-icon">🧠</div>
+            <div className="cc-log-empty-icon">
+              <Icon name="brain" size={24} />
+            </div>
             <p>{t('cc.waitFirst')}</p>
           </div>
         ) : (
@@ -597,7 +599,9 @@ export function CommandCenter() {
             style={{ '--cc-gear': `var(--rj-gear-${cur.level})` } as CSSProperties}
             title={fill(t('cc.gearTitle'), { name: cur.name, desc: cur.desc })}
           >
-            <span className="cc-gear-emoji">{cur.emoji}</span>
+            <span className="cc-gear-emoji">
+              <Icon name={gearIcon(cur.id)} size={14} />
+            </span>
             {cur.name}
           </span>
         ) : null}

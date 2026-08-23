@@ -109,7 +109,7 @@ function NowLine({ pct, now }: { pct: number; now: number }) {
 
 function DayView({ onOpen }: { onOpen(id: string): void }) {
   const { state } = useStore()
-  const { t } = useT()
+  const { t, lang } = useT()
   const [dayOffset, setDayOffset] = useState(0)
   const [, setTick] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -252,7 +252,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
             <path d="M10 3.5 5.5 8l4.5 4.5" />
           </svg>
         </button>
-        <span className="agenda-date">{fmtDayLabel(day0)}</span>
+        <span className="agenda-date">{fmtDayLabel(day0, lang)}</span>
         <button
           type="button"
           className="nav-btn"
@@ -343,6 +343,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
 
 function DaysView({ onOpen }: { onOpen(id: string): void }) {
   const { state } = useStore()
+  const { lang } = useT()
   const [, setTick] = useState(0)
   useEffect(() => {
     const timer = window.setInterval(() => setTick((x) => x + 1), 60_000)
@@ -357,7 +358,7 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
     <div className="agenda-days">
       <div className="ad-corner" />
       {cols.map((c) => {
-        const head = dayColHead(c.day0)
+        const head = dayColHead(c.day0, lang)
         return (
           <div key={c.day0} className={`ad-head${c.today ? ' today' : ''}`}>
             <b>{head.day}</b>

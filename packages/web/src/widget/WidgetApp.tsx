@@ -9,6 +9,7 @@ import { useStore } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
 import { Providers } from '../Providers'
+import { Icon } from '../ui/Icon'
 import type { TranscriptItem } from '../state/types'
 
 // Three rotating tabs. Pinned stops the 8s auto-advance.
@@ -79,7 +80,7 @@ export function WidgetApp(): ReactElement {
           title={pinned ? t('widget.unpin') : t('widget.pin')}
           aria-pressed={pinned}
         >
-          {pinned ? '📌' : '○'}
+          {pinned ? <Icon name="pin" size={12} /> : <Icon name="pin" size={12} style={{ opacity: 0.45 }} />}
         </button>
         <button
           type="button"

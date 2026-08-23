@@ -25,6 +25,7 @@ import { loadFlag, loadView, saveFlag, saveView } from '../views/viewState'
 import type { ViewId } from '../views/viewState'
 import { CommandPalette } from './CommandPalette'
 import { HudBar } from './HudBar'
+import { Icon } from '../ui/Icon'
 import './frame.css'
 
 const NARROW_QUERY = '(max-width: 899px)'
@@ -178,7 +179,7 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
           {sidebarCollapsed ? ExpandIcon : CollapseIcon}
         </button>
         <div className="rj-brand" title={t('frame.brandTitle')}>
-          <span className="brand-orb">⚡</span>
+          <span className="brand-orb"><Icon name="zap" size={13} /></span>
           <span className="brand-name">RoboJex</span>
         </div>
         <nav className="rj-tabs" role="tablist" aria-label={t('frame.tabsAria')}>

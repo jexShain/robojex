@@ -12,6 +12,7 @@ import type { ThemeApi } from '../state/theme'
 import type { GearId } from '../state/types'
 import { gearsOrFallback, localizeGears } from '../views/gearDefs'
 import { VIEW_META } from '../views/ViewSwitcher'
+import { Icon, gearIcon } from '../ui/Icon'
 import type { ViewId } from '../views/viewState'
 
 interface CmdItem {
@@ -65,7 +66,7 @@ export function CommandPalette({
       id: 'act-new-conv',
       group: t('cmdk.groupAction'),
       label: t('cmdk.newChat'),
-      icon: <span>✏️</span>,
+      icon: <Icon name="message" size={14} />,
       run: () => {
         void store.newConversation()
         onView('chat')
@@ -85,7 +86,7 @@ export function CommandPalette({
         id: `act-theme-${pref}`,
         group: t('cmdk.groupAction'),
         label: fill(t('cmdk.theme'), { name: t(`theme.${pref}`) }),
-        icon: <span>{pref === 'light' ? '☀️' : pref === 'dark' ? '🌙' : '🖥️'}</span>,
+        icon: <Icon name={pref === 'light' ? 'sun' : pref === 'dark' ? 'moon' : 'partial'} size={14} />,
         run: () => theme.setPref(pref),
       })
     }
@@ -95,7 +96,7 @@ export function CommandPalette({
       id: 'act-lang-cycle',
       group: t('cmdk.groupAction'),
       label: fill(t('cmdk.switchLang'), { next: t(`lang.${nextLang}`) }),
-      icon: <span>🌐</span>,
+      icon: <Icon name="repeat" size={14} />,
       run: () => setLangPrefState(nextLang),
     })
     for (const g of localizeGears(gearsOrFallback(store.state.gears), t)) {
@@ -104,7 +105,7 @@ export function CommandPalette({
         group: t('cmdk.groupAction'),
         label: fill(t('cmdk.gear'), { name: g.name, id: g.id }),
         hint: g.cost,
-        icon: <span>{g.emoji}</span>,
+        icon: <Icon name={gearIcon(g.id)} size={14} />,
         run: () => void store.changeGear(g.id as GearId),
       })
     }

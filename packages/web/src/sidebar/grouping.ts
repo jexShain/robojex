@@ -5,6 +5,7 @@
 
 import type { Conversation } from '../state/types'
 import type { Lang } from '../i18n/event'
+import type { IconName } from '../ui/Icon'
 
 export type GroupKey = 'pinned' | 'today' | 'yesterday' | 'week' | 'older'
 
@@ -16,16 +17,26 @@ export interface ConvGroup {
 
 export const GROUP_ORDER: GroupKey[] = ['pinned', 'today', 'yesterday', 'week', 'older']
 
+/** Chrome icon for each group heading (the sidebar renders it via <Icon/>);
+ * null = text-only heading. Type-only import keeps this file DOM-free. */
+export const GROUP_ICON: Record<GroupKey, IconName | null> = {
+  pinned: 'pin',
+  today: null,
+  yesterday: null,
+  week: null,
+  older: null,
+}
+
 const GROUP_LABELS: Record<Lang, Record<GroupKey, string>> = {
   zh: {
-    pinned: '📌 置顶',
+    pinned: '置顶',
     today: '今天',
     yesterday: '昨天',
     week: '近 7 天',
     older: '更早',
   },
   en: {
-    pinned: '📌 Pinned',
+    pinned: 'Pinned',
     today: 'Today',
     yesterday: 'Yesterday',
     week: 'Last 7 days',
@@ -58,7 +69,7 @@ function bucketOf(c: Conversation, today0: number): GroupKey {
 }
 
 /**
- * Bucket conversations into 📌置顶 / 今天 / 昨天 / 近 7 天 / 更早 (pinned first
+ * Bucket conversations into 置顶(GROUP_ICON pin) / 今天 / 昨天 / 近 7 天 / 更早 (pinned first
  * regardless of age), each bucket sorted by updatedAt desc, empty buckets
  * omitted. Pure: `now` injectable for tests; labels follow `lang`.
  */

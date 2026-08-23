@@ -1,5 +1,5 @@
 // packages/web/src/sidebar/Sidebar.tsx — conversation sidebar: brand row,
-// new-chat, search, grouped list (📌置顶/今天/昨天/近 7 天/更早) with hover +
+// new-chat, search, grouped list (置顶[pin icon]/今天/昨天/近 7 天/更早) with hover +
 // context-menu actions (pin / inline rename / delete-with-confirm), skeleton
 // while loading, and a jex status card (gear-colored breathing dot, connection
 // state, version). Zero required props — <Sidebar /> just works; collapse goes
@@ -18,7 +18,8 @@ import type { Conversation } from '../state/types'
 import type { ThemeApi } from '../state/theme'
 import { gearsOrFallback, localizeGears } from '../views/gearDefs'
 import type { ViewId } from '../views/viewState'
-import { groupConversations, relTime } from './grouping'
+import { Icon } from '../ui/Icon'
+import { GROUP_ICON, groupConversations, relTime } from './grouping'
 import './sidebar.css'
 
 interface MenuState {
@@ -43,14 +44,14 @@ function PinIcon(): JSX.Element {
 }
 function PencilIcon(): JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
     </svg>
   )
 }
 function TrashIcon(): JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
     </svg>
   )
@@ -350,7 +351,12 @@ export function Sidebar(props: {
         ) : (
           groups.map((g) => (
             <div key={g.key} data-group={g.key}>
-              <div className="sb-group-label">{g.label}</div>
+              <div className="sb-group-label">
+                {GROUP_ICON[g.key] ? (
+                  <Icon name={GROUP_ICON[g.key]!} size={12} style={{ marginRight: 4 }} />
+                ) : null}
+                {g.label}
+              </div>
               {g.items.map((c) => (
                 <ConvItem
                   key={c.id}
@@ -429,7 +435,7 @@ export function Sidebar(props: {
               setMenu(null)
             }}
           >
-            <span className="mi">📌</span>
+            <span className="mi"><Icon name="pin" size={13} /></span>
             {menuConv.pinned === 1 ? t('side.unpin') : t('side.pin')}
           </button>
           <button
@@ -441,7 +447,7 @@ export function Sidebar(props: {
               setMenu(null)
             }}
           >
-            <span className="mi">✏️</span>{t('side.rename')}
+            <span className="mi"><PencilIcon /></span>{t('side.rename')}
           </button>
           <button
             type="button"
@@ -452,7 +458,7 @@ export function Sidebar(props: {
               setMenu(null)
             }}
           >
-            <span className="mi">🗑️</span>{t('side.delete')}
+            <span className="mi"><TrashIcon /></span>{t('side.delete')}
           </button>
         </div>
       ) : null}
