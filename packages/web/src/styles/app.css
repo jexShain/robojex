@@ -1558,6 +1558,17 @@ body[data-ds-dark-theme] .chip.full {
   color: var(--dsw-alias-state-warn-label);
 }
 
+/* due urgency: smolder under an hour, burn past it (live cards only) */
+.bc-badge.due.soon {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, transparent);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.bc-badge.due.over {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 22%, transparent);
+  color: var(--dsw-alias-state-error-label, var(--dsw-alias-state-error-primary));
+}
+
 .bc-caret {
   margin-left: auto;
   display: flex;

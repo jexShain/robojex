@@ -318,6 +318,8 @@ export const zh: Record<string, string> = {
   'board.filterEmpty': '没有符合筛选的任务',
   'board.schedBadge': '排程 {t}',
   'board.dueBadge': '截止 {t}',
+  'board.dueSoon': '临近截止 · {t}',
+  'board.dueOver': '已逾期 · {t}',
   'board.expandN': '展开 {n}',
   'board.collapse': '折叠',
   'board.childBlocked': '子任务受阻',

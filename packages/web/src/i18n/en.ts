@@ -318,6 +318,8 @@ export const en: Record<string, string> = {
   'board.filterEmpty': 'No tasks match this filter',
   'board.schedBadge': 'scheduled {t}',
   'board.dueBadge': 'due {t}',
+  'board.dueSoon': 'due soon · {t}',
+  'board.dueOver': 'overdue · {t}',
   'board.expandN': 'expand {n}',
   'board.collapse': 'collapse',
   'board.childBlocked': 'a child task is blocked',

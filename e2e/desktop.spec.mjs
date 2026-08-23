@@ -736,3 +736,32 @@ test.describe('RoboJex desktop', () => {
     expect(new Date(kid.dueAt).getHours()).toBe(11)
     await shot(page, '38-add-step')
   })
+
+  // 39 (calendar keys + due urgency): ←/→ walk days and Home returns to
+  // today on the agenda; the board's due badge smolders (<1h) and burns
+  // (past) for live cards.
+  test('39 agenda arrows navigate days; board due badge urgency tones', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    const state0 = await (await page.request.get('/api/state')).json()
+    const now = state0.now ?? Date.now()
+
+    await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    const dateEl = page.locator('.agenda-date').first()
+    const today = await dateEl.textContent()
+    await page.keyboard.press('ArrowRight')
+    await expect(dateEl).not.toHaveText(today ?? '', { timeout: 3_000 })
+    await expect(page.locator('.nav-btn.today')).toBeVisible()
+    await page.keyboard.press('ArrowLeft')
+    await expect(dateEl).toHaveText(today ?? '', { timeout: 3_000 })
+    await page.keyboard.press('Home')
+    await expect(page.locator('.nav-btn.today')).toHaveCount(0)
+
+    // due urgency: one smoldering (30min out), one burning (10min past)
+    await page.request.post('/api/task', { data: { title: '临期探针', dueAt: now + 30 * 60_000 } })
+    await page.request.post('/api/task', { data: { title: '逾期探针', dueAt: now - 10 * 60_000 } })
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    await expect(page.locator('.board-card', { hasText: '临期探针' }).locator('.bc-badge.due.soon')).toBeVisible({ timeout: 5_000 })
+    await expect(page.locator('.board-card', { hasText: '逾期探针' }).locator('.bc-badge.due.over')).toBeVisible({ timeout: 5_000 })
+    await shot(page, '39-due-urgency')
+  })

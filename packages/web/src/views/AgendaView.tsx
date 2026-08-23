@@ -177,6 +177,21 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
     return () => window.clearInterval(timer)
   }, [])
 
+  // calendar-key navigation: ←/→ walk days, Home returns to today — the way
+  // every calendar works. Skipped while a form control holds focus (the
+  // time fields own their arrow keys) or mid-drag.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const el = e.target instanceof HTMLElement ? e.target : null
+      if (el && el.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (e.key === 'ArrowLeft') { e.preventDefault(); setDayOffset((d) => d - 1) }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); setDayOffset((d) => d + 1) }
+      else if (e.key === 'Home') { e.preventDefault(); setDayOffset(0) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const now = Date.now() + state.clockOffset
   const today0 = dayStartOf(now)
   const day0 = addDaysLocal(today0, dayOffset)

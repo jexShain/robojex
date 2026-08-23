@@ -41,11 +41,19 @@ function Badges({ task, now }: { task: Task; now: number }) {
           <Icon name="clock" size={11} /> {fmtStamp(task.scheduledAt, now)}
         </span>
       ) : null}
-      {task.dueAt != null ? (
-        <span className="bc-badge due" title={fill(t('board.dueBadge'), { t: fmtStamp(task.dueAt, now) })}>
-          <Icon name="clock" size={11} /> {fmtStamp(task.dueAt, now)}
-        </span>
-      ) : null}
+      {task.dueAt != null ? (() => {
+        // urgency tone: past due burns, under an hour smolders — a glance
+        // should carry the time pressure, not just the timestamp
+        const delta = task.dueAt! - now
+        const urgent = task.status === 'todo' || task.status === 'running' || task.status === 'blocked'
+        const cls = !urgent ? '' : delta < 0 ? ' over' : delta < 3_600_000 ? ' soon' : ''
+        const key = !urgent ? 'board.dueBadge' : delta < 0 ? 'board.dueOver' : delta < 3_600_000 ? 'board.dueSoon' : 'board.dueBadge'
+        return (
+          <span className={`bc-badge due${cls}`} title={fill(t(key), { t: fmtStamp(task.dueAt, now) })}>
+            <Icon name="clock" size={11} /> {fmtStamp(task.dueAt, now)}
+          </span>
+        )
+      })() : null}
     </>
   )
 }
