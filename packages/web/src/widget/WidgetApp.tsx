@@ -51,7 +51,7 @@ export function WidgetApp(): ReactElement {
   const alive = s.lastHud !== null || s.transcript.some((t) => t.kind === 'cycle')
   const serverNow = Date.now() + (s.clockOffset ?? 0)
   const running = s.tasks.filter((t) => t.status === 'running')
-  const sched = s.tasks.filter((t) => t.scheduledAt || t.dueAt)
+  const sched = s.tasks.filter((t) => (t.scheduledAt || t.dueAt) && t.status !== 'cancelled')
 
   // Clicking a tab both selects it and pins the view (manual intent).
   const pick = (t: Tab): void => {
