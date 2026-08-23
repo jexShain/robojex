@@ -1133,3 +1133,89 @@ test("R81 reschedule action moves a card's clock, re-arms the pump, and survives
   // the two invalid actions logged failures but the cycle lived
   loop.stop();
 });
+
+test("R82 time errands: scheduled spawn defers, due wake replies to the human and closes the reminder card", async () => {
+  const runtimeDir = makeRuntime();
+  const chats: string[] = [];
+  const spawned: unknown[] = [];
+  const future = new Date(Date.now() + 3_600_000).toISOString();
+  let cardId = ""; // set after phase 1; the due-wake fake reads it back
+  const chat = vi.fn(async (slot: string, msgs: { content: string }[]) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    const ctx = msgs.at(-1)!.content;
+    if (ctx.includes("due_spawn")) { // due-wake first: RECENT CYCLES replays the phase-1 chat text
+      return { content: JSON.stringify({ actions: [
+        { type: "reply", text: "时间到：该喝水了💧" },
+        { type: "verify", task_id: cardId, progress: 100, verdict: "pass", note: "本周期已用 reply 直接通知用户，提醒送达" },
+      ] }), usage: { promptTokens: 50, completionTokens: 20 } };
+    }
+    if (ctx.includes("chat: 明天下午3点提醒我喝水")) {
+      return { content: JSON.stringify({ actions: [
+        { type: "spawn", framework: "hermes", title: "提醒我喝水", prompt: "到点提醒用户喝水", scheduledAt: future, accept: "到点已通知用户" },
+      ] }), usage: { promptTokens: 50, completionTokens: 20 } };
+    }
+    throw new Error("unexpected decide context");
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn(async (...a: unknown[]) => { spawned.push(a); }), getRegistry: () => null } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  loop.setOutlet({ chatOut: (_f, text) => chats.push(text), frame: () => {}, hud: () => {} } as never);
+  const board = (loop as unknown as { d: { board: TaskBoard } }).d.board;
+
+  // phase 1: the time errand lands as a scheduled card, deferred — no launch
+  await loop.runOnce("chat: 明天下午3点提醒我喝水");
+  const card = board.list().find((x) => x.title === "提醒我喝水")!;
+  expect(card).toBeTruthy();
+  expect(card.scheduledAt).toBe(Date.parse(future)); // parsed onto the card exactly
+  expect(spawned).toHaveLength(0);                   // future spawn only boards, never launches
+  expect(chats.some((c) => c.includes("已排程") && c.includes("提醒我喝水"))).toBe(true);
+
+  // phase 2: the Gantt pump wakes at due time — a reminder needs no agent:
+  // the reply reaches the human and a todo-pass closes the card (R82)
+  cardId = card.id;
+  await loop.runOnce(`due_spawn: ${card.id.slice(0, 8)} 提醒我喝水`);
+  expect(spawned).toHaveLength(0); // the doctrine path: reply, not dispatch
+  expect(chats.some((c) => c.includes("该喝水了"))).toBe(true);
+  const settled = board.list().find((x) => x.id === card.id)!;
+  expect(settled.status).toBe("done"); // pass on a never-dispatched card closes it
+  expect(settled.verdict).toBe("pass");
+  loop.stop();
+});
+
+test("R82b spawn times: relative durations parse, UTC drift heals, garbage stays ignored", async () => {
+  const runtimeDir = makeRuntime();
+  const now = Date.now();
+  // the live-soak bug shape: wall digits computed in UTC but tagged +08:00 —
+  // parses 8h early (past), heals when the digits are read back as UTC
+  const driftedWall = new Date(now + 3 * 3_600_000).toISOString().replace("Z", "+08:00");
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    return { content: JSON.stringify({ actions: [
+      { type: "spawn", framework: "hermes", title: "相对三分钟", prompt: "x", scheduledAt: "+3m" },
+      { type: "spawn", framework: "hermes", title: "漂移自愈", prompt: "x", scheduledAt: driftedWall },
+      { type: "spawn", framework: "hermes", title: "垃圾时间", prompt: "x", scheduledAt: "not-a-time" },
+    ] }), usage: { promptTokens: 50, completionTokens: 20 } };
+  });
+  const loop = new SchedulerLoop({
+    llm: { chat } as unknown as LLMClient, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: { spawn: vi.fn(), getRegistry: () => null } as unknown as AgentOrchestrator,
+    auditor: new Auditor({ runtimeDir, reviewEvery: 1000 }), budget: new BudgetGovernor("burn"), runtimeDir,
+  });
+  try {
+    await loop.runOnce("chat: 时间解析测试");
+    const board = (loop as unknown as { d: { board: TaskBoard } }).d.board;
+    const rel = board.list().find((x) => x.title === "相对三分钟")!;
+    expect(rel.scheduledAt!).toBeGreaterThan(now + 2 * 60_000);   // +3m honored
+    expect(rel.scheduledAt!).toBeLessThan(now + 5 * 60_000);
+    const healed = board.list().find((x) => x.title === "漂移自愈")!;
+    expect(healed.scheduledAt!).toBeGreaterThan(now);             // healed into the future
+    expect(healed.scheduledAt!).toBeLessThan(now + 7 * 86_400_000);
+    const junk = board.list().find((x) => x.title === "垃圾时间")!;
+    expect(junk.scheduledAt ?? null).toBeFalsy();                 // garbage ignored (board stores null), spawn lived
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("healed"))).toBe(true);
+    loop.stop();
+  } finally { warn.mockRestore(); }
+});
