@@ -41,6 +41,8 @@ export interface Task {
   progress?: number
   verdict?: string
   acceptance?: string
+  /** agent framework the card was dispatched to ('' = never dispatched; only those are operator-done-able) */
+  assignee?: string
 }
 
 export interface Budget {

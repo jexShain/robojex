@@ -211,6 +211,55 @@ test("PUT /api/task: operator cancel retires a card + broadcasts; idempotent, do
   c.ws.close();
 });
 
+test("PUT /api/task status=done: settles a never-dispatched card, tags the summary; agent-owned/history/bad shapes refuse", async () => {
+  const rig = mkRig();
+  const mine = rig.board.add({ title: "buy milk", scheduledAt: Date.now() + 3_600_000 });
+  const agented = rig.board.add({ title: "agent job", assignee: "stub" });
+  const run = rig.board.add({ title: "wip" });
+  rig.board.update(run.id, { status: "running" });
+  const fin = rig.board.add({ title: "finished" });
+  rig.board.update(fin.id, { status: "done" });
+  const dead = rig.board.add({ title: "dead" });
+  rig.board.update(dead.id, { status: "cancelled" });
+  const doneCalls: Array<{ id: string; note: string }> = [];
+  const loop = {
+    push: vi.fn(),
+    markDoneById: (id: string, note: string) => {
+      doneCalls.push({ id, note });
+      const cur = rig.board.list().find((t) => t.id === id)!;
+      rig.board.update(id, { status: "done", progress: 100, resultSummary: [cur.resultSummary, note].filter(Boolean).join(" | ") });
+    },
+  };
+  const api = makeApi(rig, loop);
+  await api.start();
+
+  const put = (body: unknown): Promise<Response> =>
+    fetch(`http://127.0.0.1:${api.port}/api/task`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  const ok = await put({ id: mine.id, status: "done" });
+  expect(ok.status).toBe(202);
+  expect(doneCalls).toEqual([{ id: mine.id, note: "[done by operator]" }]);
+  expect(rig.board.list().find((t) => t.id === mine.id)).toMatchObject({ status: "done", progress: 100, resultSummary: "[done by operator]" });
+
+  for (const [body, code] of [
+    [{ id: agented.id, status: "done" }, 409], // has an assignee — verify is the path
+    [{ id: run.id, status: "done" }, 409],     // running — an agent is on it
+    [{ id: fin.id, status: "done" }, 409],     // history is immutable
+    [{ id: dead.id, status: "done" }, 409],
+    [{ id: mine.id, status: "archived" }, 400],
+  ] as [unknown, number][]) {
+    const r = await put(body);
+    expect(r.status, `body ${JSON.stringify(body)}`).toBe(code);
+  }
+  expect(doneCalls).toHaveLength(1); // nothing above reached the loop
+
+  const bare = makeApi(rig, { push: vi.fn() }); // loop unwired for operator-done
+  await bare.start();
+  const mine2 = rig.board.add({ title: "later errand" });
+  const r503 = await fetch(`http://127.0.0.1:${bare.port}/api/task`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: mine2.id, status: "done" }) });
+  expect(r503.status).toBe(503);
+});
+
 test("PATCH /api/task: operator reschedule lands on the board via the loop; history refuses, bad shapes 4xx", async () => {
   const rig = mkRig();
   const live = rig.board.add({ title: "draggable" });

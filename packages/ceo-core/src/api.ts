@@ -30,6 +30,7 @@ export interface ApiLoopHandle {
   sendCtrl?(frame: Record<string, unknown>): boolean; // false/absent: takeover link down
   setModeLocal?(mode: string): void;                  // link-down fallback: switch the mode without takeoverd
   rescheduleById?(id: string, times: { scheduledAt?: number | null; dueAt?: number | null }): void; // operator drag-to-reschedule landing (pump re-arm included)
+  markDoneById?(id: string, note: string): void; // operator "settled it myself" — todo→done with pump state cleared
   mode?(): string;
   tickN?(): number;                     // decision-cycle count for HUD lag detection; absent = 0
   resolveToolApproval?(id: string, ok: boolean): Promise<string | null>; // settles a pending assist-mode tool write
@@ -57,8 +58,8 @@ export interface ApiDeps {
 // Trimmed card shape the protocol ships, both in state and in tasks frames.
 // parentId/scheduledAt/dueAt are board-v2 fields (epoch ms numbers); the ?? null
 // keeps hand-built Task fixtures (tests) shipping an explicit null, not undefined.
-export function taskView(t: Task): { id: string; title: string; status: string; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null; acceptance: string; progress: number; verdict: string } {
-  return { id: t.id, title: t.title, status: t.status, resultSummary: t.resultSummary, createdAt: t.createdAt, parentId: t.parentId ?? null, scheduledAt: t.scheduledAt ?? null, dueAt: t.dueAt ?? null, acceptance: t.acceptance, progress: t.progress, verdict: t.verdict };
+export function taskView(t: Task): { id: string; title: string; status: string; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null; acceptance: string; progress: number; verdict: string; assignee: string } {
+  return { id: t.id, title: t.title, status: t.status, resultSummary: t.resultSummary, createdAt: t.createdAt, parentId: t.parentId ?? null, scheduledAt: t.scheduledAt ?? null, dueAt: t.dueAt ?? null, acceptance: t.acceptance, progress: t.progress, verdict: t.verdict, assignee: t.assignee };
 }
 
 const RING_MAX = 100;               // chat history: last 100 messages, in memory
@@ -484,17 +485,29 @@ export class ApiServer implements LoopOutlet {
     json(res, 202, { ok: true, task: taskView(t) });
   }
 
-  // PUT /api/task: operator cancel — { id, status: "cancelled" }. The agent
-  // has its archive action; this is the operator's mirror (create existed,
-  // cancel did not — a mis-planned card had no retreat path). Idempotent on
-  // already-cancelled; done is history and refuses with 409.
+  // PUT /api/task: operator status write — { id, status: "cancelled" | "done" }.
+  // Cancel mirrors the agent's archive action (create existed, cancel did not —
+  // a mis-planned card had no retreat path). Done is the "settled it myself"
+  // path: a self-created errand finished offline by the human, before its
+  // scheduled time wakes a redundant spawn. Done is limited to never-dispatched
+  // todo cards (no assignee) — an agent-owned card must finish through verify.
+  // Cancel idempotent on already-cancelled; done on done refuses with 409.
   private async putTask(req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body: Record<string, unknown>;
     try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
     if (typeof body.id !== "string" || body.id.length === 0) { json(res, 400, { error: "id must be a non-empty task id" }); return; }
-    if (body.status !== undefined && body.status !== "cancelled") { json(res, 400, { error: "only status \"cancelled\" is supported" }); return; }
+    if (body.status !== undefined && body.status !== "cancelled" && body.status !== "done") { json(res, 400, { error: "only status \"cancelled\" or \"done\" is supported" }); return; }
     const hit = this.d.board.list().find((t) => t.id === body.id);
     if (!hit) { json(res, 404, { error: "no such task" }); return; }
+    if (body.status === "done") {
+      if (hit.status === "done" || hit.status === "cancelled") { json(res, 409, { error: `task is ${hit.status} — history is immutable` }); return; }
+      if (hit.status !== "todo" || hit.assignee !== "") { json(res, 409, { error: "only never-dispatched todo cards can be marked done — an agent-owned card finishes through verify, or cancel it" }); return; }
+      if (!this.d.loop.markDoneById) { json(res, 503, { error: "loop not wired for operator-done" }); return; }
+      this.d.loop.markDoneById(hit.id, "[done by operator]");
+      const now = this.d.board.list().find((t) => t.id === hit.id)!;
+      json(res, 202, { ok: true, task: taskView(now) });
+      return;
+    }
     if (hit.status === "done") { json(res, 409, { error: "task is done — history is immutable" }); return; }
     if (hit.status !== "cancelled") {
       this.d.board.update(hit.id, { status: "cancelled", resultSummary: [hit.resultSummary, "[cancelled by operator]"].filter(Boolean).join(" | ") });

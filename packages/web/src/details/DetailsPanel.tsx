@@ -3,7 +3,7 @@
 // read-only MISSION/RUBRIC/MEMORY views with copy buttons, and the takeoverd
 // live screen preview. AppFrame controls column visibility (display none).
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore, statusTone } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
@@ -113,6 +113,12 @@ function TaskDetail() {
   const { state, selectTask } = useStore()
   const { t } = useT()
   const [cancelErr, setCancelErr] = useState(false)
+  const [doneErr, setDoneErr] = useState(false)
+  // two-step arm for mark-done (done is terminal, same as cancel): first click
+  // arms for 2.5s, second fires, timeout stands down
+  const [doneArmed, setDoneArmed] = useState(false)
+  const doneTimer = useRef(0)
+  useEffect(() => () => window.clearTimeout(doneTimer.current), [])
   const task =
     state.selectedTaskId !== null
       ? state.tasks.find((t) => t.id === state.selectedTaskId) ?? null
@@ -132,6 +138,19 @@ function TaskDetail() {
     })
       .then((r) => { if (!r.ok) throw new Error(String(r.status)); return undefined })
       .catch(() => setCancelErr(true))
+  }
+  // operator done — "settled it myself": only never-dispatched todo cards
+  // (server refuses agent-owned ones; hide rather than show a dying button)
+  const doneable = task.status === 'todo' && (task.assignee ?? '') === ''
+  const markDone = (): void => {
+    setDoneErr(false)
+    void fetch('/api/task', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: task.id, status: 'done' }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return undefined })
+      .catch(() => setDoneErr(true))
   }
   // precise time edits ride the same PATCH as the drag gestures; null clears
   const patchTime = (fields: { scheduledAt?: number | null; dueAt?: number | null }): void => {
@@ -267,19 +286,45 @@ function TaskDetail() {
           </div>
         )
       })()}
-      {cancellable ? (
+      {(doneable || cancellable) ? (
         <div className="detail-actions">
-          <button
-            type="button"
-            className="da-cancel"
-            title={t('detail.cancelTask')}
-            onClick={cancel}
-          >
-            <Icon name="trash" size={12} />
-            {t('detail.cancelTask')}
-          </button>
+          {doneable ? (
+            <button
+              type="button"
+              className={`da-done${doneArmed ? ' armed' : ''}`}
+              title={doneArmed ? t('detail.confirmDone') : t('detail.markDone')}
+              aria-pressed={doneArmed}
+              onClick={() => {
+                if (!doneArmed) {
+                  setDoneArmed(true)
+                  window.clearTimeout(doneTimer.current)
+                  doneTimer.current = window.setTimeout(() => setDoneArmed(false), 2_500)
+                  return
+                }
+                window.clearTimeout(doneTimer.current)
+                markDone()
+              }}
+            >
+              <Icon name="check" size={12} />
+              {doneArmed ? t('detail.confirmDone') : t('detail.markDone')}
+            </button>
+          ) : null}
+          {cancellable ? (
+            <button
+              type="button"
+              className="da-cancel"
+              title={t('detail.cancelTask')}
+              onClick={cancel}
+            >
+              <Icon name="trash" size={12} />
+              {t('detail.cancelTask')}
+            </button>
+          ) : null}
           {cancelErr ? (
             <span className="da-err" role="alert">{t('detail.cancelErr')}</span>
+          ) : null}
+          {doneErr ? (
+            <span className="da-err" role="alert">{t('detail.doneErr')}</span>
           ) : null}
         </div>
       ) : null}
@@ -300,6 +345,18 @@ function FilesView() {
 
 export function DetailsPanel({ onClose }: { onClose(): void }) {
   const { t } = useT()
+  // Esc closes the panel — except while a form control holds focus (the
+  // datetime-local picker consumes Esc itself to stand down its edit)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      const el = e.target instanceof HTMLElement ? e.target : null
+      if (el && el.closest('input, textarea, select, [contenteditable="true"]')) return
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
   const [tab, setTab] = useState<Tab>('task')
   const tabs: { id: Tab; label: string }[] = [
     { id: 'task', label: t('detail.tabTask') },

@@ -346,6 +346,8 @@ test.describe('RoboJex desktop', () => {
     await page.goto('/widget')
     await page.locator('.widget-root').waitFor({ timeout: 10_000 })
     await expect(page.locator('.hud-heart')).toBeVisible()
+    // glance clock anchored to core-synced now
+    await expect(page.locator('.widget-clock')).toHaveText(/\d{1,2}:\d{2}/)
     // gantt is the boot tab: bands area + centerline + at least one
     // in-window band (mock seeds a task spanning the now-line)
     await expect(page.locator('.widget-gantt')).toBeVisible()
@@ -645,4 +647,37 @@ test.describe('RoboJex desktop', () => {
     await page.locator('.df-kids .df-link', { hasText: '家族子卡乙' }).click()
     await expect(page.locator('.detail-title')).toContainText('家族子卡乙', { timeout: 5_000 })
     await shot(page, '35-family-nav')
+  })
+
+  // 36 (operator done): a self-created errand settled offline by the human —
+  // two-step arm on the detail rail, server tags it, board lane moves. Esc
+  // must also close the panel (form-field focus excepted).
+  test('36 details: two-step "I did it" settles a never-dispatched card; Esc closes', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.request.post('/api/task', { data: { title: '自己搞定探针' } })
+    await page.locator('[data-testid="view-tab"][data-view="board"]').click()
+    await page.locator('.board-card', { hasText: '自己搞定探针' }).first().click()
+    await expect(page.locator('.detail-title')).toContainText('自己搞定探针', { timeout: 5_000 })
+
+    // first click arms (confirm copy + aria-pressed), second fires
+    const doneBtn = page.locator('.da-done')
+    await doneBtn.click()
+    await expect(doneBtn).toHaveAttribute('aria-pressed', 'true')
+    await expect(doneBtn).toContainText('再点一次')
+    await doneBtn.click()
+
+    const after = await (await page.request.get('/api/state')).json()
+    const t = after.tasks.find((tk) => tk.title === '自己搞定探针')
+    expect(t.status).toBe('done')
+    expect(t.progress).toBe(100)
+    expect(t.resultSummary).toContain('[done by operator]')
+    // the actions row retires with the card (done is history)
+    await expect(page.locator('.da-done')).toHaveCount(0)
+    await shot(page, '36-operator-done')
+
+    // Esc closes the panel (nothing focused inside a form control)
+    await page.locator('.detail-title').click()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.detail-title')).toHaveCount(0)
   })

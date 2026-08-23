@@ -353,6 +353,16 @@ const server = http.createServer((req, res) => {
     void readBody().then((b) => {
       const hit = tasks.find((t) => t.id === b.id)
       if (!hit) return send(404, { error: 'no such task' })
+      if (b.status === 'done') {
+        // mirrors ceo-core: only never-dispatched todo cards may be settled by the operator
+        if (hit.status === 'done' || hit.status === 'cancelled') return send(409, { error: `task is ${hit.status} — history is immutable` })
+        if (hit.status !== 'todo' || hit.assignee !== '') return send(409, { error: 'only never-dispatched todo cards can be marked done' })
+        hit.status = 'done'
+        hit.progress = 100
+        hit.resultSummary = [hit.resultSummary, '[done by operator]'].filter(Boolean).join(' | ')
+        broadcast({ t: 'tasks', tasks: JSON.parse(JSON.stringify(tasks)) })
+        return send(202, { ok: true, task: hit })
+      }
       if (hit.status === 'done') return send(409, { error: 'task is done — history is immutable' })
       if (hit.status !== 'cancelled') {
         hit.status = 'cancelled'

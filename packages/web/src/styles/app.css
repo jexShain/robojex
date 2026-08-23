@@ -1115,6 +1115,28 @@ body[data-ds-dark-theme] .chip.full {
   color: #fff;
 }
 
+/* operator done ("settled it myself"): success tone mirroring the cancel
+ * button; armed state goes solid green for the 2.5s confirm window */
+.da-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--rj-radius-sm, 6px);
+  font-size: 12px;
+  color: var(--dsw-alias-state-success-primary);
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-success-primary) 35%, transparent);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.da-done:hover,
+.da-done.armed {
+  background: var(--dsw-alias-state-success-primary);
+  color: #fff;
+}
+
 .da-err {
   font-size: 11px;
   color: var(--dsw-alias-state-error-primary);

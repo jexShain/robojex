@@ -11,7 +11,7 @@ import { fill } from '../i18n'
 import { Providers } from '../Providers'
 import { Icon } from '../ui/Icon'
 import type { TranscriptItem } from '../state/types'
-import { fmtStamp } from '../views/timefmt'
+import { fmtClock, fmtStamp } from '../views/timefmt'
 
 // Three rotating tabs. Pinned stops the 8s auto-advance.
 type Tab = 'gantt' | 'rings' | 'feed'
@@ -45,6 +45,13 @@ export function WidgetApp(): ReactElement {
     return () => clearInterval(id)
   }, [pinned])
 
+  // glance clock: a mini console anchored to "now" (minute-resolution tick)
+  const [clock, setClock] = useState(() => Date.now() + s.clockOffset)
+  useEffect(() => {
+    const id = setInterval(() => setClock(Date.now() + s.clockOffset), 15_000)
+    return () => clearInterval(id)
+  }, [s.clockOffset])
+
 
   // alive = any loop traffic: hud events OR cycle frames in the transcript —
   // an idle-but-ticking core must still show a beating heart
@@ -63,6 +70,7 @@ export function WidgetApp(): ReactElement {
     <div className="widget-root">
       <header className="widget-head">
         <span className={`hud-heart${alive ? ' alive' : ''}`} title={t('widget.heartbeat')} />
+        <span className="widget-clock" title={t('widget.clockTitle')}>{fmtClock(clock)}</span>
         <nav>
           {TABS.map((tabId) => (
             <button

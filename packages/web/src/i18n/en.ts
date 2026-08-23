@@ -358,6 +358,9 @@ export const en: Record<string, string> = {
   'detail.selectHint': 'select a task to see its details',
   'detail.cancelTask': 'Cancel this card',
   'detail.cancelErr': 'cancel failed — try again shortly',
+  'detail.markDone': "I've done it",
+  'detail.confirmDone': 'click again to confirm (terminal — never-dispatched cards only)',
+  'detail.doneErr': 'mark-done failed — try again shortly',
   'detail.kId': 'ID',
   'detail.kStatus': 'Status',
   'detail.kCreated': 'Created',
@@ -400,6 +403,7 @@ export const en: Record<string, string> = {
   'widget.expand': 'expand to console',
   'widget.idle': 'idle — jex is alive',
   'widget.noSched': 'nothing scheduled in the ±1h window',
+  'widget.clockTitle': 'local time (core-synced)',
   'widget.cycleLine': 'cycle: {n} actions',
 
   /* store command echoes + local messages */

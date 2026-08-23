@@ -286,6 +286,26 @@ export class SchedulerLoop {
     console.log(`[ceo] reschedule ${id.slice(0, 8)} -> sched ${times.scheduledAt ?? "(keep)"} due ${times.dueAt ?? "(keep)"}`);
   }
 
+  /** Operator settled a card themselves ("I did it offline"): board write to
+   *  done with an honest summary tag, pump state cleared so a scheduled time
+   *  that already passed (or is coming) never wakes a spawn for it. Guarded
+   *  upstream to never-dispatched todo cards — an agent-owned card must finish
+   *  through verify, not an operator's say-so. */
+  markDoneById(id: string, note: string): void {
+    const cur = this.d.board.list().find((t) => t.id === id);
+    if (!cur || cur.status === "done" || cur.status === "cancelled") return;
+    this.d.board.update(id, {
+      status: "done",
+      progress: 100,
+      resultSummary: [cur.resultSummary, note].filter(Boolean).join(" | "),
+    });
+    this.ganttDispatched.delete(id);
+    this.spawnNudgedAt.delete(id);
+    this.spawnNudgeState.delete(id);
+    this.emitTasks();
+    console.log(`[ceo] operator-done ${id.slice(0, 8)} ${cur.title}`);
+  }
+
   // chat-driven approval resolution: "approve <id>" / "deny <id>" from the
   // human settles a pending assist-mode write-class tool call. The current
   // effective gate rides along: a mode drop to observe since the call was

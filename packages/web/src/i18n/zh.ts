@@ -358,6 +358,9 @@ export const zh: Record<string, string> = {
   'detail.selectHint': '请选择一个任务',
   'detail.cancelTask': '撤销此卡',
   'detail.cancelErr': '撤销失败，请稍后再试',
+  'detail.markDone': '我已完成',
+  'detail.confirmDone': '再点一次确认完成（终态，仅限未派发的卡）',
+  'detail.doneErr': '标记完成失败，请稍后再试',
   'detail.kId': 'ID',
   'detail.kStatus': '状态',
   'detail.kCreated': '创建',
@@ -400,6 +403,7 @@ export const zh: Record<string, string> = {
   'widget.expand': '展开为主控制台',
   'widget.idle': '空闲 — jex 存活',
   'widget.noSched': '±1 小时窗口内没有安排的任务',
+  'widget.clockTitle': '当前时间（与核心对时）',
   'widget.cycleLine': '周期：{n} 个动作',
 
   /* store command echoes + local messages */

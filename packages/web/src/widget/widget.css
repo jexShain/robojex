@@ -32,6 +32,14 @@
 }
 
 /* Reuse the .hud-heart lamp from hud.css (pulse animation lives there). */
+.widget-head .widget-clock {
+  flex: none;
+  font-size: 10.5px;
+  font-family: var(--ds-font-family-code);
+  color: var(--dsw-alias-label-tertiary);
+  letter-spacing: 0.4px;
+}
+
 .widget-head .hud-heart {
   width: 8px;
   height: 8px;
