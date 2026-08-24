@@ -40,10 +40,22 @@ const toneOf = (t: Task): string => `tone-${statusTone(t.status)}`
  *  Shared by the day and days modes. */
 function sendReschedule(
   id: string,
-  newTime: number,
+  newTime: number | null,
   setPending: (update: (m: Map<string, number>) => Map<string, number>) => void,
   setStageErr: (v: string) => void,
 ): void {
+  // null = dropped on the unscheduled rail: the card needs no clock, and
+  // there is no slot to badge in-flight — write straight through
+  if (newTime === null) {
+    void fetch('/api/task', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id, scheduledAt: null }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(`PATCH /api/task -> ${r.status}`); return undefined })
+      .catch(() => setStageErr('—'))
+    return
+  }
   setPending((m) => new Map(m).set(id, newTime))
   void fetch('/api/task', {
     method: 'PATCH',
@@ -78,6 +90,14 @@ function blockTip(t: Task): string {
   const range = s != null ? `${fmtClock(s)}${d != null ? `–${fmtClock(d)}` : ''}` : ''
   return range ? `${t.status} · ${range}` : t.status
 }
+
+/* A drag that just ended still delivers a click to its pointer-capture
+ * element on the same tick — blocks and rail items consult this to ignore
+ * that phantom click (observed live: a rail drop opened the detail rail
+ * and jumped views). 150ms is generous for one event-loop turn. */
+let dragEndedTick = 0
+function markDragEnd(): void { dragEndedTick = Date.now() }
+function clickAfterDrag(): boolean { return Date.now() - dragEndedTick < 150 }
 
 function AgendaBlockView({
   block,
@@ -127,7 +147,7 @@ function AgendaBlockView({
       style={{ top: `${block.topPct}%`, height: `${block.heightPct}%`, marginLeft: indent, ...packed }}
       data-tip={blockTip(t)}
       title={compact ? `${range} ${t.title}` : undefined}
-      onClick={() => onOpen(t.id)}
+      onClick={() => { if (!clickAfterDrag()) onOpen(t.id) }}
       onPointerDown={onDragStart ? (e: any) => onDragStart(e.nativeEvent, block) : undefined}
     >
       {!compact ? <span className="ab-time">{range}</span> : null}
@@ -279,12 +299,20 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
 
   const onPointerUp = useCallback((e: PointerEvent) => {
     if (!dragBlock || !isDragging.current) { setDragBlock(null); return }
+    markDragEnd()
     const el = scrollRef.current
     if (el) {
       const rect = el.getBoundingClientRect()
-      // only a drop INSIDE the timeline schedules; dropping back on the rail
-      // (or elsewhere) is a cancelled gesture, not a slot at that y
-      if (e.clientX >= rect.left && e.clientX <= rect.right) {
+      // drop on the unscheduled rail = "this needs no clock": clear the
+      // slot (PATCH null) instead of cancelling the gesture — the rail is
+      // the natural home for a de-scheduled card
+      const onRail =
+        document.elementFromPoint(e.clientX, e.clientY)?.closest('.agenda-unsched') != null
+      if (onRail) {
+        sendReschedule(dragBlock.task.id, null, setPending, setStageErr)
+      } else if (e.clientX >= rect.left && e.clientX <= rect.right) {
+        // only a drop INSIDE the timeline schedules; dropping elsewhere is a
+        // cancelled gesture, not a slot at that y
         const y = e.clientY - rect.top + el.scrollTop
         const trackH = 24 * h
         const newTime = snapTo(yToTime(y, trackH, day0, zoom, scrollHours), snapMinutes(zoom))
@@ -419,7 +447,7 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
                 key={t.id}
                 type="button"
                 className={`au-item ${toneOf(t)}`}
-                onClick={() => { if (!isDragging.current) onOpen(t.id) }}
+                onClick={() => { if (!clickAfterDrag()) onOpen(t.id) }}
                 onPointerDown={(e) => onRailDragStart(e.nativeEvent, t)}
                 title={t.resultSummary || t.title}
               >
@@ -509,6 +537,7 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
   const onPointerUp = useCallback((e: PointerEvent) => {
     const moved = dragStart.current.moved
     dragStart.current.moved = false
+    if (moved) markDragEnd() // swallow the phantom click that follows a captured drag
     // side effects live OUTSIDE the setState updater — React StrictMode
     // double-invokes updaters and would fire the PATCH twice
     if (drag && moved) {

@@ -878,3 +878,37 @@ test.describe('RoboJex desktop', () => {
     await page.keyboard.type('abc')
     await expect(page.getByTestId('chat-input')).toHaveValue('abc')
   })
+
+  // 46 (rail drop = unschedule): dragging a placed block back onto the
+  // unscheduled rail clears its clock (PATCH null) — the rail is the
+  // natural home for a de-scheduled card, not a dead zone.
+  test('46 agenda: drop on the rail clears the schedule', async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    const state0 = await (await page.request.get('/api/state')).json()
+    const now = state0.now ?? Date.now()
+    await page.request.post('/api/task', { data: { title: '撤排探针', scheduledAt: now + 3_600_000 } })
+    await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    const block = page.locator('.agenda-block', { hasText: '撤排探针' }).first()
+    await expect(block).toBeVisible({ timeout: 5_000 })
+
+    const from = await block.boundingBox()
+    const rail = await page.locator('.agenda-unsched').boundingBox()
+    expect(from).toBeTruthy()
+    expect(rail).toBeTruthy()
+    await page.mouse.move(from.x + from.width / 2, from.y + 3)
+    await page.mouse.down()
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(
+        from.x + ((rail.x + rail.width / 2 - from.x) * i) / 10,
+        from.y + ((rail.y + rail.height / 2 - from.y) * i) / 10,
+      )
+    }
+    await page.mouse.up()
+
+    const after = await (await page.request.get('/api/state')).json()
+    const t = after.tasks.find((tk) => tk.title === '撤排探针')
+    expect(t.scheduledAt).toBeNull()
+    await expect(page.locator('.au-item', { hasText: '撤排探针' })).toBeVisible({ timeout: 5_000 })
+    await shot(page, '46-rail-unschedule')
+  })
