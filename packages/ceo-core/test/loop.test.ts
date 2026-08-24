@@ -1392,3 +1392,44 @@ test("R86 narrative guard: journal lines are refused, real lessons land", async 
     loop.stop();
   } finally { err.mockRestore(); }
 });
+
+test("R137: a patrol-only wake whose entire output is one bare reply gets suppressed (all-clear noise gate)", async () => {
+  const runtimeDir = makeRuntime();
+  const chatOut = vi.fn();
+  // scripted decide payload — swapped per scenario (mockResolvedValueOnce
+  // would mis-target: the patrol triage call comes first)
+  let decideActions: unknown[] = [{ type: "reply", text: "晚上好，系统一切正常，暂无需要处理的事项。" }];
+  const chat = vi.fn(async (slot: string) => {
+    if (slot === "patrol") {
+      return { content: '{"action":"act"}', usage: { promptTokens: 10, completionTokens: 2 } };
+    }
+    return {
+      content: JSON.stringify({ actions: decideActions }),
+      usage: { promptTokens: 50, completionTokens: 20 },
+    };
+  });
+  const llm = { chat } as unknown as LLMClient;
+  const loop = new SchedulerLoop({
+    llm, board: new TaskBoard(join(runtimeDir, "board.sqlite")), ctx: new ContextAssembler(),
+    orchestrator: new AgentOrchestrator({ llm, runtimeDir, cmds: {} }), auditor: new Auditor({ runtimeDir, reviewEvery: 99 }),
+    budget: new BudgetGovernor("burn"), runtimeDir,
+    outlet: { chatOut, frame: () => {} },
+  });
+  await loop.runOnce("patrol_walk: quick health round");
+  expect(chat).toHaveBeenCalledWith("decide", expect.anything(), expect.anything()); // decide ran
+  expect(chatOut).not.toHaveBeenCalled(); // but the bare all-clear reply never reached the human
+
+  // scoping: a NON-patrol wake with the same bare reply is not gated
+  decideActions = [{ type: "reply", text: "早上好，这是晨报。" }];
+  await loop.runOnce("morning_briefing: compose today's digest");
+  expect(chatOut).toHaveBeenCalledTimes(1);
+
+  // and a patrol reply ACCOMPANIED by an action passes (a real finding;
+  // the spawn also briefs, so count by content, not call count)
+  decideActions = [
+    { type: "reply", text: "磁盘快满了，我已派代理清理。" },
+    { type: "spawn", framework: "hermes", title: "清理磁盘", prompt: "清理 /tmp 大文件" },
+  ];
+  await loop.runOnce("patrol_walk: quick health round");
+  expect(chatOut.mock.calls.some((c) => String(c[1]).includes("磁盘快满了"))).toBe(true);
+});

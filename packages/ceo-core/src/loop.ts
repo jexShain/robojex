@@ -630,12 +630,26 @@ export class SchedulerLoop {
         parsed = { actions: [] };
       }
       actions = parsed.actions ?? [];
+      // R137 patrol all-clear gate (mechanical, not doctrinal): the R135
+      // prompt negation still leaked "晚上好，系统一切正常" bare replies from
+      // patrol wakes — noise to a silent human and the priciest idle cycle
+      // (~13k tok). A patrol wake whose ENTIRE output is one reply carries no
+      // errand (a real finding would come with actions); drop it. Scoped to
+      // patrol-only wakes so morning_briefing / chat replies pass untouched.
+      {
+        const wake = eventSummary.trim();
+        const patrolOnly = /^patrol_walk:/.test(wake) || wake.split(";").every((s) => s.trim().startsWith("patrol_walk:"));
+        if (patrolOnly && actions.length === 1 && (actions[0] as any)?.type === "reply") {
+          console.log(`[loop] patrol all-clear reply suppressed (len=${String((actions[0] as any).text ?? "").length})`);
+          actions = [];
+        }
+      }
       // R71: bank this cycle's replay line — the next decide sees what already
       // happened, so an unchanged world earns no repeated verify/reply
       {
         const hh = (n: number): string => String(n).padStart(2, "0");
         const cyc = new Date();
-        const kinds = (parsed.actions ?? []).map((x: any) => {
+        const kinds = (actions ?? []).map((x: any) => {
           if (x?.type === "spawn") return `spawn(${String(x.title ?? "?").slice(0, 24)})`;
           if (x?.type === "verify") return `verify(${String(x.task_id ?? "?").slice(0, 8)}:${String(x.verdict ?? "?")})`;
           if (typeof x?.type === "string") return x.type;
@@ -647,7 +661,7 @@ export class SchedulerLoop {
       }
 
       const toolNames = new Set(this.d.builtinTools?.names() ?? []);
-      for (let a of parsed.actions ?? []) {
+      for (let a of actions as any[]) {
         let taskId: string | null = null;
         try {
           // R84b: live soak caught the model shortcutting the tool_call

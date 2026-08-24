@@ -17,3 +17,6 @@ scripts/tmp-*
 test-results/
 .git-msg-*.txt
 e2e/test-results*/
+
+# overnight soak runtime (scripts/soak-grd.sh)
+.soak/
