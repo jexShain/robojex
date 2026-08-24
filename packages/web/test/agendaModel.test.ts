@@ -191,3 +191,50 @@ describe('clampZoom', () => {
     expect(clampZoom(3)).toBe(3)
   })
 })
+
+import { overdueRows, scheduleGroups } from "../src/views/agendaModel"
+
+describe("scheduleGroups (R136 list)", () => {
+  const NOW = at(10)
+
+  test("one group per day, rows sorted by start; cancelled skipped, done stays (dimmed history)", () => {
+    const tasks = [
+      T({ id: "a", scheduledAt: at(15) }),
+      T({ id: "b", scheduledAt: at(9) }),
+      T({ id: "c", scheduledAt: at(9), status: "cancelled" }),
+      T({ id: "d", scheduledAt: at(9), status: "done" }),
+      T({ id: "e", scheduledAt: addDaysLocal(DAY0, 1) + at(2) - DAY0 }),
+    ]
+    const groups = scheduleGroups(tasks, DAY0, NOW, 7)
+    expect(groups).toHaveLength(7)
+    expect(groups[0].rows.map((r) => r.task.id)).toEqual(["b", "d", "a"])
+    expect(groups[1].rows.map((r) => r.task.id)).toEqual(["e"])
+    expect(groups.slice(2).every((g) => g.rows.length === 0)).toBe(true)
+  })
+
+  test("end/spansBeyond/isOverdue flags", () => {
+    const tasks = [
+      T({ id: "r1", scheduledAt: at(9), dueAt: at(10) }),
+      T({ id: "r2", scheduledAt: at(9), dueAt: addDaysLocal(DAY0, 2) }),
+      T({ id: "r3", scheduledAt: at(9), dueAt: at(9) - 1 }), // past due, live
+    ]
+    const [r1, r2, r3] = scheduleGroups(tasks, DAY0, NOW)[0].rows
+    expect(r1.end).toBe(at(10))
+    expect(r1.spansBeyond).toBe(false)
+    expect(r2.spansBeyond).toBe(true)
+    expect(r3.isOverdue).toBe(true)
+    expect(r1.isOverdue).toBe(false)
+  })
+
+  test("overdueRows pins pre-window live cards, done/cancelled excluded", () => {
+    const yest = addDaysLocal(DAY0, -1) + 3_600_000
+    const tasks = [
+      T({ id: "old", scheduledAt: yest }),
+      T({ id: "old-done", scheduledAt: yest, status: "done" }),
+      T({ id: "old-dead", scheduledAt: yest, status: "cancelled" }),
+      T({ id: "in", scheduledAt: at(9) }),
+    ]
+    const rows = overdueRows(tasks, DAY0, NOW)
+    expect(rows.map((r) => r.task.id)).toEqual(["old"])
+  })
+})

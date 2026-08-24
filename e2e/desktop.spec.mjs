@@ -407,17 +407,17 @@ test.describe('RoboJex desktop', () => {
     await shot(page, '25-board-cancel')
   })
 
-  // 26 (surface sweep): the three never-shot surfaces — agenda day + days
-  // modes, activity feed, and the task details rail opened from a card.
+  // 26 (surface sweep): the three never-shot surfaces — agenda list +
+  // timeline modes, activity feed, and the task details rail opened from a card.
   test('26 surface sweep: agenda modes, activity, details rail', async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('conn-status').waitFor()
     await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    await expect(page.locator('.agl-head').first()).toBeVisible({ timeout: 5_000 })
+    await shot(page, '26-agenda-list')
+    await page.locator('.agenda-toolbar .seg button', { hasText: '时间轴' }).click()
     await expect(page.locator('.agenda-track')).toBeVisible({ timeout: 5_000 })
-    await shot(page, '26-agenda-day')
-    await page.locator('.agenda-toolbar .seg button').nth(1).click()
-    await expect(page.locator('.ad-track').first()).toBeVisible({ timeout: 5_000 })
-    await shot(page, '26-agenda-days')
+    await shot(page, '26-agenda-timeline')
     await page.locator('[data-testid="view-tab"][data-view="activity"]').click()
     await page.waitForTimeout(300)
     await shot(page, '26-activity')
@@ -456,6 +456,8 @@ test.describe('RoboJex desktop', () => {
     const t3 = stateBefore.tasks.find((t) => t.title.includes('进行中的演示任务'))
     expect(t3).toBeTruthy()
     await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    // R136: 日程 list is the default — the timeline drag lives in 时间轴
+    await page.locator('.agenda-toolbar .seg button', { hasText: '时间轴' }).click()
     const block = page.locator('.agenda-block', { hasText: '进行中的演示任务' }).first()
     await expect(block).toBeVisible({ timeout: 5_000 })
     const box = await block.boundingBox()
@@ -496,35 +498,48 @@ test.describe('RoboJex desktop', () => {
     await shot(page, '29-details-cancel')
   })
 
-  // 30 (days drag): the 7-day mode supports the same drag-reschedule — a
-  // vertical drag inside a column PATCHes scheduledAt with the new day+time.
-  // Uses a fresh task (POST) so it is independent of scenario 29's cancel.
-  test('30 days mode: drag-reschedule lands via PATCH', async ({ page }) => {
+  // 30 (schedule list day-drag, R136): dragging a row onto another day's
+  // header moves it to that day, keeping its time-of-day — the list-mode
+  // replacement for the old 7-column drag.
+  test('30 schedule list: drag a row onto a day header moves it to that day', async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('conn-status').waitFor()
-    const SCHED = Date.now() + 2 * 3_600_000 // today, +2h (inside the 7-col window)
+    const base = new Date()
+    base.setHours(14, 0, 0, 0) // today 14:00 (may be past — the row still shows)
+    const SCHED = base.getTime()
     const created = await (await page.request.post('/api/task', {
-      data: { title: '拖拽改期七天探针', scheduledAt: SCHED, dueAt: SCHED + 3_600_000 },
+      data: { title: '列表改期探针', scheduledAt: SCHED },
     })).json()
     await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
-    await page.locator('.agenda-toolbar .seg button').nth(1).click()
-    const block = page.locator('.agenda-block', { hasText: '拖拽改期七天探针' }).first()
-    await expect(block).toBeVisible({ timeout: 5_000 })
-    const box = await block.boundingBox()
-    expect(box).toBeTruthy()
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    const row = page.locator('.agl-row', { hasText: '列表改期探针' }).first()
+    await expect(row).toBeVisible({ timeout: 5_000 })
+    const tomorrowHead = page.locator('.agl-head', { hasText: '明天' })
+    await expect(tomorrowHead).toBeVisible()
+
+    const from = await row.boundingBox()
+    const to = await tomorrowHead.boundingBox()
+    expect(from).toBeTruthy()
+    expect(to).toBeTruthy()
+    await page.mouse.move(from.x + from.width / 2, from.y + 4)
     await page.mouse.down()
-    for (let i = 1; i <= 8; i++) {
-      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + i * 15, { steps: 2 })
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(
+        from.x + from.width / 2 + ((to.x + to.width / 2 - from.x - from.width / 2) * i) / 10,
+        from.y + 4 + ((to.y + to.height / 2 - from.y - 4) * i) / 10,
+      )
     }
     await page.mouse.up()
-    await expect(page.locator('.agenda-days .agenda-staged')).toHaveCount(0, { timeout: 10_000 })
+
+    await expect(page.locator('.agenda-staged')).toHaveCount(0, { timeout: 10_000 })
     const after = await (await page.request.get('/api/state')).json()
-    const moved = after.tasks.find((tk) => tk.id === created.task?.id || tk.title === '拖拽改期七天探针')
-    const delta = moved.scheduledAt - SCHED
-    expect(delta).toBeGreaterThan(45 * 60_000)
-    expect(delta).toBeLessThan(6 * 3_600_000)
-    await shot(page, '30-days-drag')
+    const moved = after.tasks.find((tk) => tk.id === created.task?.id || tk.title === '列表改期探针')
+    const d = new Date(moved.scheduledAt)
+    // the assertions: tomorrow's calendar date, same time-of-day
+    const tomorrow = new Date(Date.now() + 86_400_000)
+    expect(`${d.getMonth()}-${d.getDate()}`).toBe(`${tomorrow.getMonth()}-${tomorrow.getDate()}`)
+    expect(d.getHours()).toBe(14)
+    expect(d.getMinutes()).toBe(0)
+    await shot(page, '30-list-day-drag')
   })
 
   // 31 (rail drop): an unscheduled card dragged from the side rail into the
@@ -535,6 +550,7 @@ test.describe('RoboJex desktop', () => {
     await page.getByTestId('conn-status').waitFor()
     await page.request.post('/api/task', { data: { title: '侧栏拖入排程探针' } })
     await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    await page.locator('.agenda-toolbar .seg button', { hasText: '时间轴' }).click()
     const rail = page.locator('.au-item', { hasText: '侧栏拖入排程探针' })
     await expect(rail).toBeVisible({ timeout: 5_000 })
     const track = page.locator('.agenda-track')
@@ -596,6 +612,7 @@ test.describe('RoboJex desktop', () => {
     await page.request.post('/api/task', { data: { title: '重叠甲卡', scheduledAt: base, dueAt: base + 3_600_000 } })
     await page.request.post('/api/task', { data: { title: '重叠乙卡', scheduledAt: base + 20 * 60_000, dueAt: base + 2 * 3_600_000 } })
     await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    await page.locator('.agenda-toolbar .seg button', { hasText: '时间轴' }).click()
     const a = page.locator('.agenda-block', { hasText: '重叠甲卡' }).first()
     const b = page.locator('.agenda-block', { hasText: '重叠乙卡' }).first()
     await expect(a).toBeVisible({ timeout: 5_000 })
@@ -747,6 +764,7 @@ test.describe('RoboJex desktop', () => {
     const now = state0.now ?? Date.now()
 
     await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
+    await page.locator('.agenda-toolbar .seg button', { hasText: '时间轴' }).click()
     const dateEl = page.locator('.agenda-date').first()
     const today = await dateEl.textContent()
     await page.keyboard.press('ArrowRight')
@@ -781,26 +799,37 @@ test.describe('RoboJex desktop', () => {
     await shot(page, '40-cmdk-task')
   })
 
-  // 41 (week walk): the 7-day grid was locked to the current week — next
-  // week's cards were invisible. Arrows shift whole weeks; Home returns.
-  test('41 days mode: arrows walk weeks, Home returns', async ({ page }) => {
+  // 41 (schedule-list window, R136): the list covers today + 6 days; cards
+  // scheduled before the window pin into the overdue group instead of
+  // falling off; empty far days stay hidden; the picked mode persists.
+  test('41 schedule list: 7-day window, overdue pin, mode persistence', async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('conn-status').waitFor()
     const state0 = await (await page.request.get('/api/state')).json()
     const now = state0.now ?? Date.now()
-    // a card 10 days out: invisible this week, visible after one ArrowRight
-    await page.request.post('/api/task', { data: { title: '下周探针', scheduledAt: now + 10 * 86_400_000 } })
+    await page.request.post('/api/task', { data: { title: '过期置顶探针', scheduledAt: now - 26 * 3_600_000 } })
+    await page.request.post('/api/task', { data: { title: '明天探针', scheduledAt: now + 26 * 3_600_000 } })
+    await page.request.post('/api/task', { data: { title: '五日后探针', scheduledAt: now + 5 * 86_400_000 } })
     await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
-    await page.locator('.agenda-toolbar .seg button', { hasText: '7 天' }).click()
-    await expect(page.locator('.ad-head.today')).toBeVisible({ timeout: 5_000 })
-    await expect(page.locator('.ad-col .agenda-block', { hasText: '下周探针' })).toHaveCount(0)
 
-    await page.keyboard.press('ArrowRight')
-    await expect(page.locator('.agenda-days .nav-btn.today')).toBeVisible({ timeout: 3_000 })
-    await expect(page.locator('.ad-col .agenda-block', { hasText: '下周探针' })).toBeVisible({ timeout: 3_000 })
-    await shot(page, '41-week-walk')
-    await page.keyboard.press('Home')
-    await expect(page.locator('.ad-col .agenda-block', { hasText: '下周探针' })).toHaveCount(0, { timeout: 3_000 })
+    // list is the default: overdue group first, its card visible with a date
+    await expect(page.locator('.agl-group.overdue .agl-row', { hasText: '过期置顶探针' })).toBeVisible({ timeout: 5_000 })
+    // tomorrow group carries its card; day-5 card visible (non-empty groups render)
+    await expect(page.locator('.agl-group .agl-row', { hasText: '明天探针' })).toBeVisible()
+    await expect(page.locator('.agl-group .agl-row', { hasText: '五日后探针' })).toBeVisible()
+    // the now divider rides inside today's group
+    await expect(page.locator('.agl-group.today .agl-now')).toBeVisible()
+    await shot(page, '41-schedule-list')
+
+    // mode persistence: switch to timeline, reload, still timeline
+    await page.locator('.agenda-toolbar .seg button', { hasText: '时间轴' }).click()
+    await expect(page.locator('.agenda-block').first()).toBeVisible({ timeout: 5_000 })
+    await page.reload()
+    await page.getByTestId('conn-status').waitFor()
+    await expect(page.locator('.agenda-block').first()).toBeVisible({ timeout: 5_000 })
+    // and back to list
+    await page.locator('.agenda-toolbar .seg button', { hasText: '日程' }).click()
+    await expect(page.locator('.agl-head', { hasText: '今天' })).toBeVisible({ timeout: 5_000 })
   })
 
   // 42 (rename): a typo shouldn't cost cancel+recreate — the title edits
@@ -879,36 +908,39 @@ test.describe('RoboJex desktop', () => {
     await expect(page.getByTestId('chat-input')).toHaveValue('abc')
   })
 
-  // 46 (rail drop = unschedule): dragging a placed block back onto the
-  // unscheduled rail clears its clock (PATCH null) — the rail is the
-  // natural home for a de-scheduled card, not a dead zone.
-  test('46 agenda: drop on the rail clears the schedule', async ({ page }) => {
+  // 46 (list unschedule, R136): dragging a scheduled row onto the 未排时间
+  // header clears its clock (PATCH null) — the list-mode replacement for the
+  // old rail drop.
+  test('46 schedule list: drop a row on the unscheduled header clears it', async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('conn-status').waitFor()
     const state0 = await (await page.request.get('/api/state')).json()
     const now = state0.now ?? Date.now()
     await page.request.post('/api/task', { data: { title: '撤排探针', scheduledAt: now + 3_600_000 } })
     await page.locator('[data-testid="view-tab"][data-view="agenda"]').click()
-    const block = page.locator('.agenda-block', { hasText: '撤排探针' }).first()
-    await expect(block).toBeVisible({ timeout: 5_000 })
+    const row = page.locator('.agl-row', { hasText: '撤排探针' }).first()
+    await expect(row).toBeVisible({ timeout: 5_000 })
+    const unsHead = page.locator('.agl-uns-head')
+    await expect(unsHead).toBeVisible()
 
-    const from = await block.boundingBox()
-    const rail = await page.locator('.agenda-unsched').boundingBox()
+    const from = await row.boundingBox()
+    const to = await unsHead.boundingBox()
     expect(from).toBeTruthy()
-    expect(rail).toBeTruthy()
-    await page.mouse.move(from.x + from.width / 2, from.y + 3)
+    expect(to).toBeTruthy()
+    await page.mouse.move(from.x + from.width / 2, from.y + 4)
     await page.mouse.down()
     for (let i = 1; i <= 10; i++) {
       await page.mouse.move(
-        from.x + ((rail.x + rail.width / 2 - from.x) * i) / 10,
-        from.y + ((rail.y + rail.height / 2 - from.y) * i) / 10,
+        from.x + from.width / 2 + ((to.x + to.width / 2 - from.x - from.width / 2) * i) / 10,
+        from.y + 4 + ((to.y + to.height / 2 - from.y - 4) * i) / 10,
       )
     }
     await page.mouse.up()
 
+    await expect(page.locator('.agenda-staged')).toHaveCount(0, { timeout: 10_000 })
     const after = await (await page.request.get('/api/state')).json()
     const t = after.tasks.find((tk) => tk.title === '撤排探针')
     expect(t.scheduledAt).toBeNull()
-    await expect(page.locator('.au-item', { hasText: '撤排探针' })).toBeVisible({ timeout: 5_000 })
-    await shot(page, '46-rail-unschedule')
+    await expect(page.locator('.agl-row.uns', { hasText: '撤排探针' })).toBeVisible({ timeout: 5_000 })
+    await shot(page, '46-list-unschedule')
   })

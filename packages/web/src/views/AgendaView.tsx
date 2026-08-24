@@ -1,9 +1,10 @@
 // packages/web/src/views/AgendaView.tsx — calendar on the task board.
-// Modes: Day (zoomable 24h vertical timeline, hour grid, now-line with pulse,
-// drag-to-reschedule, overdue/upcoming glow, task-tree grouping) and Days
-// (7 columns with per-day positioning).
+// Modes: 日程 (schedule list — chronological, grouped by day; the readable
+// default) and 时间轴 (zoomable 24h vertical timeline with drag-to-reschedule,
+// hour grid, now-line, overlap lanes — the precision tool).
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import type { PointerEvent as RPointerEvent, ReactElement } from 'react'
 import { statusTone, useStore } from '../state/store'
 import { Icon } from '../ui/Icon'
 import { useT } from '../i18n'
@@ -12,8 +13,10 @@ import type { Task } from '../state/types'
 import {
   type AgendaBlock,
   blocksForDay,
-  dayColumns,
   nowPct,
+  overdueRows,
+  scheduleGroups,
+  type ScheduleRow,
   unscheduledTasks,
   ZOOM_LEVELS,
   type ZoomLevel,
@@ -26,8 +29,6 @@ import {
 import { dayColHead, dayStartOf, fmtClock, fmtDayLabel, fmtStamp } from './timefmt'
 import { addDaysLocal } from './agendaModel'
 
-/** Day-mode default hour row height. */
-const DAYS_HOUR_H = 32
 /** Max tree indentation in px. */
 const TREE_INDENT = 20
 /** Drag threshold in px before starting a drag. */
@@ -240,27 +241,43 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
   const isToday = dayOffset === 0
   const line = isToday ? nowPct(day0, now) : null
 
-  // Auto-scroll to current hour on today.
+  // Auto-scroll to current hour on today. The scroller is native
+  // (.agenda-timeline overflow-y); scrollHours only feeds label
+  // virtualization and drop math — BOTH must move together, or the timeline
+  // opens at 00:00 with the whole evening below the fold (exactly how a
+  // 20:00 task ended up undraggable: the effect used to set state only).
   useEffect(() => {
     if (isToday && scrollRef.current) {
       const currentHour = (now - day0) / 3_600_000
       const targetHours = Math.max(0, currentHour - zoom / 3)
       setScrollHours(targetHours)
+      scrollRef.current.scrollTop = targetHours * h
     }
-  }, [isToday, zoom])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isToday, zoom, day0])
 
-  // Wheel zoom.
+  // Native scrolls (wheel/trackpad on the container) are the truth — keep
+  // scrollHours in sync so drop-time math never drifts from what's on screen.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onScroll = (): void => {
+      if (h > 0) setScrollHours(Math.max(0, el.scrollTop / h))
+    }
+    el.addEventListener('scroll', onScroll)
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [zoom])
+
+  // Wheel: ctrl/⌘ zooms; plain wheel is the container's native scroll (the
+  // scroll-sync listener keeps scrollHours truthful — no manual pan here,
+  // it used to double-pan with the native scroll).
   const onWheel = useCallback((e: WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
       const dir = e.deltaY < 0 ? -1 : 1
       setZoomIdx((i) => clampZoom(i + dir))
-    } else {
-      // Normal scroll → pan time.
-      const pxPerHour = (scrollRef.current?.clientHeight ?? 800) / zoom
-      setScrollHours((h) => Math.max(0, h + e.deltaY / pxPerHour))
     }
-  }, [zoom])
+  }, [])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -312,8 +329,11 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
         sendReschedule(dragBlock.task.id, null, setPending, setStageErr)
       } else if (e.clientX >= rect.left && e.clientX <= rect.right) {
         // only a drop INSIDE the timeline schedules; dropping elsewhere is a
-        // cancelled gesture, not a slot at that y
-        const y = e.clientY - rect.top + el.scrollTop
+        // cancelled gesture, not a slot at that y. y is VIEWPORT-relative:
+        // yToTime re-adds the scroll offset via scrollHours (kept in sync by
+        // the scroll listener), so adding el.scrollTop here too would count
+        // the offset twice — that double-count landed drops +scrollHours late.
+        const y = e.clientY - rect.top
         const trackH = 24 * h
         const newTime = snapTo(yToTime(y, trackH, day0, zoom, scrollHours), snapMinutes(zoom))
         // optimistic stage + real write (see `pending` above)
@@ -467,7 +487,18 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
   )
 }
 
-function DaysView({ onOpen }: { onOpen(id: string): void }) {
+
+/* ============================================================
+   Schedule list (R136) — the primary calendar form. The proportional
+   timeline is a picture of time, but tasks are text: density there turns
+   into overlap mush (lanes, glows, pixel-tall blocks). A grouped
+   chronological list never overlaps at any density.
+   Window: today + 6 days, overdue pinned first, unscheduled sunk last.
+   ============================================================ */
+
+const DEFAULT_SLOT_MS = 9 * 3_600_000 // unscheduled item dropped on a day → 09:00
+
+function ScheduleList({ onOpen }: { onOpen(id: string): void }) {
   const { state } = useStore()
   const { t, lang } = useT()
   const [, setTick] = useState(0)
@@ -475,23 +506,7 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
     const timer = window.setInterval(() => setTick((x) => x + 1), 60_000)
     return () => window.clearInterval(timer)
   }, [])
-  // week walk: the 7-day grid was locked to the current week — next week's
-  // cards were invisible here. Offset by whole weeks, arrows + Home match
-  // the day mode's calendar keys.
-  const [weekOffset, setWeekOffset] = useState(0)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      const el = e.target instanceof HTMLElement ? e.target : null
-      if (el && el.closest('input, textarea, select, [contenteditable="true"]')) return
-      if (e.key === 'ArrowLeft') { e.preventDefault(); setWeekOffset((w) => w - 1) }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); setWeekOffset((w) => w + 1) }
-      else if (e.key === 'Home') { e.preventDefault(); setWeekOffset(0) }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-  // drag-reschedule, same contract as the day mode: optimistic stage +
-  // PATCH, marker retires on the confirming broadcast
+  // in-flight reschedule marker + error chip (same contract as the timeline)
   const [pending, setPending] = useState<Map<string, number>>(() => new Map())
   const [stageErr, setStageErr] = useState<string | null>(null)
   useEffect(() => {
@@ -502,58 +517,51 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
   useEffect(() => {
     setPending((m) => retireConfirmed(m, state.tasks))
   }, [state.tasks])
-  const [drag, setDrag] = useState<{ block: AgendaBlock; x: number; y: number } | null>(null)
+
+  // drag a row onto a day header = move there (time-of-day kept); onto the
+  // unscheduled header = clear the clock. Unscheduled rows dropped on a day
+  // gain the 09:00 default slot.
+  const [drag, setDrag] = useState<{ task: Task; scheduled: boolean; x: number; y: number } | null>(null)
   const dragStart = useRef({ x: 0, y: 0, moved: false })
   const rootRef = useRef<HTMLDivElement>(null)
 
-  const now = Date.now() + state.clockOffset
-  const dayStart = addDaysLocal(dayStartOf(now), weekOffset * 7)
-  const tasks = useMemo(
-    () =>
-      pending.size === 0
-        ? state.tasks
-        : state.tasks.map((t) =>
-            pending.has(t.id) ? { ...t, scheduledAt: pending.get(t.id) ?? null } : t,
-          ),
-    [state.tasks, pending],
-  )
-  const cols = useMemo(() => dayColumns(tasks, dayStart, now), [tasks, dayStart, now])
-  const line = nowPct(dayStart, now)
-
-  const onDragStart = useCallback((e: PointerEvent, block: AgendaBlock) => {
+  const onRowDown = useCallback((e: RPointerEvent, task: Task, scheduled: boolean) => {
     dragStart.current = { x: e.clientX, y: e.clientY, moved: false }
-    setDrag({ block, x: e.clientX, y: e.clientY })
+    setDrag({ task, scheduled, x: e.clientX, y: e.clientY })
     ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
   }, [])
   const onPointerMove = useCallback((e: PointerEvent) => {
+    if (!drag) return
     if (
-      Math.abs(e.clientX - dragStart.current.x) > DRAG_THRESHOLD ||
-      Math.abs(e.clientY - dragStart.current.y) > DRAG_THRESHOLD
+      !dragStart.current.moved &&
+      (Math.abs(e.clientX - dragStart.current.x) > DRAG_THRESHOLD ||
+        Math.abs(e.clientY - dragStart.current.y) > DRAG_THRESHOLD)
     ) {
       dragStart.current.moved = true
     }
     if (dragStart.current.moved) setDrag((d) => (d ? { ...d, x: e.clientX, y: e.clientY } : d))
-  }, [])
+  }, [drag])
   const onPointerUp = useCallback((e: PointerEvent) => {
     const moved = dragStart.current.moved
     dragStart.current.moved = false
-    if (moved) markDragEnd() // swallow the phantom click that follows a captured drag
-    // side effects live OUTSIDE the setState updater — React StrictMode
-    // double-invokes updaters and would fire the PATCH twice
-    if (drag && moved) {
-      // whichever column track the pointer is over wins: its data-day0 is
-      // the target day, the y-fraction within the track is the time
-      const track = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)
-        ?.closest('.ad-track') as HTMLElement | null
-      const day0 = track?.dataset.day0 !== undefined ? Number(track.dataset.day0) : NaN
-      if (track && Number.isFinite(day0)) {
-        const rect = track.getBoundingClientRect()
-        const frac = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
-        const newTime = snapTo(day0 + frac * 86_400_000, 15)
-        sendReschedule(drag.block.task.id, newTime, setPending, setStageErr)
-      }
-    }
+    const cur = drag
     setDrag(null)
+    if (!cur || !moved) return
+    markDragEnd()
+    const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+    const head = el?.closest('.agl-head') as HTMLElement | null
+    const unsHead = el?.closest('.agl-uns-head') as HTMLElement | null
+    if (head?.dataset.day0 !== undefined) {
+      const day0 = Number(head.dataset.day0)
+      if (cur.scheduled) {
+        const timeOfDay = (cur.task.scheduledAt ?? 0) - dayStartOf(cur.task.scheduledAt ?? 0)
+        sendReschedule(cur.task.id, day0 + timeOfDay, setPending, setStageErr)
+      } else {
+        sendReschedule(cur.task.id, day0 + DEFAULT_SLOT_MS, setPending, setStageErr)
+      }
+    } else if (unsHead != null && cur.scheduled) {
+      sendReschedule(cur.task.id, null, setPending, setStageErr)
+    }
   }, [drag])
   useEffect(() => {
     const el = rootRef.current
@@ -566,101 +574,189 @@ function DaysView({ onOpen }: { onOpen(id: string): void }) {
     }
   }, [onPointerMove, onPointerUp])
 
+  const now = Date.now() + state.clockOffset
+  const today0 = dayStartOf(now)
+  const tasks = useMemo(
+    () =>
+      pending.size === 0
+        ? state.tasks
+        : state.tasks.map((t) =>
+            pending.has(t.id) ? { ...t, scheduledAt: pending.get(t.id) ?? null } : t,
+          ),
+    [state.tasks, pending],
+  )
+  const groups = scheduleGroups(tasks, today0, now)
+  const over = overdueRows(tasks, today0, now)
+  const uns = unscheduledTasks(tasks)
+
+  const weekdayOf = (day0: number): string => dayColHead(day0, lang).weekday
+  const headLabel = (day0: number, i: number): string =>
+    i === 0 ? t('ag.today') : i === 1 ? t('ag.tomorrow') : `${fmtDayLabel(day0, lang)} ${weekdayOf(day0)}`
+
+  /** A scheduled row: time col + dot + title + chips. */
+  const Row = ({ row, showDate }: { row: ScheduleRow; showDate?: boolean }): ReactElement => {
+    const tsk = row.task
+    const isDone = tsk.status === 'done'
+    const cls = [
+      'agl-row',
+      toneOf(tsk),
+      isDone ? 'done' : '',
+      row.isOverdue ? 'overdue' : '',
+      row.isUpcoming ? 'upcoming' : '',
+      pending.has(tsk.id) ? 'pending' : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
+    const timeText = showDate ? fmtStamp(row.start, now) : fmtClock(row.start)
+    const rangeText =
+      row.end != null && !row.spansBeyond && dayStartOf(row.end) === dayStartOf(row.start)
+        ? `${timeText}–${fmtClock(row.end)}`
+        : timeText
+    return (
+      <button
+        type="button"
+        className={cls}
+        onClick={() => { if (!clickAfterDrag()) onOpen(tsk.id) }}
+        onPointerDown={(e) => onRowDown(e, tsk, true)}
+        title={blockTip(tsk)}
+      >
+        <span className="agl-time">{rangeText}</span>
+        <span className="agl-dot" />
+        <span className="agl-title">{tsk.title}</span>
+        {row.spansBeyond && row.end != null ? (
+          <span className="agl-chip">→ {fmtStamp(row.end, now)}</span>
+        ) : null}
+        {row.isOverdue ? <span className="agl-chip warn">{t('board.dueOver').split(' · ')[0]}</span> : null}
+        {pending.has(tsk.id) ? <Icon name="clock" size={10} className="agl-pend" /> : null}
+      </button>
+    )
+  }
+
   return (
-    <div className="agenda-days" ref={rootRef}>
-      <div className="ad-nav">
-        <button
-          type="button"
-          className="nav-btn"
-          title={t('ag.prevWeek')}
-          aria-label={t('ag.prevWeek')}
-          onClick={() => setWeekOffset((w) => w - 1)}
-        >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-            <path d="M10 3.5 5.5 8l4.5 4.5" />
-          </svg>
-        </button>
-        {weekOffset !== 0 ? (
-          <button type="button" className="nav-btn today" onClick={() => setWeekOffset(0)}>
-            {t('ag.today')}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="nav-btn"
-          title={t('ag.nextWeek')}
-          aria-label={t('ag.nextWeek')}
-          onClick={() => setWeekOffset((w) => w + 1)}
-        >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-            <path d="M6 3.5 10.5 8 6 12.5" />
-          </svg>
-        </button>
-      </div>
-      <div className="ad-chips">
-        {pending.size > 0 ? (
-          <span className="agenda-staged" role="status" title={t('ag.stagedTitle')}>
-            {fill(t('ag.staged'), { n: pending.size })}
-          </span>
-        ) : null}
-        {stageErr ? (
-          <span className="agenda-staged err" role="alert" title={stageErr}>
-            {fill(t('ag.stageErr'), { t: stageErr })}
-          </span>
-        ) : null}
-      </div>
-      <div className="ad-corner" />
-      {cols.map((c) => {
-        const head = dayColHead(c.day0, lang)
-        return (
-          <div key={c.day0} className={`ad-head${c.today ? ' today' : ''}`}>
-            <b>{head.day}</b>
-            <span>{head.weekday}</span>
+    <div className="agenda-list" ref={rootRef}>
+      {pending.size > 0 || stageErr != null ? (
+        <div className="agl-status">
+          {pending.size > 0 ? (
+            <span className="agenda-staged" role="status" title={t('ag.stagedTitle')}>
+              {fill(t('ag.staged'), { n: pending.size })}
+            </span>
+          ) : null}
+          {stageErr != null ? (
+            <span className="agenda-staged err" role="alert" title={stageErr}>
+              {fill(t('ag.stageErr'), { t: stageErr })}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {over.length > 0 ? (
+        <section className="agl-group overdue">
+          <div className="agl-head over" title={t('ag.overdueHint')}>
+            <span className="agl-head-label">{t('ag.overdueHead')}</span>
+            <span className="agl-head-n">{fill(t('ag.itemsN'), { n: over.length })}</span>
           </div>
+          {over.map((r) => (
+            <Row key={r.task.id} row={r} showDate />
+          ))}
+        </section>
+      ) : null}
+
+      {groups.map((g, i) => {
+        const isToday = i === 0
+        // empty far-future days are noise — render today and tomorrow always,
+        // later days only when they carry rows
+        if (g.rows.length === 0 && i > 1) return null
+        const nowIdx = isToday
+          ? g.rows.findIndex((r) => r.start > now) // divider before the first future row
+          : -1
+        return (
+          <section key={g.day0} className={`agl-group${isToday ? ' today' : ''}`}>
+            <div className="agl-head" data-day0={g.day0} title={t('ag.dropToDay')}>
+              <span className="agl-head-label">{headLabel(g.day0, i)}</span>
+              <span className="agl-head-date">{fmtDayLabel(g.day0, lang)}</span>
+              <span className="agl-head-n">
+                {g.rows.length > 0 ? fill(t('ag.itemsN'), { n: g.rows.length }) : t('ag.emptyDay')}
+              </span>
+            </div>
+            {g.rows.length === 0 ? (
+              <div className="agl-empty">{t('ag.emptyDay')}</div>
+            ) : (
+              g.rows.map((r, idx) => (
+                <Fragment key={r.task.id}>
+                  {nowIdx === idx ? (
+                    <div className="agl-now" aria-hidden="true">
+                      <span className="agl-now-line" />
+                      <span className="agl-now-time">{fmtClock(now)}</span>
+                    </div>
+                  ) : null}
+                  <Row row={r} />
+                </Fragment>
+              ))
+            )}
+            {isToday && nowIdx === -1 && g.rows.length > 0 ? (
+              <div className="agl-now" aria-hidden="true">
+                <span className="agl-now-line" />
+                <span className="agl-now-time">{fmtClock(now)}</span>
+              </div>
+            ) : null}
+          </section>
         )
       })}
-      <div className="ad-gutter">
-        {[0, 6, 12, 18].map((h) => (
-          <span key={h} style={{ top: `${(h / 24) * 100}%` }}>
-            {String(h).padStart(2, '0')}
-          </span>
-        ))}
-      </div>
-      {cols.map((c) => (
-        <div key={c.day0} className={`ad-col${c.today ? ' today' : ''}`}>
-          <div
-            className="ad-track"
-            data-day0={c.day0}
-            style={{ height: 24 * DAYS_HOUR_H }}
-          >
-            {c.blocks.map((b) => (
-              <AgendaBlockView
-                key={b.task.id}
-                block={b}
-                now={now}
-                compact
-                pending={pending.has(b.task.id)}
-                onOpen={onOpen}
-                onDragStart={onDragStart}
-              />
-            ))}
-            {c.today && line !== null ? <NowLine pct={line} now={now} /> : null}
-          </div>
+
+      <section className="agl-group uns">
+        <div className="agl-uns-head" title={t('ag.unsDropHint')}>
+          <span className="agl-head-label">{t('ag.unschedHead')}</span>
+          <span className="agl-head-n">{fill(t('ag.itemsN'), { n: uns.length })}</span>
         </div>
-      ))}
+        {uns.length === 0 ? (
+          <div className="agl-empty">{t('ag.unsEmpty')}</div>
+        ) : (
+          uns.map((tsk) => (
+            <button
+              key={tsk.id}
+              type="button"
+              className={`agl-row uns ${toneOf(tsk)}`}
+              onClick={() => { if (!clickAfterDrag()) onOpen(tsk.id) }}
+              onPointerDown={(e) => onRowDown(e, tsk, false)}
+              title={t('ag.unsRowHint')}
+            >
+              <span className="agl-time">—</span>
+              <span className="agl-dot" />
+              <span className="agl-title">{tsk.title}</span>
+              {tsk.dueAt != null ? (
+                <span className="agl-chip warn">{fmtStamp(tsk.dueAt, now)}</span>
+              ) : null}
+            </button>
+          ))
+        )}
+      </section>
+
       {drag && dragStart.current.moved ? (
-        <div className="drag-ghost" style={{ position: 'fixed', top: drag.y - 12, left: drag.x + 12, zIndex: 9999, pointerEvents: 'none' }}>
-          {drag.block.task.title}
+        <div
+          className="drag-ghost"
+          style={{ position: 'fixed', top: drag.y - 12, left: drag.x + 14, zIndex: 9999, pointerEvents: 'none' }}
+        >
+          {drag.task.title}
         </div>
       ) : null}
     </div>
   )
 }
 
+/** The picked mode survives reloads — a reader stays in 日程, a planner
+ *  lives in 时间轴. */
+function loadAgendaMode(): 'list' | 'timeline' {
+  const raw = window.localStorage.getItem('robojex-agenda-mode')
+  return raw === 'timeline' ? 'timeline' : 'list'
+}
+
 export function AgendaView({ onOpenTask }: { onOpenTask(id: string): void }) {
   const { state } = useStore()
   const { t } = useT()
-  const [mode, setMode] = useState<'day' | 'days'>('day')
+  const [mode, setMode] = useState<'list' | 'timeline'>(loadAgendaMode)
+  useEffect(() => {
+    window.localStorage.setItem('robojex-agenda-mode', mode)
+  }, [mode])
 
   if (state.tasks.length === 0) {
     return (
@@ -684,24 +780,24 @@ export function AgendaView({ onOpenTask }: { onOpenTask(id: string): void }) {
         <div className="seg" role="group" aria-label={t('ag.modeAria')}>
           <button
             type="button"
-            className={mode === 'day' ? 'active' : ''}
-            aria-pressed={mode === 'day'}
-            onClick={() => setMode('day')}
+            className={mode === 'list' ? 'active' : ''}
+            aria-pressed={mode === 'list'}
+            onClick={() => setMode('list')}
           >
-            {t('ag.modeDay')}
+            {t('ag.modeList')}
           </button>
           <button
             type="button"
-            className={mode === 'days' ? 'active' : ''}
-            aria-pressed={mode === 'days'}
-            onClick={() => setMode('days')}
+            className={mode === 'timeline' ? 'active' : ''}
+            aria-pressed={mode === 'timeline'}
+            onClick={() => setMode('timeline')}
           >
-            {t('ag.modeDays')}
+            {t('ag.modeTimeline')}
           </button>
         </div>
-        <span className="agenda-hint">{mode === 'day' ? t('ag.hintDay') : t('ag.hintDays')}</span>
+        <span className="agenda-hint">{mode === 'list' ? t('ag.hintList') : t('ag.hintDay')}</span>
       </div>
-      {mode === 'day' ? <DayView onOpen={onOpenTask} /> : <DaysView onOpen={onOpenTask} />}
+      {mode === 'list' ? <ScheduleList onOpen={onOpenTask} /> : <DayView onOpen={onOpenTask} />}
     </div>
   )
 }

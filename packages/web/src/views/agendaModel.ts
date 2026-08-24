@@ -177,6 +177,79 @@ export function unscheduledTasks(tasks: Task[]): Task[] {
     .sort((a, b) => a.createdAt - b.createdAt)
 }
 
+/* ---- Schedule list (R136): a chronological, grouped-by-day agenda. The
+   proportional timeline is a picture of time and tasks are text — density
+   turns it into overlap mush. Rows never overlap at any density. ---- */
+
+export interface ScheduleRow {
+  task: Task
+  start: number
+  /** dueAt when it ends after the start, else null (point-in-time card). */
+  end: number | null
+  /** dueAt reaches into a later day than the start. */
+  spansBeyond: boolean
+  /** past its dueAt while live. */
+  isOverdue: boolean
+  /** due within the hour while live. */
+  isUpcoming: boolean
+}
+
+export interface ScheduleGroup {
+  day0: number
+  rows: ScheduleRow[]
+}
+
+function rowOf(t: Task, now: number): ScheduleRow {
+  const s = t.scheduledAt!
+  const due = t.dueAt
+  const end = due != null && due > s ? due : null
+  return {
+    task: t,
+    start: s,
+    end,
+    spansBeyond: end != null && end >= addDaysLocal(dayStartOf(s), 1),
+    isOverdue: due != null && due < now && t.status !== 'done',
+    isUpcoming: due != null && due >= now && due - now <= HOUR_MS && t.status !== 'done',
+  }
+}
+
+/** Live tasks scheduled BEFORE the window starts — pinned as the list's
+ *  overdue group so they stay visible instead of falling off the window. */
+export function overdueRows(tasks: Task[], windowStart0: number, now: number): ScheduleRow[] {
+  return tasks
+    .filter(
+      (t) =>
+        t.status !== 'cancelled' &&
+        t.scheduledAt != null &&
+        t.scheduledAt < windowStart0 &&
+        t.status !== 'done',
+    )
+    .map((t) => rowOf(t, now))
+    .sort((a, b) => a.start - b.start)
+}
+
+/** One group per day for `days` consecutive days starting at `windowStart0`
+ *  (a local midnight), rows sorted by start time. Flat — no tree nesting:
+ *  the tree story lives on the board; the list is the readable chronology. */
+export function scheduleGroups(
+  tasks: Task[],
+  windowStart0: number,
+  now: number,
+  days = 7,
+): ScheduleGroup[] {
+  const out: ScheduleGroup[] = []
+  for (let i = 0; i < days; i++) {
+    const day0 = addDaysLocal(windowStart0, i)
+    const end = addDaysLocal(day0, 1)
+    const rows = tasks
+      .filter((t) => t.status !== 'cancelled' && t.scheduledAt != null && t.scheduledAt >= day0 && t.scheduledAt < end)
+      .map((t) => rowOf(t, now))
+      .sort((a, b) => a.start - b.start)
+    out.push({ day0, rows })
+  }
+  return out
+}
+
 export interface DayColumn {
   day0: number
   blocks: AgendaBlock[]
