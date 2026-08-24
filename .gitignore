@@ -16,3 +16,4 @@ runtime/config.json
 scripts/tmp-*
 test-results/
 .git-msg-*.txt
+e2e/test-results*/
