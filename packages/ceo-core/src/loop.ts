@@ -617,7 +617,13 @@ export class SchedulerLoop {
       // alone is the correct test — R137's `|| /^patrol_walk:/` prefix regex
       // wrongly captured MIXED wakes (patrol+chat), which would both strip
       // the chat reply context and let the gate suppress a real answer.
-      const patrolOnly = parts.length > 0 && parts.every((s) => s.startsWith("patrol_walk:"));
+      // "tick" is transparent: the tick interval and pumpGantt fire together,
+      // so every patrol_walk ALWAYS lands in the same debounce window as a
+      // tick — without filtering it, patrolOnly is never true and both the
+      // lean tail and the all-clear gate silently no-op (live soak proof:
+      // 23:14 patrol+tick wake at 8,334 tok WITH the full tail, post-R138).
+      const carriers = parts.filter((s) => s !== "tick");
+      const patrolOnly = carriers.length > 0 && carriers.every((s) => s.startsWith("patrol_walk:"));
       // R138 lean patrol decide: a patrol-only wake pays for a house LOOK,
       // not a staffing decision — the spawn-oriented tail (agent registry +
       // verified docs, stats, manuals, scout inventory, tentacles) rides

@@ -85,4 +85,15 @@ describe("R138 lean patrol decide", () => {
     const user = String(decideCalls[0][1].content);
     expect(user).toContain("# AVAILABLE AGENTS"); // errand present → full context
   });
+
+  it("patrol + tick (the production pairing) IS patrol-only", async () => {
+    // the tick interval and pumpGantt fire in the same instant, so real
+    // patrol wakes always arrive as "patrol_walk: ...;tick" — the lean tail
+    // must survive the zero-information tick riding along
+    const { loop, decideCalls } = makeRig();
+    await loop.runOnce("patrol_walk: quick health round;tick");
+    const user = String(decideCalls[0][1].content);
+    expect(user).not.toContain("# AVAILABLE AGENTS");
+    expect(user).toContain("# BUILTIN TOOLS");
+  });
 });
