@@ -29,6 +29,7 @@ import * as api from './api'
 import type { DirectMessage, DirectPrefs, StreamHandle } from './api'
 import { fill, langSnapshot, setLangPref, translate } from '../i18n/event'
 import { setThemePref, themeSnapshot } from './theme'
+import { readVoiceReport, speak } from './voice'
 import { gearDisplayName } from '../views/gearDefs'
 import type {
   Budget,
@@ -682,6 +683,10 @@ export interface StoreApi {
   refreshModels(): Promise<void>
   setModel(model: string): void
 
+  /** Speak the latest reply aloud (Ctrl+Alt+R desktop action, SPEC-VOICE).
+   *  Pref-independent: the hotkey is an explicit ask. */
+  speakLatest(): void
+
   /* direct-connection prefs (SPEC §1 fallback) */
   setDirectPrefs(patch: Partial<DirectPrefs>): void
 }
@@ -791,6 +796,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (api.readNotifySys() && (outsideOpen || docHidden)) {
             sysNotify(translate('notify.butlerTitle'), text)
           }
+          // 语音汇报 (SPEC-VOICE): jex briefings are spoken aloud too —
+          // the但ler literally reports in voice when the pref is on
+          if (readVoiceReport()) void speak(text)
           if (route.create) {
             // no conversation to land in — queue behind the butler pump
             butlerQueueRef.current.push(text)
@@ -1010,15 +1018,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [localMsg])
 
   /* ── streaming chat ── */
+  /** content deltas of the stream in flight — accumulate here because the
+   *  reducer's message updates land asynchronously; 'done' needs the final
+   *  text NOW to decide on voice reporting. */
+  const streamTextRef = useRef('')
   const consumeStream = useCallback((convId: string, ev: ChatStreamEvent) => {
     switch (ev.type) {
       case 'meta':
+        streamTextRef.current = ''
         dispatch({ type: 'stream-meta', convId, userMsgId: ev.userMsgId, assistantMsgId: ev.assistantMsgId, model: ev.model })
         break
       case 'reasoning':
         dispatch({ type: 'stream-delta', convId, field: 'reasoning', delta: ev.delta })
         break
       case 'content':
+        streamTextRef.current += ev.delta
         dispatch({ type: 'stream-delta', convId, field: 'content', delta: ev.delta })
         break
       case 'tool':
@@ -1037,9 +1051,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       case 'title':
         dispatch({ type: 'stream-done', convId, title: ev.title })
         break
-      case 'done':
+      case 'done': {
         dispatch({ type: 'stream-done', convId })
+        // 语音汇报 (SPEC-VOICE): speak the finished reply aloud when on
+        if (readVoiceReport() && streamTextRef.current.trim()) void speak(streamTextRef.current)
+        streamTextRef.current = ''
         break
+      }
       case 'error':
         dispatch({ type: 'stream-error', convId, message: ev.message })
         break
@@ -1154,6 +1172,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // best-effort
     }
     dispatch({ type: 'model-set', model })
+  }, [])
+
+  /* ── voice readback (Ctrl+Alt+R; SPEC-VOICE) ── */
+  const speakLatest = useCallback(() => {
+    const st = stateRef.current
+    // the open conversation's last real assistant reply first…
+    const last = [...st.messages].reverse().find((m) => m.role === 'assistant' && !m.error && m.content.trim())
+    // …falling back to the latest jex line in the legacy transcript
+    const jexLine = [...st.transcript].reverse().find((i) => i.kind === 'msg' && i.from === 'jex')
+    const text = last?.content ?? (jexLine && jexLine.kind === 'msg' ? jexLine.text : '')
+    if (text) void speak(text)
   }, [])
 
   /* ── direct-connection prefs ── */
@@ -1289,6 +1318,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       regenerateLast,
       refreshModels,
       setModel,
+      speakLatest,
       setDirectPrefs,
     }),
     [
@@ -1313,6 +1343,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       regenerateLast,
       refreshModels,
       setModel,
+      speakLatest,
       setDirectPrefs,
     ],
   )

@@ -944,3 +944,79 @@ test.describe('RoboJex desktop', () => {
     await expect(page.locator('.agl-row.uns', { hasText: '撤排探针' })).toBeVisible({ timeout: 5_000 })
     await shot(page, '46-list-unschedule')
   })
+
+  // 47 (voice reporting, SPEC-VOICE): with 语音汇报 on, a jex briefing is
+  // spoken through the local voiced daemon — asserted on the mock /tts hits,
+  // not on audio (headless autoplay would be a flake factory). Hit counts
+  // are RELATIVE: the mock server persists across the whole run.
+  test('47 voice: briefing is spoken when 语音汇报 is on, silent when off', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('robojex-voiced-url', 'http://127.0.0.1:7690')
+      localStorage.setItem('robojex-voice-report', '0')
+    })
+    await openChat(page)
+    const hits = () => page.request.get('http://127.0.0.1:7690/hits').then((r) => r.json())
+    const base = (await hits()).tts.length
+
+    // toggle the pref on in settings › 聊天
+    await page.getByTestId('settings-open').click()
+    await expect(page.getByTestId('settings-modal')).toBeVisible()
+    await page.locator('[data-testid="settings-nav-item"][data-sec="chat"]').click()
+    const voiceSwitch = page.getByTestId('settings-voice-report')
+    await expect(voiceSwitch).toBeVisible()
+    await expect(voiceSwitch).toHaveAttribute('aria-checked', 'false')
+    await voiceSwitch.click()
+    await expect(voiceSwitch).toHaveAttribute('aria-checked', 'true')
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('settings-modal')).toBeHidden()
+
+    // /jex dispatch → mock broadcasts a jex chat_out → renderer speaks it
+    await page.getByTestId('chat-input').fill('/jex 汇报一下情况')
+    await page.getByTestId('chat-input').press('Enter')
+    await expect(page.locator('[data-testid="agent-card"][data-kind="notice"]')).toBeVisible({ timeout: 8_000 })
+    await expect
+      .poll(async () => (await hits()).tts.length, { timeout: 8_000 })
+      .toBe(base + 1)
+    const spoken = (await hits()).tts[base]
+    expect(spoken.text).toContain('收到编排指令')
+
+    // pref off → a second briefing must NOT synthesize anything new
+    await page.getByTestId('settings-open').click()
+    await page.locator('[data-testid="settings-nav-item"][data-sec="chat"]').click()
+    await page.getByTestId('settings-voice-report').click()
+    await expect(page.getByTestId('settings-voice-report')).toHaveAttribute('aria-checked', 'false')
+    await page.keyboard.press('Escape')
+    await page.getByTestId('chat-input').fill('/jex 静音检查')
+    await page.getByTestId('chat-input').press('Enter')
+    await expect(page.locator('[data-testid="agent-card"][data-kind="notice"]')).toHaveCount(2, { timeout: 8_000 })
+    expect((await hits()).tts.length).toBe(base + 1) // pref off: still exactly one
+    await shot(page, '47-voice-report')
+  })
+
+  // 48 (manual readback, SPEC-VOICE): Ctrl+Alt+R speaks the latest jex line
+  // regardless of the 语音汇报 pref — an explicit ask beats a silent default.
+  // The mock-voiced server persists across the whole run, so all hit counts
+  // are RELATIVE to a baseline taken before the /jex dispatch.
+  test('48 voice: Ctrl+Alt+R reads the latest reply aloud (pref-independent)', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('robojex-voiced-url', 'http://127.0.0.1:7690')
+      localStorage.setItem('robojex-voice-report', '0')
+    })
+    await openChat(page)
+    const hits = () => page.request.get('http://127.0.0.1:7690/hits').then((r) => r.json())
+    const base = (await hits()).tts.length
+    await page.getByTestId('chat-input').fill('/jex 朗读最新汇报')
+    await page.getByTestId('chat-input').press('Enter')
+    const notice = page.locator('[data-testid="agent-card"][data-kind="notice"]')
+    await expect(notice).toBeVisible({ timeout: 8_000 })
+    // auto-speak is OFF: the briefing alone synthesized nothing new
+    expect((await hits()).tts.length).toBe(base)
+
+    await page.keyboard.press('Control+Alt+r')
+    await expect
+      .poll(async () => (await hits()).tts.length, { timeout: 8_000 })
+      .toBe(base + 1)
+    const spoken = (await hits()).tts[base]
+    expect(spoken.text).toContain('收到编排指令')
+    await shot(page, '48-voice-readback')
+  })

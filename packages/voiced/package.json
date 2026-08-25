@@ -1,0 +1,16 @@
+{
+  "name": "robojex-voiced",
+  "version": "0.1.0",
+  "description": "local voice daemon: SenseVoice ASR + Kokoro TTS via sherpa-onnx (all offline)",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.mjs",
+  "bin": { "robojex-voiced": "src/index.mjs" },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "echo \"voiced tests run from repo root (vitest)\" && exit 0"
+  },
+  "dependencies": {
+    "sherpa-onnx-node": "^1.13.6"
+  }
+}

@@ -28,6 +28,9 @@ files:
   # electron shell
   - main.js
   - preload.js
+  # voice pill page (SPEC-VOICE): static, no web build needed
+  - voice.html
+  - voice.js
   - package.json
   - icon.png
   # workspace traversal hoists the ROOT package.json production deps (react,

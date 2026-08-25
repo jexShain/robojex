@@ -23,6 +23,8 @@ tar cf - \
   --exclude='e2e-screenshots' --exclude='playwright-report' \
   --exclude='*.sqlite' --exclude='*.sqlite-*' --exclude='.git-msg-*.txt' \
   --exclude='dist' --exclude='dist-electron' --exclude='.last-run.json' \
+  --exclude='.soak' \
+  --exclude='packages/voiced/models' --exclude='.voiced.log' --exclude='.voiced-*.wav' \
   . | (cd "$WIN" && tar xf -)
 
 cd "$WIN"

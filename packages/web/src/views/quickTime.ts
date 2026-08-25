@@ -12,8 +12,11 @@ export interface QuickTime {
 
 const DAY_WORDS: Record<string, number> = { 今天: 0, 明天: 1, 后天: 2 }
 
-function dayStartLocal(offset: number): number {
-  const d = new Date()
+function dayStartLocal(offset: number, now: number): number {
+  // derive from the CALLER's clock: the `now` parameter is the reference the
+  // roll-to-tomorrow check already uses — mixing it with the real wall clock
+  // made day words resolve against today() no matter what `now` said
+  const d = new Date(now)
   d.setHours(0, 0, 0, 0)
   return d.getTime() + offset * 86_400_000
 }
@@ -36,7 +39,7 @@ export function parseQuickTime(input: string, now = Date.now()): QuickTime | nul
   const h = Number(hStr)
   const m = mStr !== undefined ? Number(mStr) : 0
   if (h < 0 || h > 23 || m < 0 || m > 59) return null
-  let day0 = dayStartLocal(dayWord ? DAY_WORDS[dayWord] : 0)
+  let day0 = dayStartLocal(dayWord ? DAY_WORDS[dayWord] : 0, now)
   let scheduledAt = at(day0, h, m)
   if (!dayWord && scheduledAt <= now) {
     day0 += 86_400_000

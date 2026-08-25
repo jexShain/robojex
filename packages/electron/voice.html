@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- packages/electron/voice.html — the voice pill window (SPEC-VOICE).
+     One frameless always-on-top window, two jobs:
+       · push-to-talk: Ctrl+Alt+V starts capture, again stops → WAV →
+         IPC voice:clip → main → voiced /asr → POST /api/chat
+       · status pill: 正在聆听… / 转写中… / 错误提示, driven by main's
+         voice:state pushes and local capture events.
+     16 kHz mono Float32 via ScriptProcessorNode → PCM16 WAV in voice.js
+     (external file: the prod CSP script-src 'self' blocks inline scripts). -->
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font: 13px/1.4 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: rgba(24, 26, 32, 0.96);
+    color: #e8eaf0;
+    border: 1px solid rgba(86, 134, 254, 0.45);
+    border-radius: 12px;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    user-select: none;
+    overflow: hidden;
+  }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #ef4444;
+    animation: pulse 1s ease-in-out infinite;
+    flex: none;
+  }
+  .dot.idle { background: #64748b; animation: none; }
+  .dot.ok { background: #34d399; animation: none; }
+  @keyframes pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
+  #text { letter-spacing: 0.3px; white-space: nowrap; }
+  #hint { font-size: 10.5px; color: #8b93a5; }
+</style>
+</head>
+<body>
+  <span class="dot" id="dot"></span>
+  <div>
+    <div id="text">正在聆听…</div>
+    <div id="hint" hidden></div>
+  </div>
+<script src="voice.js"></script>
+</body>
+</html>

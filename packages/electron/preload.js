@@ -9,7 +9,9 @@
 //   window.{minimize,maximizeToggle,close,isMaximized}
 //   window.onMaximizedChanged(cb)  -> unsubscribe fn
 //   onAction(cb)                   {type:'new-chat'} | {type:'set-gear', gear}
+//                                  | {type:'voice-readback'}  (Ctrl+Alt+R)
 //                                  -> unsubscribe fn (tray + menu actions)
+//   voice.{onState,sendClip,event} voice pill IPC (voice.html only)
 //   onBackendDown(cb)              embedded core failed; UI is offline
 //   collapseSidebar()/callout()    no-op extension slots for the frame layer
 
@@ -49,6 +51,14 @@ contextBridge.exposeInMainWorld('robojex', {
 
   // butler briefing → native OS toast (main process routes + focuses on click)
   notify: (title, body) => ipcRenderer.invoke('notify', { title, body }),
+
+  // voice pill surface (voice.html only): main pushes capture start/stop and
+  // transcribe outcomes; the page pushes back WAV clips and terminal events
+  voice: {
+    onState: (cb) => subscribe('voice:state', cb),
+    sendClip: (wavArrayBuffer) => ipcRenderer.send('voice:clip', wavArrayBuffer),
+    event: (kind) => ipcRenderer.send('voice:event', kind),
+  },
 
   // embedded ceo-core failed to boot; payload: { message }
   onBackendDown: (cb) => subscribe('robojex:backend-down', cb),

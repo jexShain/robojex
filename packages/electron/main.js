@@ -36,6 +36,8 @@ const isDev = !app.isPackaged;
 const PRELOAD_PATH = path.join(__dirname, 'preload.js');
 const DEFAULT_API_PORT = 7620;
 const EXTERNAL_BACKEND = process.env.ROBOJEX_EXTERNAL === '1';
+// local voice daemon (SPEC-VOICE): SenseVoice ASR + Kokoro TTS, fully offline
+const VOICED_URL = process.env.VOICED_URL || 'http://127.0.0.1:7640';
 
 app.setName('RoboJex');
 
@@ -43,6 +45,9 @@ app.setName('RoboJex');
 
 /** @type {BrowserWindow | null} */ let mainWindow = null;
 /** @type {BrowserWindow | null} */ let widgetWindow = null;
+/** @type {BrowserWindow | null} */ let voiceWindow = null;
+/** true while the voice pill is capturing (toggles on each Ctrl+Alt+V) */
+let voiceRecording = false;
 /** @type {Tray | null} */ let tray = null;
 /** true once the user actually asked to quit (tray mode intercepts closes) */
 let isQuitting = false;
@@ -138,10 +143,17 @@ const CSP = [
 
 function applySecurityPolicy() {
   const ses = session.defaultSession;
-  // deny every permission request (notifications, media, geolocation, ...):
-  // a chat console needs none of them
-  ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
-  ses.setPermissionCheckHandler(() => false);
+  // deny every permission request (notifications, geolocation, ...) except
+  // the microphone, and only for the voice pill's own page
+  const isVoicePage = (wc) => {
+    try { return !!wc && !!voiceWindow && !voiceWindow.isDestroyed() && wc.id === voiceWindow.webContents.id; }
+    catch { return false; }
+  };
+  ses.setPermissionRequestHandler((wc, permission, callback) => {
+    if (permission === 'media' && isVoicePage(wc)) return callback(true);
+    callback(false);
+  });
+  ses.setPermissionCheckHandler((wc, permission) => permission === 'media' && isVoicePage(wc));
   if (!isDev) {
     // CSP on prod responses; dev is excluded (vite HMR needs loose defaults)
     ses.webRequest.onHeadersReceived((details, callback) => {
@@ -336,6 +348,102 @@ function placeWidgetNearCursor() {
   );
 }
 
+/* ───────────────────────── voice pill ───────────────────────── */
+/* Ctrl+Alt+V toggles a small always-on-top pill (voice.html) that records
+ * 16 kHz mono PCM in-page. On stop the WAV rides IPC here, main does BOTH
+ * network hops (voiced /asr → ceo-core /api/chat) so the pill never needs
+ * CORS or the backend port, then dismisses itself. Ctrl+Alt+R asks the main
+ * renderer to speak the latest jex reply (voice-readback action). */
+
+function createVoiceWindow() {
+  voiceWindow = new BrowserWindow(baseWindowOptions({
+    width: 300,
+    height: 64,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    focusable: true, // must take focus so blur-to-stop stays possible later
+  }));
+  voiceWindow.setAlwaysOnTop(true, 'screen-saver');
+  // static page in both dev and prod: __dirname/voice.html (asar keeps it)
+  voiceWindow.loadFile(path.join(__dirname, 'voice.html'));
+  voiceWindow.on('closed', () => { voiceWindow = null; voiceRecording = false; });
+  voiceWindow.once('ready-to-show', () => {
+    placeVoicePill();
+    voiceWindow?.show();
+  });
+  return voiceWindow;
+}
+
+function placeVoicePill() {
+  if (!voiceWindow) return;
+  const { workArea } = screen.getPrimaryDisplay();
+  const [w, h] = voiceWindow.getSize();
+  voiceWindow.setPosition(
+    Math.round(workArea.x + (workArea.width - w) / 2),
+    Math.round(workArea.y + workArea.height - h - 96),
+  );
+}
+
+function voiceState(st) {
+  if (voiceWindow && !voiceWindow.isDestroyed()) voiceWindow.webContents.send('voice:state', st);
+}
+
+function hideVoicePillSoon(ms = 1400) {
+  setTimeout(() => {
+    if (voiceWindow && !voiceWindow.isDestroyed()) voiceWindow.hide();
+    voiceRecording = false;
+  }, ms);
+}
+
+async function toggleVoiceTalk() {
+  if (voiceRecording) { // second press: stop capture, WAV arrives via IPC
+    voiceRecording = false;
+    voiceState('stop');
+    return;
+  }
+  voiceRecording = true;
+  if (!voiceWindow || voiceWindow.isDestroyed()) {
+    createVoiceWindow();
+    // start once the page has its preload listeners up
+    voiceWindow?.webContents.once('did-finish-load', () => voiceState('start'));
+    return;
+  }
+  voiceWindow.show();
+  voiceWindow.focus();
+  placeVoicePill();
+  voiceState('start');
+}
+
+/** voiced /asr → ceo-core /api/chat. Runs in main: no CORS, no port leaks. */
+async function transcribeAndSend(wav) {
+  const pill = (st, hide) => { voiceState(st); if (hide) hideVoicePillSoon(); };
+  try {
+    const r = await fetch(`${VOICED_URL}/asr`, {
+      method: 'POST',
+      headers: { 'content-type': 'audio/wav' },
+      body: wav,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!r.ok) throw new Error(`voiced /asr ${r.status}`);
+    const { text } = await r.json();
+    const clean = typeof text === 'string' ? text.trim() : '';
+    if (!clean) return pill('empty', true);
+    const cr = await fetch(`http://127.0.0.1:${backend.port}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: clean }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!cr.ok) throw new Error(`/api/chat ${cr.status}`);
+    pill('sent', true);
+  } catch (err) {
+    console.warn('[robojex] voice talk 失败：', err instanceof Error ? err.message : err);
+    pill('err', true);
+  }
+}
+
 /* ─────────────────────── tray ─────────────────────── */
 
 // 16x16 purple->cyan rounded gradient, generated at build time with zlib
@@ -521,6 +629,10 @@ function registerShortcuts() {
   if (!ok1) console.warn('[robojex] Alt+Space 注册失败（可能被其他应用占用）');
   const ok2 = globalShortcut.register('Ctrl+Shift+J', () => focusMainWindow());
   if (!ok2) console.warn('[robojex] Ctrl+Shift+J 注册失败（可能被其他应用占用）');
+  const ok3 = globalShortcut.register('Ctrl+Alt+V', () => { void toggleVoiceTalk(); });
+  if (!ok3) console.warn('[robojex] Ctrl+Alt+V 注册失败（可能被其他应用占用）');
+  const ok4 = globalShortcut.register('Ctrl+Alt+R', () => sendAction('voice-readback'));
+  if (!ok4) console.warn('[robojex] Ctrl+Alt+R 注册失败（可能被其他应用占用）');
 }
 
 /* ─────────────────── embedded ceo-core ─────────────────── */
@@ -668,6 +780,23 @@ function registerIpc() {
     n.on('click', () => { if (w?.isMinimized()) w.restore(); w?.show(); w?.focus(); });
     n.show();
     return true;
+  });
+
+  // voice pill: finished WAV → voiced /asr → ceo-core /api/chat
+  ipcMain.on('voice:clip', (_e, wav) => {
+    if (!(wav instanceof ArrayBuffer) || wav.byteLength < 44 + 3200) { // <0.1s guard, renderer double-checks
+      voiceState('empty');
+      hideVoicePillSoon(600);
+      return;
+    }
+    void transcribeAndSend(Buffer.from(wav));
+  });
+  // pill-side terminal events (mic denied / clip too short): let it settle, then hide
+  ipcMain.on('voice:event', (_e, kind) => {
+    if (kind === 'mic-denied' || kind === 'too-short') {
+      voiceRecording = false;
+      hideVoicePillSoon(1800);
+    }
   });
 }
 

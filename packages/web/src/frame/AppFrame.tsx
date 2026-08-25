@@ -6,7 +6,7 @@
 // crossfade) | DetailsPanel 320px (closable column; right overlay drawer
 // <900px). Ctrl+K opens the command palette; Settings is a modal overlay.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChatView } from '../chat/ChatView'
 import { DetailsPanel } from '../details/DetailsPanel'
 import { Sidebar } from '../sidebar/Sidebar'
@@ -20,6 +20,7 @@ import { AgendaView } from '../views/AgendaView'
 import { BoardView } from '../views/BoardView'
 import { GearPanel } from '../views/GearPanel'
 import { SettingsView } from '../views/SettingsView'
+import { gearsOrFallback } from '../views/gearDefs'
 import { VIEW_META } from '../views/ViewSwitcher'
 import { loadFlag, loadView, saveFlag, saveView } from '../views/viewState'
 import type { ViewId } from '../views/viewState'
@@ -84,7 +85,7 @@ const ThemeIcon = ({ pref }: { pref: ThemePref }) =>
   )
 
 export function AppFrame({ theme }: { theme: ThemeApi }) {
-  const { state, selectTask } = useStore()
+  const { state, selectTask, newConversation, changeGear, speakLatest } = useStore()
   const { t } = useT()
 
   /* view (persisted; chat pane stays mounted, only hidden) */
@@ -118,6 +119,36 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
   /* overlays */
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+
+  /* desktop shell actions (tray menu / native menu / global shortcuts ride
+   * the robojex:action channel; window.robojex exists only inside Electron,
+   * a plain browser skips the subscription entirely). The handler reads the
+   * CURRENT state through refs — the subscription is made exactly once. */
+  const stateRef = useRef(state)
+  stateRef.current = state
+  const changeViewRef = useRef(changeView)
+  changeViewRef.current = changeView
+  const storeFnsRef = useRef({ newConversation, changeGear, speakLatest })
+  storeFnsRef.current = { newConversation, changeGear, speakLatest }
+  useEffect(() => {
+    const w = window as unknown as {
+      robojex?: { onAction?: (cb: (a: { type: string; gear?: number }) => void) => () => void }
+    }
+    if (typeof w.robojex?.onAction !== 'function') return
+    return w.robojex.onAction((a) => {
+      if (a.type === 'new-chat') {
+        void storeFnsRef.current.newConversation().then((conv) => {
+          if (conv) changeViewRef.current('chat')
+        })
+      } else if (a.type === 'set-gear' && typeof a.gear === 'number') {
+        // tray radios send the numeric level; resolve against the live table
+        const g = gearsOrFallback(stateRef.current.gears).find((x) => x.level === a.gear)
+        if (g) void storeFnsRef.current.changeGear(g.id)
+      } else if (a.type === 'voice-readback') {
+        storeFnsRef.current.speakLatest()
+      }
+    })
+  }, [])
 
   /* responsive: <900px → sidebar & details become overlay drawers */
   const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_QUERY).matches)
@@ -156,6 +187,13 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
           setSettingsOpen(false)
           changeView(target.id)
         }
+        return
+      }
+      // Ctrl+Alt+R reads the latest reply aloud (same handler the Electron
+      // global shortcut reaches through the robojex:action bridge)
+      if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'r') {
+        e.preventDefault()
+        storeFnsRef.current.speakLatest()
       }
     }
     window.addEventListener('keydown', onKey)

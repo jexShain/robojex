@@ -20,3 +20,8 @@ e2e/test-results*/
 
 # overnight soak runtime (scripts/soak-grd.sh)
 .soak/
+
+# local voice daemon: model trees + runtime logs (scripts/voiced-grd.sh)
+packages/voiced/models/
+packages/voiced/.voiced.log
+packages/voiced/.voiced-*.wav

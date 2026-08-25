@@ -37,5 +37,12 @@ export default defineConfig({
       reuseExistingServer: true,
       timeout: 30_000,
     },
+    {
+      command: 'node e2e/mock-voiced.mjs',
+      cwd: repoRoot,
+      port: 7690,
+      reuseExistingServer: true,
+      timeout: 15_000,
+    },
   ],
 })

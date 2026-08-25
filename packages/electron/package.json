@@ -1,7 +1,7 @@
 {
   "name": "robojex-electron",
   "productName": "RoboJex",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "description": "robojex desktop client (Electron shell + embedded ceo-core)",
   "author": "jex",
   "license": "MIT",

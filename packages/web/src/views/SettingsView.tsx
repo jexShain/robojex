@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from '../state/api'
 import { useStore } from '../state/store'
+import { readVoiceReport, writeVoiceReport, stopSpeaking } from '../state/voice'
 import type { Settings } from '../state/types'
 import { Icon, gearIcon } from '../ui/Icon'
 import type { IconName } from '../ui/Icon'
@@ -106,6 +107,10 @@ const SZH = {
     'settings.chat.notify.on': '开 · 简报落在未打开的会话时弹系统通知',
     'settings.chat.notify.off': '关 · 仅用会话徽标提醒',
     'settings.chat.notifyHint': '仅桌面版生效（浏览器环境自动跳过）',
+    'settings.chat.voice': '语音汇报（本地 TTS）',
+    'settings.chat.voice.on': '开 · jex 的回复与简报自动朗读（Kokoro 本地合成）',
+    'settings.chat.voice.off': '关 · 静音；Ctrl+Alt+R 仍可手动朗读最新回复',
+    'settings.chat.voiceHint': '需 voiced 语音服务在 127.0.0.1:7640 运行（完全离线）',
 
     'settings.butler.title': '管家',
     'settings.butler.desc': 'jex 的自主策略与挡位表。',
@@ -284,6 +289,10 @@ const SEN: Record<SKey, string> = {
   'settings.chat.notify.on': 'On · OS notification when a briefing lands in an unopened conversation',
   'settings.chat.notify.off': 'Off · in-app conversation badges only',
   'settings.chat.notifyHint': 'Desktop shell only (browsers skip it automatically)',
+  'settings.chat.voice': 'Voice reporting (local TTS)',
+  'settings.chat.voice.on': 'On · jex replies and briefings are spoken aloud (local Kokoro)',
+  'settings.chat.voice.off': 'Off · silent; Ctrl+Alt+R still reads the latest reply on demand',
+  'settings.chat.voiceHint': 'Needs the voiced daemon on 127.0.0.1:7640 (fully offline)',
 
   'settings.butler.title': 'Butler',
   'settings.butler.desc': "jex's autonomy policy and gear table.",
@@ -404,6 +413,7 @@ export const LOCAL_PREF_KEYS: readonly string[] = [
   FONTSIZE_KEY,
   ENTERSEND_KEY,
   api.NOTIFY_SYS_KEY,
+  'robojex-voice-report',
   'robojex-theme',
   'robojex-model',
   'robojex-direct',
@@ -569,6 +579,7 @@ export function SettingsView({ onClose }: { onClose(): void }) {
   const [fontsize, setFontsize] = useState<FontSizePref>(() => parseFontSize(readPref(FONTSIZE_KEY)))
   const [enterSend, setEnterSend] = useState<boolean>(() => parseEnterSend(readPref(ENTERSEND_KEY)))
   const [notifySys, setNotifySys] = useState<boolean>(() => api.readNotifySys())
+  const [voiceReport, setVoiceReport] = useState<boolean>(() => readVoiceReport())
   const [themePref, setThemePrefState] = useState<ThemePref>(() => themeSnapshot().pref)
 
   /* data-section state */
@@ -745,6 +756,12 @@ export function SettingsView({ onClose }: { onClose(): void }) {
     const next = !notifySys
     setNotifySys(next)
     writePref(api.NOTIFY_SYS_KEY, next ? '1' : '0')
+  }
+  const toggleVoiceReport = (): void => {
+    const next = !voiceReport
+    setVoiceReport(next)
+    writeVoiceReport(next)
+    if (!next) stopSpeaking() // toggling off also silences a clip mid-air
   }
   const pickTheme = (v: ThemePref): void => {
     setThemePref(v) // event bridge — same source as /theme and the palette
@@ -1075,6 +1092,19 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                     <span className="st-switch-knob" />
                   </button>
                   <span className="st-hint">{s(notifySys ? 'settings.chat.notify.on' : 'settings.chat.notify.off')}</span>
+                </Card>
+                <Card title={s('settings.chat.voice')} desc={s('settings.chat.voiceHint')}>
+                  <button
+                    type="button"
+                    className={`st-switch${voiceReport ? ' on' : ''}`}
+                    role="switch"
+                    aria-checked={voiceReport}
+                    data-testid="settings-voice-report"
+                    onClick={toggleVoiceReport}
+                  >
+                    <span className="st-switch-knob" />
+                  </button>
+                  <span className="st-hint">{s(voiceReport ? 'settings.chat.voice.on' : 'settings.chat.voice.off')}</span>
                 </Card>
               </section>
             ) : sec === 'butler' ? (
