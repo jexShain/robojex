@@ -149,12 +149,12 @@ export function createVoiceHandler({ sherpaModule, modelsDir, asrLang = ASR_LANG
           !present ? "down" : loaded ? ready : loadingP ? "loading" : "idle";
         const asr = leg(existsSync(join(ASR_DIR, "model.int8.onnx")), "sensevoice", loading.asr, !!recognizer);
         const ttsS = leg(existsSync(join(TTS_DIR, "model.onnx")), "kokoro", loading.tts, !!tts);
-        return json(res, 200, { asr: asr, tts: ttsS, hint: asr === "down" || ttsS === "down" ? "run scripts/download-voice-models.sh" : "" });
+        return json(res, 200, { asr: asr, tts: ttsS, hint: asr === "down" || ttsS === "down" ? "models missing - desktop app: Settings download button; repo: node scripts/download-voice-models.mjs <dir>" : "" });
       }
       if (url.pathname === "/asr" && req.method === "POST") {
         loadAsr();
         if (loading.asr) await loading.asr;
-        if (!recognizer) return json(res, 503, { error: "asr model missing — run scripts/download-voice-models.sh" });
+        if (!recognizer) return json(res, 503, { error: "asr model missing — models missing - desktop app: Settings download button; repo: node scripts/download-voice-models.mjs <dir>" });
         const body = await readBody(req);
         const wav = parseWav(body);
         if (!wav) return json(res, 400, { error: "body must be a 16-bit PCM mono WAV" });
@@ -169,7 +169,7 @@ export function createVoiceHandler({ sherpaModule, modelsDir, asrLang = ASR_LANG
       if (url.pathname === "/tts" && req.method === "POST") {
         loadTts();
         if (loading.tts) await loading.tts;
-        if (!tts) return json(res, 503, { error: "tts model missing — run scripts/download-voice-models.sh" });
+        if (!tts) return json(res, 503, { error: "tts model missing — models missing - desktop app: Settings download button; repo: node scripts/download-voice-models.mjs <dir>" });
         const body = await readBody(req, 64 * 1024);
         let q;
         try { q = JSON.parse(body.toString("utf8")); } catch { return json(res, 400, { error: "bad json" }); }
