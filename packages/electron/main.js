@@ -685,12 +685,13 @@ function probeVoiced(timeoutMs = 800) {
 }
 
 function voicedSidecarCandidates() {
-  // dev: the repo checkout next to this package. prod: the UNPACKED copy
-  // first — the native sherpa-onnx .node cannot dlopen from inside an asar,
-  // so electron-builder unpacks voiced + its runtime there.
+  // dev: the repo checkout next to this package. prod: the extraResources
+  // copy at <resources>/voiced (the native sherpa-onnx .node cannot dlopen
+  // from inside an asar, so the sidecar rides OUTSIDE the archive; from
+  // inside the asar, __dirname/.. IS the resources dir).
   const dirs = [];
   if (isDev) dirs.push(path.join(__dirname, '..', 'voiced'));
-  dirs.push(path.join(__dirname, '..', 'app.asar.unpacked', 'voiced'));
+  dirs.push(path.join(__dirname, '..', 'voiced')); // <resources>/voiced (prod)
   dirs.push(path.join(__dirname, 'voiced')); // non-asar layouts
   return dirs.filter((d) => fs.existsSync(path.join(d, 'src', 'index.mjs')));
 }
@@ -743,10 +744,10 @@ async function waitForUrl(url, timeoutMs) {
 async function downloadVoiceModels() {
   const cand = voicedSidecarCandidates();
   if (cand.length === 0) return { ok: false, log: 'voiced sidecar 目录缺失' };
-  // packaged: scripts/download-voice-models.mjs mapped into the app root;
+  // packaged: <resources>/scripts/download-voice-models.mjs (extraResources);
   // dev: the repo's scripts/ next to packages/
   const scriptPaths = [
-    path.join(__dirname, 'scripts', 'download-voice-models.mjs'),
+    path.join(__dirname, '..', 'scripts', 'download-voice-models.mjs'),
     path.join(__dirname, '..', '..', 'scripts', 'download-voice-models.mjs'),
   ];
   const script = scriptPaths.find((p) => fs.existsSync(p));
