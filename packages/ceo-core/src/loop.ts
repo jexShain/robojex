@@ -118,6 +118,9 @@ const KNOWN_ACTION_TYPES = new Set([
 
 export class SchedulerLoop {
   private queue: string[] = [];
+  /** the in-flight cycle's event parts — maybeAudit reads them for the trace
+   *  digest (event-kind summary); empty between cycles. */
+  private currentEventParts: string[] = [];
   private timer: NodeJS.Timeout | undefined;
   private debounce: NodeJS.Timeout | undefined;
   private wakeN = 0;
@@ -562,6 +565,7 @@ export class SchedulerLoop {
       // eco thins the patrol cadence: pure tick wakes skip unless this is the
       // Nth tick; real events (chat, gantt, tool results) always pass through
       const parts = (events ?? eventSummary.split(";")).map((s) => s.trim()).filter(Boolean);
+      this.currentEventParts = parts;
       const pureTick = parts.length > 0 && parts.every((p) => p === "tick");
       if (pureTick && gdef.patrolEvery > 0 && this.tickCount % gdef.patrolEvery !== 0) return;
       // R72 quiet skip: nothing about the world changed since the last cycle
@@ -1465,12 +1469,27 @@ A pass without an evidence note is refused. After a tool result you MUST answer 
     return parts.length ? `${prompt}\n\n# TOOL MANUALS\n${parts.join("\n\n")}` : prompt;
   }
 
+  /** Compact event-kind summary for the trace digest: "chat+tick",
+   *  "patrol_walk", "tool". Types only — chat bodies never enter the table. */
+  private pendingEventKinds(): string {
+    const seen: string[] = [];
+    for (const p of this.currentEventParts) {
+      const kind = (p.split(":")[0] || p).slice(0, 20);
+      if (!seen.includes(kind)) seen.push(kind);
+    }
+    return seen.join("+");
+  }
+
   // Books a cost batch (plus the audit review, when due) and returns the total
   // booked this call — the number the cycle frame reports.
   private async maybeAudit(u: { promptTokens: number; completionTokens: number }, actions: unknown[]): Promise<number> {
     let booked = u.promptTokens + u.completionTokens;
     this.d.budget.spend(u);
-    this.d.auditor.record({ contextDigest: `wake#${this.wakeN}`, actions, cost: booked });
+    // digest carries the wake's EVENT TYPES (chat/patrol_walk/tick/tool…):
+    // the live soak triaged whole cost mysteries from these rows, and a bare
+    // "wake#N" answers none of them (types only — chat bodies stay out)
+    const kinds = this.pendingEventKinds();
+    this.d.auditor.record({ contextDigest: `wake#${this.wakeN}${kinds ? ` ${kinds}` : ""}`, actions, cost: booked });
     if (this.d.auditor.due()) {
       const patches = await this.d.auditor.review(this.d.llm);
       this.d.budget.spend(patches.usage); // the review pass itself burns tokens — book them
