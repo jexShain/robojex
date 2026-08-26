@@ -583,9 +583,16 @@ export class SchedulerLoop {
         this.lastBoardDigest = digest;
       }
       const gearPrefix = loopPrompt(this.gearNow);
+      // R139: patrol-only wakes carry no rubric — a house LOOK is not judged
+      // against audit standards, and the auditor-appended rubric bulk (the
+      // biggest lean-context line item after the live soak itemised it) rides
+      // every triage + decide otherwise. (patrolOnly moved up from the
+      // decide build: the context needs it now.)
+      const carriers = parts.filter((s) => s !== "tick");
+      const patrolOnly = carriers.length > 0 && carriers.every((s) => s.startsWith("patrol_walk:"));
       const read = (f: string) => { try { return readFileSync(join(this.d.runtimeDir, f), "utf8"); } catch { return `(${f} missing)`; } };
       const context = this.d.ctx.build({
-        mission: read("MISSION.md"), rubric: read("RUBRIC.md"), memory: read("MEMORY.md"),
+        mission: read("MISSION.md"), rubric: patrolOnly ? "" : read("RUBRIC.md"), memory: read("MEMORY.md"),
         board: this.d.board.list(), events: [eventSummary], budgetLine: this.d.budget.line(),
       });
       // layer 1: cheap patrol triage
@@ -637,20 +644,13 @@ export class SchedulerLoop {
       const recent = this.recentCycles.length > 0
         ? `# RECENT CYCLES（你最近几轮做过的事——世界没变就不要重复做；稳定任务不要反复 verify）\n${this.recentCycles.join("\n")}`
         : "";
-      // R138 hoisted R137's patrol-only predicate: the decide tail below and
-      // the all-clear gate at the bottom share one definition. parts.every
-      // alone is the correct test — R137's `|| /^patrol_walk:/` prefix regex
-      // wrongly captured MIXED wakes (patrol+chat), which would both strip
-      // the chat reply context and let the gate suppress a real answer.
-      // "tick" is transparent: the tick interval and pumpGantt fire together,
-      // so every patrol_walk ALWAYS lands in the same debounce window as a
-      // tick — without filtering it, patrolOnly is never true and both the
-      // lean tail and the all-clear gate silently no-op (live soak proof:
-      // 23:14 patrol+tick wake at 8,334 tok WITH the full tail, post-R138).
-      // R138c: parts now comes from the event ARRAY (queue elements), so a
-      // ";" inside an event body no longer splits it into fake carriers.
-      const carriers = parts.filter((s) => s !== "tick");
-      const patrolOnly = carriers.length > 0 && carriers.every((s) => s.startsWith("patrol_walk:"));
+      // (R138/R138b/R138c/R139: the patrol-only predicate lives at the
+      // context build above — the lean tail below, the all-clear gate at the
+      // bottom, and the rubric drop all share the one hoisted definition.
+      // R137's `|| /^patrol_walk:/` prefix regex wrongly captured MIXED
+      // wakes (patrol+chat); parts.every over tick-filtered carriers is the
+      // correct test, and parts now come from the event ARRAY so a ";" inside
+      // an event body no longer splits it into fake carriers.)
       // R138 lean patrol decide: a patrol-only wake pays for a house LOOK,
       // not a staffing decision — the spawn-oriented tail (agent registry +
       // verified docs, stats, manuals, scout inventory, tentacles) rides

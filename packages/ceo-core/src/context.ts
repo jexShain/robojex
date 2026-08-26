@@ -45,7 +45,10 @@ export class ContextAssembler {
   build(parts: { mission: string; rubric: string; memory: string; board: Task[]; events: string[]; budgetLine?: string }): string {
     const sections: string[] = [];
     sections.push(`# MISSION\n${this.doc(parts.mission)}`);
-    sections.push(`# RUBRIC (audit standards)\n${this.doc(parts.rubric)}`);
+    // an empty rubric skips the section entirely — patrol-only wakes pass ""
+    // (a house LOOK is not judged against audit standards; the rubric's
+    // auditor-appended bulk was the biggest lean-context line item)
+    if (parts.rubric) sections.push(`# RUBRIC (audit standards)\n${this.doc(parts.rubric)}`);
     sections.push(`# NEW EVENTS SINCE LAST WAKE\n${this.eventsBlock(parts.events)}`);
     sections.push(`# TASK BOARD\n${this.boardBlock(parts.board) || "(empty)"}`);
     if (parts.budgetLine) sections.push(`# BUDGET\n${parts.budgetLine}`);

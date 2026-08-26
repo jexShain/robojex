@@ -64,6 +64,7 @@ describe("R138 lean patrol decide", () => {
     expect(user).not.toContain("# AVAILABLE AGENTS");       // registry block dropped
     expect(user).not.toContain("# AGENTS (verified on this system)"); // verified docs dropped
     expect(user).not.toContain("# AVAILABLE TOOLS");        // scout inventory dropped
+    expect(user).not.toContain("# RUBRIC (audit standards)"); // R139: a house LOOK isn't audited
     expect(user).toContain("# BUILTIN TOOLS");              // but the LOOK surface stays
     expect(user).toContain("# NOW:");                       // clock stays (anomaly judgment)
     expect(user).toContain("patrol_walk:");                 // the wake itself
@@ -76,6 +77,7 @@ describe("R138 lean patrol decide", () => {
     const user = String(decideCalls[0][1].content);
     expect(user).toContain("# AVAILABLE AGENTS");
     expect(user).toContain("# AGENTS (verified on this system)");
+    expect(user).toContain("# RUBRIC (audit standards)"); // staffing wakes ARE audited
     expect(user).toContain("# BUILTIN TOOLS");
   });
 
