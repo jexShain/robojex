@@ -1020,3 +1020,25 @@ test.describe('RoboJex desktop', () => {
     expect(spoken.text).toContain('收到编排指令')
     await shot(page, '48-voice-readback')
   })
+
+  // 49 (voice settings card, 0.2.18): the 语音汇报 card probes the daemon
+  // on mount and renders the leg status — ready when the mock answers, and
+  // the download button never shows in a plain browser (no desktop bridge).
+  test('49 voice: settings card shows daemon health, no download button in browser', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('robojex-voiced-url', 'http://127.0.0.1:7690')
+    })
+    await page.goto('/')
+    await page.getByTestId('conn-status').waitFor()
+    await page.getByTestId('settings-open').click()
+    await page.locator('[data-testid="settings-nav-item"][data-sec="chat"]').click()
+    const health = page.getByTestId('voice-health')
+    await expect(health).toBeVisible()
+    // mock-voiced reports both legs loaded → the ready line names them
+    await expect(health).toContainText('sensevoice', { timeout: 5_000 })
+    await expect(health).toContainText('kokoro')
+    // the ~2GB download button needs the Electron bridge — absent in a
+    // plain browser, so it must not render even with legs reported up
+    await expect(page.getByTestId('voice-download')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+  })

@@ -28,6 +28,13 @@ tar cf - \
   . | (cd "$WIN" && tar xf -)
 
 cd "$WIN"
+# the voice sidecar's native runtime must exist on the Windows side (its
+# Linux-built twin is excluded with node_modules); once installed it persists
+# across releases
+if [ ! -d node_modules/sherpa-onnx-node ]; then
+  echo "▶ npm install sherpa-onnx-node (voice sidecar runtime)"
+  npm install --no-save sherpa-onnx-node@1.13.6 || echo "  (install failed — package will ship without the voice sidecar)" >&2
+fi
 echo "▶ electron:build (npmmirror env; log: build-$VER.log)"
 export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/

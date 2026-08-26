@@ -42,6 +42,26 @@ export function writeVoiceReport(on: boolean): void {
 let currentAudio: HTMLAudioElement | null = null
 let currentUrl = ''
 
+export interface VoiceHealth {
+  /** "sensevoice" | "loading" | "idle" | "down" — same vocabulary per leg */
+  asr: string
+  tts: string
+  hint: string
+}
+
+/** Probe the daemon once (settings card status line); null = unreachable. */
+export async function probeVoiceHealth(): Promise<VoiceHealth | null> {
+  if (typeof window === 'undefined' || typeof fetch === 'undefined') return null
+  try {
+    const r = await fetch(`${voicedUrl()}/health`, { signal: AbortSignal.timeout(2500) })
+    if (!r.ok) return null
+    const h = (await r.json()) as Partial<VoiceHealth>
+    return { asr: String(h.asr ?? 'down'), tts: String(h.tts ?? 'down'), hint: String(h.hint ?? '') }
+  } catch {
+    return null
+  }
+}
+
 /** Stop any in-flight playback (settings toggle off, app teardown). */
 export function stopSpeaking(): void {
   if (currentAudio) {

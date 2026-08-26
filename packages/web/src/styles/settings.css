@@ -592,6 +592,24 @@ body[data-fontsize='large'] .st-modal {
 }
 
 /* ── danger buttons (data section) ── */
+.st-action {
+  align-self: flex-start;
+  padding: 7px 16px;
+  border: 1px solid var(--dsw-alias-border-accent-primary);
+  border-radius: var(--rj-radius-sm);
+  color: var(--dsw-alias-state-accent-primary, #5686fe);
+  font-size: var(--st-font);
+  font-weight: 500;
+  transition: background var(--rj-duration-fast) var(--rj-ease-smooth);
+}
+.st-action:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-secondary);
+}
+.st-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .st-danger {
   align-self: flex-start;
   padding: 7px 16px;

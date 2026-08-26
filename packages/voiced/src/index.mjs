@@ -18,8 +18,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { parseWav, pcmWav } from "./wav.mjs";
+import { parseModelsDir } from "./config.mjs";
 
-export { parseWav, pcmWav };
+export { parseWav, pcmWav, parseModelsDir };
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url))); // packages/voiced
 const MODELS = join(ROOT, "models");
@@ -210,8 +211,11 @@ if (isMain) {
   const require = createRequire(import.meta.url);
   const sherpa = require("sherpa-onnx-node");
   const port = Number(process.argv.includes("--port") ? process.argv[process.argv.indexOf("--port") + 1] : process.env.VOICED_PORT ?? 7640);
-  const server = http.createServer(createVoiceHandler({ sherpaModule: sherpa, modelsDir: MODELS }));
+  // the packaged Windows sidecar keeps its 2GB model trees OUT of the app
+  // dir — the Electron shell passes --models %APPDATA%/RoboJex/voiced-models
+  const modelsDir = parseModelsDir(process.argv, process.env, MODELS);
+  const server = http.createServer(createVoiceHandler({ sherpaModule: sherpa, modelsDir }));
   server.listen(port, "127.0.0.1", () => {
-    console.log(`[voiced] http://127.0.0.1:${port}  (asr: sensevoice, tts: kokoro — lazy)`);
+    console.log(`[voiced] http://127.0.0.1:${port} models=${modelsDir} (asr: sensevoice, tts: kokoro — lazy)`);
   });
 }

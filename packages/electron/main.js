@@ -30,6 +30,7 @@ const {
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const isDev = !app.isPackaged;
@@ -658,6 +659,115 @@ function registerShortcuts() {
   if (!ok4) console.warn('[robojex] Ctrl+Alt+R 注册失败（可能被其他应用占用）');
 }
 
+/* ─────────────────── voiced sidecar (SPEC-VOICE) ───────────────────
+ * The voice daemon is a plain node process: dev runs the repo checkout,
+ * the packaged app ships packages/voiced/src + sherpa-onnx-node next to the
+ * asar (unpacked — native .node binaries) and %APPDATA% holds the 2GB model
+ * trees. Boot order: probe :7640; if nothing answers and a local voiced
+ * tree exists, spawn it detached and bound-wait; a probeable external
+ * daemon (e.g. the WSL one) wins without a fight. Failure is silent except
+ * a one-line log — the pill's err state is the user-facing surface. */
+
+const voicedRuntime = {
+  /** @type {import('child_process').ChildProcess | null} */
+  proc: null,
+  spawned: false,
+};
+
+function voicedHealthUrl() {
+  return `${VOICED_URL}/health`;
+}
+
+function probeVoiced(timeoutMs = 800) {
+  return fetch(voicedHealthUrl(), { signal: AbortSignal.timeout(timeoutMs) })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+}
+
+function voicedSidecarCandidates() {
+  // dev: the repo checkout next to this package. prod: the UNPACKED copy
+  // first — the native sherpa-onnx .node cannot dlopen from inside an asar,
+  // so electron-builder unpacks voiced + its runtime there.
+  const dirs = [];
+  if (isDev) dirs.push(path.join(__dirname, '..', 'voiced'));
+  dirs.push(path.join(__dirname, '..', 'app.asar.unpacked', 'voiced'));
+  dirs.push(path.join(__dirname, 'voiced')); // non-asar layouts
+  return dirs.filter((d) => fs.existsSync(path.join(d, 'src', 'index.mjs')));
+}
+
+function modelsDirFor(dir) {
+  if (isDev) return path.join(dir, 'models'); // repo keeps models beside source
+  return path.join(app.getPath('userData'), 'voiced-models'); // %APPDATA%/RoboJex
+}
+
+async function ensureVoiced() {
+  if (await probeVoiced()) {
+    console.log('[robojex] voiced 已在运行（外部实例）');
+    return;
+  }
+  const cand = voicedSidecarCandidates();
+  if (cand.length === 0) {
+    console.warn('[robojex] 未找到 voiced sidecar 源码目录 — 语音功能依赖外部 :7640 服务');
+    return;
+  }
+  const dir = cand[0];
+  const modelsDir = modelsDirFor(dir);
+  voicedRuntime.spawned = true;
+  try {
+    voicedRuntime.proc = spawn(process.execPath, [
+      path.join(dir, 'src', 'index.mjs'), '--models', modelsDir,
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, // execPath is Electron
+    });
+    voicedRuntime.proc.unref();
+    const up = await waitForUrl(voicedHealthUrl(), 8_000);
+    console.log(up ? `[robojex] voiced sidecar 已启动（models: ${modelsDir}）` : '[robojex] voiced sidecar 启动超时（模型缺失？）');
+  } catch (err) {
+    console.warn('[robojex] voiced sidecar 启动失败：', err instanceof Error ? err.message : err);
+  }
+}
+
+async function waitForUrl(url, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await probeVoiced(500)) return true; // eslint-disable-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 300)); // eslint-disable-line no-await-in-loop
+  }
+  return false;
+}
+
+/** Download the ~2GB model trees into the sidecar's models dir (settings ›
+ *  聊天 › 语音汇报 下载按钮). Resolves { ok, log } — the renderer toasts. */
+async function downloadVoiceModels() {
+  const cand = voicedSidecarCandidates();
+  if (cand.length === 0) return { ok: false, log: 'voiced sidecar 目录缺失' };
+  // packaged: scripts/download-voice-models.mjs mapped into the app root;
+  // dev: the repo's scripts/ next to packages/
+  const scriptPaths = [
+    path.join(__dirname, 'scripts', 'download-voice-models.mjs'),
+    path.join(__dirname, '..', '..', 'scripts', 'download-voice-models.mjs'),
+  ];
+  const script = scriptPaths.find((p) => fs.existsSync(p));
+  if (!script) return { ok: false, log: '下载脚本缺失' };
+  const dir = modelsDirFor(cand[0]);
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [script, dir], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+    let tail = '';
+    const keep = (d) => { tail = (tail + String(d)).slice(-1_500); };
+    child.stdout.on('data', keep);
+    child.stderr.on('data', keep);
+    child.on('error', (e) => resolve({ ok: false, log: String(e) }));
+    child.on('close', (code) => {
+      void ensureVoiced(); // models may have just landed — bring the daemon up
+      resolve({ ok: code === 0, log: tail || `exit ${code}` });
+    });
+  });
+}
+
 /* ─────────────────── embedded ceo-core ─────────────────── */
 
 function resolveRuntimeDir() {
@@ -821,6 +931,9 @@ function registerIpc() {
       hideVoicePillSoon(1800);
     }
   });
+  // settings › 聊天 › 语音汇报: fetch the ~2GB model trees (long-running; the
+  // renderer polls /health to flip the card to ready)
+  ipcMain.handle('voice:download-models', () => downloadVoiceModels());
 }
 
 /* ─────────────────── app lifecycle ─────────────────── */
@@ -842,6 +955,10 @@ app.on('before-quit', (event) => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   tray?.destroy(); // release the indicator before the process goes away
+  // the voice sidecar is detached; take it with us when we spawned it
+  if (voicedRuntime.proc && !voicedRuntime.proc.killed) {
+    try { voicedRuntime.proc.kill(); } catch { /* already gone */ }
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -878,6 +995,7 @@ app.whenReady().then(async () => {
     registerShortcuts();
     if (backend.status === 'down') notifyBackendDown();
   }
+  void ensureVoiced(); // voice daemon: never blocks first paint
 }).catch((err) => {
   console.error('[robojex] 启动失败：', err);
   app.quit();

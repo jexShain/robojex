@@ -60,6 +60,10 @@ contextBridge.exposeInMainWorld('robojex', {
     event: (kind) => ipcRenderer.send('voice:event', kind),
   },
 
+  // settings › 聊天: fetch the ~2GB local voice model trees (sidecar boot
+  // follows automatically); resolves { ok, log }
+  downloadVoiceModels: () => ipcRenderer.invoke('voice:download-models'),
+
   // embedded ceo-core failed to boot; payload: { message }
   onBackendDown: (cb) => subscribe('robojex:backend-down', cb),
 

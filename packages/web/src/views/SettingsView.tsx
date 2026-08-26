@@ -12,7 +12,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from '../state/api'
 import { useStore } from '../state/store'
-import { readVoiceReport, writeVoiceReport, stopSpeaking } from '../state/voice'
+import { readVoiceReport, writeVoiceReport, stopSpeaking, probeVoiceHealth } from '../state/voice'
+import type { VoiceHealth } from '../state/voice'
 import type { Settings } from '../state/types'
 import { Icon, gearIcon } from '../ui/Icon'
 import type { IconName } from '../ui/Icon'
@@ -110,7 +111,14 @@ const SZH = {
     'settings.chat.voice': '语音汇报（本地 TTS）',
     'settings.chat.voice.on': '开 · jex 的回复与简报自动朗读（Kokoro 本地合成）',
     'settings.chat.voice.off': '关 · 静音；Ctrl+Alt+R 仍可手动朗读最新回复',
-    'settings.chat.voiceHint': '需 voiced 语音服务在 127.0.0.1:7640 运行（完全离线）',
+    'settings.chat.voiceHint': '完全离线；语音服务 voiced 运行于 127.0.0.1:7640',
+    'settings.chat.voice.ready': '语音服务就绪 · ASR {asr} / TTS {tts}',
+    'settings.chat.voice.down': '语音模型未就绪（下载约 2GB，装完即完全离线）',
+    'settings.chat.voice.offline': '语音服务未连接 — 桌面版会自动拉起，稍后重开设置查看',
+    'settings.chat.voice.download': '下载语音模型（约 2GB）',
+    'settings.chat.voice.downloading': '后台下载中…完成后自动就绪',
+    'settings.chat.voice.downloadDone': '模型就绪 ✓',
+    'settings.chat.voice.downloadFailed': '下载失败：{log}',
 
     'settings.butler.title': '管家',
     'settings.butler.desc': 'jex 的自主策略与挡位表。',
@@ -292,7 +300,14 @@ const SEN: Record<SKey, string> = {
   'settings.chat.voice': 'Voice reporting (local TTS)',
   'settings.chat.voice.on': 'On · jex replies and briefings are spoken aloud (local Kokoro)',
   'settings.chat.voice.off': 'Off · silent; Ctrl+Alt+R still reads the latest reply on demand',
-  'settings.chat.voiceHint': 'Needs the voiced daemon on 127.0.0.1:7640 (fully offline)',
+  'settings.chat.voiceHint': 'Fully offline; the voiced daemon runs on 127.0.0.1:7640',
+  'settings.chat.voice.ready': 'Voice service ready · ASR {asr} / TTS {tts}',
+  'settings.chat.voice.down': 'Voice models missing (a ~2GB download buys full offline voice)',
+  'settings.chat.voice.offline': 'Voice service unreachable — the desktop shell auto-starts it; reopen settings later',
+  'settings.chat.voice.download': 'Download voice models (~2GB)',
+  'settings.chat.voice.downloading': 'Downloading in the background…',
+  'settings.chat.voice.downloadDone': 'Models ready ✓',
+  'settings.chat.voice.downloadFailed': 'Download failed: {log}',
 
   'settings.butler.title': 'Butler',
   'settings.butler.desc': "jex's autonomy policy and gear table.",
@@ -580,6 +595,8 @@ export function SettingsView({ onClose }: { onClose(): void }) {
   const [enterSend, setEnterSend] = useState<boolean>(() => parseEnterSend(readPref(ENTERSEND_KEY)))
   const [notifySys, setNotifySys] = useState<boolean>(() => api.readNotifySys())
   const [voiceReport, setVoiceReport] = useState<boolean>(() => readVoiceReport())
+  const [voiceHealth, setVoiceHealth] = useState<VoiceHealth | null>(null)
+  const [voiceDl, setVoiceDl] = useState<'idle' | 'running' | 'done' | 'failed'>('idle')
   const [themePref, setThemePrefState] = useState<ThemePref>(() => themeSnapshot().pref)
 
   /* data-section state */
@@ -762,6 +779,39 @@ export function SettingsView({ onClose }: { onClose(): void }) {
     setVoiceReport(next)
     writeVoiceReport(next)
     if (!next) stopSpeaking() // toggling off also silences a clip mid-air
+  }
+
+  // probe the voice daemon on mount (the modal only lives while open; the
+  // status line is the user's only window into the sidecar's world)
+  useEffect(() => {
+    let alive = true
+    void probeVoiceHealth().then((h) => {
+      if (alive) setVoiceHealth(h)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const downloadVoiceModels = (): void => {
+    const w = window as unknown as {
+      robojex?: { downloadVoiceModels?: () => Promise<{ ok: boolean; log: string }> }
+    }
+    if (typeof w.robojex?.downloadVoiceModels !== 'function') return
+    setVoiceDl('running')
+    void w.robojex.downloadVoiceModels().then(
+      (r) => {
+        setVoiceDl(r.ok ? 'done' : 'failed')
+        showToast(r.ok ? 'ok' : 'err', r.ok ? s('settings.chat.voice.downloadDone') : fmt('settings.chat.voice.downloadFailed', { log: r.log.slice(0, 200) }))
+        void probeVoiceHealth().then((h) => setVoiceHealth(h))
+      },
+      () => setVoiceDl('failed'),
+    )
+  }
+  const voiceStatusKey = (): 'settings.chat.voice.offline' | 'settings.chat.voice.down' | 'settings.chat.voice.ready' => {
+    if (voiceHealth === null) return 'settings.chat.voice.offline'
+    if (voiceHealth.asr === 'down' || voiceHealth.tts === 'down') return 'settings.chat.voice.down'
+    return 'settings.chat.voice.ready'
   }
   const pickTheme = (v: ThemePref): void => {
     setThemePref(v) // event bridge — same source as /theme and the palette
@@ -1105,6 +1155,34 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                     <span className="st-switch-knob" />
                   </button>
                   <span className="st-hint">{s(voiceReport ? 'settings.chat.voice.on' : 'settings.chat.voice.off')}</span>
+                  <span className="st-hint" data-testid="voice-health">
+                    {voiceStatusKey() === 'settings.chat.voice.ready'
+                      ? fmt('settings.chat.voice.ready', { asr: voiceHealth!.asr, tts: voiceHealth!.tts })
+                      : s(voiceStatusKey())}
+                  </span>
+                  {(() => {
+                    // the download button needs the desktop bridge; browsers
+                    // host their own voiced (or none) and never see it
+                    const w = window as unknown as { robojex?: { downloadVoiceModels?: unknown } }
+                    const bridge = typeof w.robojex?.downloadVoiceModels === 'function'
+                    const legsDown = voiceHealth !== null && (voiceHealth.asr === 'down' || voiceHealth.tts === 'down')
+                    if (!bridge || !legsDown) return null
+                    return (
+                      <button
+                        type="button"
+                        className="st-action"
+                        data-testid="voice-download"
+                        disabled={voiceDl === 'running'}
+                        onClick={downloadVoiceModels}
+                      >
+                        {voiceDl === 'running'
+                          ? s('settings.chat.voice.downloading')
+                          : voiceDl === 'done'
+                            ? s('settings.chat.voice.downloadDone')
+                            : s('settings.chat.voice.download')}
+                      </button>
+                    )
+                  })()}
                 </Card>
               </section>
             ) : sec === 'butler' ? (

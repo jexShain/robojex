@@ -24,6 +24,12 @@ publish:
   provider: generic
   url: ''
 asar: true
+# native .node binaries cannot dlopen from inside an asar — the voice
+# sidecar's sherpa-onnx runtime (and the sidecar source itself, spawned as a
+# plain node process) must live as real files next to the archive
+asarUnpack:
+  - voiced/**
+  - node_modules/sherpa-onnx-node/**
 files:
   # electron shell
   - main.js
@@ -33,6 +39,9 @@ files:
   - voice.js
   - package.json
   - icon.png
+  # first-run model fetcher (settings › 聊天 › 语音汇报 下载按钮)
+  - from: ../../scripts/download-voice-models.mjs
+    to: scripts/download-voice-models.mjs
   # workspace traversal hoists the ROOT package.json production deps (react,
   # fonts, highlight.js — web-only, already bundled by vite) into the asar;
   # prune the auto-collected node_modules (the mapped ws below is a separate
@@ -57,6 +66,19 @@ files:
     filter:
       - '**/*'
       - '!node_modules/**' # ws has no transitive runtime deps
+  # voiced voice sidecar (SPEC-VOICE 0.2.18): source + the native runtime.
+  # The 2GB model trees stay OUT of the installer — downloaded on demand
+  # into %APPDATA%/RoboJex/voiced-models via scripts/download-voice-models
+  - from: ../voiced
+    to: voiced
+    filter:
+      - src/**/*
+      - package.json
+  - from: ../../node_modules/sherpa-onnx-node
+    to: node_modules/sherpa-onnx-node
+    filter:
+      - '**/*'
+      - '!node_modules/**'
 win:
   target:
     - nsis

@@ -10,6 +10,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWav, pcmWav } from "../src/wav.mjs";
+import { parseModelsDir } from "../src/config.mjs";
 import { createVoiceHandler } from "../src/index.mjs";
 
 describe("pcmWav", () => {
@@ -152,3 +153,17 @@ async function startFake() {
   const addr = server.address();
   return { server, url: `http://127.0.0.1:${addr.port}`, sherpa, dir };
 }
+
+describe("parseModelsDir", () => {
+  it("--models wins over env over default", () => {
+    expect(parseModelsDir(["node", "index.mjs", "--models", "/x/y"], {}, "/dflt")).toBe("/x/y");
+    expect(parseModelsDir(["node", "index.mjs"], { VOICED_MODELS_DIR: "/env/dir" }, "/dflt")).toBe("/env/dir");
+    // --models beats a set env (the Electron shell always passes --models)
+    expect(parseModelsDir(["--models", "/flag"], { VOICED_MODELS_DIR: "/env/dir" }, "/dflt")).toBe("/flag");
+    expect(parseModelsDir(["node"], {}, "/dflt")).toBe("/dflt");
+  });
+
+  it("a --models flag without a value falls through to env", () => {
+    expect(parseModelsDir(["--models"], { VOICED_MODELS_DIR: "/env/dir" }, "/dflt")).toBe("/env/dir");
+  });
+});
