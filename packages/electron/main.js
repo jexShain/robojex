@@ -744,10 +744,10 @@ async function waitForUrl(url, timeoutMs) {
 async function downloadVoiceModels() {
   const cand = voicedSidecarCandidates();
   if (cand.length === 0) return { ok: false, log: 'voiced sidecar 目录缺失' };
-  // packaged: <resources>/scripts/download-voice-models.mjs (extraResources);
+  // packaged: <resources>/download-voice-models.mjs (extraResources root);
   // dev: the repo's scripts/ next to packages/
   const scriptPaths = [
-    path.join(__dirname, '..', 'scripts', 'download-voice-models.mjs'),
+    path.join(__dirname, '..', 'download-voice-models.mjs'),
     path.join(__dirname, '..', '..', 'scripts', 'download-voice-models.mjs'),
   ];
   const script = scriptPaths.find((p) => fs.existsSync(p));

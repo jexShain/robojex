@@ -63,24 +63,28 @@ files:
 # is spawned as a plain node process, and node resolution from resources/
 # voiced/src walks up to resources/node_modules naturally. The 2GB model
 # trees stay out of the installer — downloaded on demand into
-# %APPDATA%/RoboJex/voiced-models.
+# %APPDATA%/RoboJex/voiced-models. NOTE: unlike `files`, extraResources
+# from-paths resolve against the PROJECT root (the workspace root electron-
+# builder detects via the lock file), NOT the app dir.
 extraResources:
-  - from: ../voiced
+  - from: packages/voiced
     to: voiced
     filter:
       - src/**/*
       - package.json
-  - from: ../../scripts/download-voice-models.mjs
-    to: scripts
+  # a single-file `from` + directory-shaped `to` renames the FILE (not a
+  # containing dir) — land it as an explicit root-level name instead
+  - from: scripts/download-voice-models.mjs
+    to: download-voice-models.mjs
   # the JS wrapper + the platform binary package it requires (npm hoists the
   # optional platform dep as a SIBLING — shipping only sherpa-onnx-node
   # would carry no .node file at all)
-  - from: ../../node_modules/sherpa-onnx-node
+  - from: node_modules/sherpa-onnx-node
     to: node_modules/sherpa-onnx-node
     filter:
       - '**/*'
       - '!node_modules/**'
-  - from: ../../node_modules/sherpa-onnx-win-x64
+  - from: node_modules/sherpa-onnx-win-x64
     to: node_modules/sherpa-onnx-win-x64
     filter:
       - '**/*'
