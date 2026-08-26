@@ -36,6 +36,17 @@ case "${1:-status}" in
       echo "no soak process left"
     fi
     rm -f "$PIDFILE"
+    # pidfile-orphaned daemons (started before this script existed, or by a
+    # racing second session) survive the kill above holding the port — the
+    # next start then EADDRINUSEs into a dual-daemon interleaved ledger
+    # (live-soak incident 2026-08-27: two loops wrote one sqlite for hours).
+    # Hunt the port owner and take it down too.
+    owner=$(ss -tlnp 2>/dev/null | awk '/:7630 /{for(i=1;i<=NF;i++) if($i ~ /pid=/) {sub("pid=","",$i); sub(",.*","",$i); print $i}}' | head -1)
+    if [ -n "$owner" ]; then
+      echo "port 7630 still held by orphan pid $owner — killing"
+      kill "$owner" 2>/dev/null; sleep 1
+      kill -9 "$owner" 2>/dev/null || true
+    fi
     ;;
   status)
     code=$(curl -s -o /dev/null -w '%{http_code}' "$API")
