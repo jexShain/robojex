@@ -92,10 +92,22 @@ function relTime(ts: number, now = Date.now()): string {
 }
 
 // R137b all-clear sniff: a patrol reply is suppressible noise ONLY when it is
-// short AND speaks pure "everything is fine" — no concern keywords, no
+// short AND speaks pure "everything is fine" — no concern keywords, no real
+// substance. A genuine finding (disk SMART warning, thermal anomaly, cert
+// expiry) has length or subject matter; it must reach the human.
 const ALL_CLEAR_RE = /正常|安好|良好|平稳|稳定|没问题|无异常|没有异常|没有发现|未发现|all clear|all normal|no issues|nothing (unusual|to report|wrong)/i;
-// cert) has length or subject matter; it must reach the human.
 const CONCERN_RE = /异常|警告|告警|失败|错误|风险|磁盘|空间|温度|负载|内存|进程|崩溃|超时|泄漏|满|不足|过期|到期|掉线|断开|warning|error|fail|critical|full|low/i;
+// R140: the butler NAMES what it checked ("磁盘、负载正常") — those subject
+// nouns are themselves CONCERN_RE words, so without stripping the verdict
+// phrase the most natural house-LOOK reply leaks past the gate (soak 08-26
+// wake#62: "[静默健康巡检] 磁盘、负载正常，无异常…" reached the human). A real
+// finding never says "<subject>正常" — it says 磁盘 92% or 内存不足, whose
+// subject stays bare and keeps tripping the concern sniff.
+const HOUSE_SUBJECT = "(?:磁盘|空间|温度|负载|内存|进程|网络|服务|系统)";
+const CLEAN_VERDICT_RE = new RegExp(
+  `${HOUSE_SUBJECT}(?:[、，,和与及]\\s*${HOUSE_SUBJECT})*(?:都|均)?(?:正常|平稳|稳定|良好|安好|充足|没问题)`,
+  "g",
+);
 function isBareAllClear(text: string): boolean {
   const t = text.trim();
   if (t.length === 0 || t.length > 60) return false; // verbosity is signal: a finding explains itself
@@ -103,7 +115,9 @@ function isBareAllClear(text: string): boolean {
   // strip NEGATED mentions ("无异常", "no issues") before sniffing concerns:
   // the negation phrase itself contains the concern word, so a bare substring
   // test would reject the purest all-clear of all
-  const stripped = t.replace(/(无|没有|未|不)(?:异常|问题|警告|告警|错误|风险|事|warning|error|issues?)/gi, "");
+  const stripped = t
+    .replace(/(无|没有|未|不)(?:异常|问题|警告|告警|错误|风险|事|warning|error|issues?)/gi, "")
+    .replace(CLEAN_VERDICT_RE, "");
   return !CONCERN_RE.test(stripped);
 }
 

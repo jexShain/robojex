@@ -1449,4 +1449,17 @@ test("R137: a patrol-only wake whose entire output is one bare reply gets suppre
   decideActions = [{ type: "reply", text: "一切正常，无异常。" }];
   await loop.runOnce("patrol_walk: quick health round");
   expect(chatOut.mock.calls.some((c) => String(c[1]).includes("无异常"))).toBe(false);
+
+  // R140: the butler's house-LOOK phrasing NAMES what it checked ("磁盘、负载
+  // 正常") — the subject nouns are themselves concern words, so before the
+  // verdict strip this exact soak leak (08-26 wake#62) reached the human
+  decideActions = [{ type: "reply", text: "[静默健康巡检] 磁盘、负载正常，无异常。深夜无用户请求，保持安静。" }];
+  await loop.runOnce("patrol_walk: quick health round");
+  expect(chatOut.mock.calls.some((c) => String(c[1]).includes("静默健康巡检"))).toBe(false);
+
+  // …but a real finding keeps a BARE subject: "温度正常" strips, "磁盘错误" 磁盘
+  // has no adjacent verdict and keeps tripping the concern sniff
+  decideActions = [{ type: "reply", text: "温度正常但磁盘错误率上升。" }];
+  await loop.runOnce("patrol_walk: quick health round");
+  expect(chatOut.mock.calls.some((c) => String(c[1]).includes("磁盘错误率"))).toBe(true);
 });
