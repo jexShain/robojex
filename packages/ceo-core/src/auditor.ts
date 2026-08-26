@@ -29,7 +29,7 @@ export class Auditor {
     const rubric = readFileSync(join(this.opts.runtimeDir, "RUBRIC.md"), "utf8");
     const dump = this.traces.map((t, i) => `## decision ${i + 1}\ncontext: ${t.contextDigest}\nactions: ${JSON.stringify(t.actions)}\ncost: ${t.cost}`).join("\n\n");
     const r = await llm.chat("decide", [
-      { role: "system", content: "You are the meta-learning auditor. Score past decisions against the RUBRIC. Find recurring low-quality decision patterns. Output EXACTLY three sections:\nRUBRIC PATCH: <new/changed rubric lines to append>\nMEMORY PATCH: <durable facts to append>\nMISSION NOTE: <one line: mission drift observed, or 'none'>" },
+      { role: "system", content: "You are the meta-learning auditor. Score past decisions against the RUBRIC. Find recurring low-quality decision patterns. Output EXACTLY three sections:\nRUBRIC PATCH: <new/changed rubric lines to append>\nMEMORY PATCH: <durable facts to append>\nMISSION NOTE: <one line: mission drift observed, or 'none'>\n\n# COST FLOORS (design constants — a wake AT these costs is healthy, never a violation):\n- idle patrol wake, no action: ~2.0-2.1k tok (the triage call itself carries the context; this is the system's idle floor, not hidden work)\n- morning briefing (08:00-11:00 window, once daily): ~8k tok, MANDATED deliverable — never 'unrequested'\n- agents_rescan wake (every 6h): ~8k tok full-context scan mandate\nDo NOT write rubric rules demanding costs below these floors, and do NOT re-flag wakes that sit AT a floor — flag only deviations ABOVE them without new work to show for it." },
       { role: "user", content: `# CURRENT RUBRIC\n${rubric}\n\n# DECISION TRACES\n${dump}` },
     ], { maxTokens: 1500 });
     const c = r.content;
