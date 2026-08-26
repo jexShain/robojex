@@ -5,7 +5,12 @@
 // parses any well-formed RIFF and re-wraps TTS samples the same way.
 
 import { describe, expect, it } from "vitest";
+import { createServer } from "node:http";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseWav, pcmWav } from "../src/wav.mjs";
+import { createVoiceHandler } from "../src/index.mjs";
 
 describe("pcmWav", () => {
   it("writes a canonical 44-byte header", () => {
@@ -66,3 +71,84 @@ describe("parseWav", () => {
     expect(parseWav(bits32)).toBeNull();
   });
 });
+
+describe("voice daemon HTTP surface (createVoiceHandler)", () => {
+  it("/tts 200 WAV carries the CORS headers the renderer needs", async () => {
+    // regression: the success body used to be the ONLY response without
+    // access-control-allow-origin — the cross-origin renderer fetch (dev
+    // vite :5173, prod core :7620) could not read it, silently killing
+    // every voice report against the real daemon
+    const { server, url, sherpa } = await startFake();
+    try {
+      const r = await fetch(`${url}/tts`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "一切正常", sid: 0 }),
+      });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("access-control-allow-origin")).toBe("*");
+      expect(sherpa.ttsCalls).toBe(1);
+      const body = Buffer.from(await r.arrayBuffer());
+      expect(body.toString("ascii", 0, 4)).toBe("RIFF");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("a failed engine load retries on the next request (no permanent wedge)", async () => {
+    // regression: a throwing construct left a rejected promise in loading.tts
+    // forever — every later /tts rethrew the stale error (500) and /health
+    // stayed "loading"; only a daemon restart recovered
+    const { server, url, sherpa } = await startFake();
+    try {
+      sherpa.failNextTts = new Error("corrupt model");
+      const r1 = await fetch(`${url}/tts`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "hi" }),
+      });
+      expect(r1.status).toBe(500);
+
+      const r2 = await fetch(`${url}/tts`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "hi" }),
+      });
+      expect(r2.status).toBe(200); // the retry actually re-constructed the engine
+      expect(sherpa.ttsCalls).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+/** Fake sherpa + tmp models dir + listening server on an ephemeral port. */
+async function startFake() {
+  const dir = mkdtempSync(join(tmpdir(), "voiced-http-"));
+  mkdirSync(join(dir, "asr", "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"), { recursive: true });
+  const ttsDir = join(dir, "tts", "kokoro-multi-lang-v1_1");
+  mkdirSync(ttsDir, { recursive: true });
+  writeFileSync(join(ttsDir, "model.onnx"), "fake"); // existsSync gate only
+  const sherpa = {
+    ttsCalls: 0,
+    failNextTts: null as Error | null,
+    OfflineTts: class {
+      constructor() {
+        const err = sherpa.failNextTts;
+        sherpa.failNextTts = null;
+        if (err) throw err;
+        sherpa.ttsCalls++;
+      }
+      generate() { return { samples: new Float32Array([0.1, -0.1, 0.5]), sampleRate: 24000 }; }
+    },
+    OfflineRecognizer: class {
+      createStream() { return { acceptWaveform() {}, free() {} }; }
+      decode() {}
+      getResult() { return { text: "ok" }; }
+    },
+  };
+  const server = createServer(createVoiceHandler({ sherpaModule: sherpa, modelsDir: dir }));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const addr = server.address();
+  return { server, url: `http://127.0.0.1:${addr.port}`, sherpa, dir };
+}

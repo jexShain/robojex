@@ -48,7 +48,12 @@ app.setName('RoboJex');
 /** @type {BrowserWindow | null} */ let voiceWindow = null;
 /** true while the voice pill is capturing (toggles on each Ctrl+Alt+V) */
 let voiceRecording = false;
-/** @type {Tray | null} */ let tray = null;
+/** bumped on every dictation START: late results/hides from an older
+ *  session are dropped instead of clobbering the live capture */
+let voiceSession = 0;
+/** true between "start pressed, page still loading" and did-finish-load:
+ *  a second press in that window cancels the queued start */
+let voiceStartQueued = false;
 /** true once the user actually asked to quit (tray mode intercepts closes) */
 let isQuitting = false;
 /** set while the before-quit shutdown hook re-enters app.quit() */
@@ -390,8 +395,11 @@ function voiceState(st) {
   if (voiceWindow && !voiceWindow.isDestroyed()) voiceWindow.webContents.send('voice:state', st);
 }
 
-function hideVoicePillSoon(ms = 1400) {
+function hideVoicePillSoon(ms = 1400, session = voiceSession) {
   setTimeout(() => {
+    // a newer dictation owns the pill now: a late hide from the previous
+    // session must not dismiss it mid-capture nor clobber the flag
+    if (session !== voiceSession) return;
     if (voiceWindow && !voiceWindow.isDestroyed()) voiceWindow.hide();
     voiceRecording = false;
   }, ms);
@@ -400,14 +408,24 @@ function hideVoicePillSoon(ms = 1400) {
 async function toggleVoiceTalk() {
   if (voiceRecording) { // second press: stop capture, WAV arrives via IPC
     voiceRecording = false;
+    // the page may STILL be loading (first press just created the window):
+    // a 'stop' sent now lands on a page without listeners and is dropped —
+    // cancel the queued start instead, the capture never began
+    if (voiceStartQueued) { voiceStartQueued = false; return; }
     voiceState('stop');
     return;
   }
   voiceRecording = true;
+  voiceSession++; // new dictation: invalidates late results/hides of the old one
   if (!voiceWindow || voiceWindow.isDestroyed()) {
     createVoiceWindow();
+    voiceStartQueued = true;
     // start once the page has its preload listeners up
-    voiceWindow?.webContents.once('did-finish-load', () => voiceState('start'));
+    voiceWindow?.webContents.once('did-finish-load', () => {
+      voiceStartQueued = false;
+      if (voiceRecording) voiceState('start');
+      else hideVoicePillSoon(200); // cancelled while loading: nothing to stop
+    });
     return;
   }
   voiceWindow.show();
@@ -418,7 +436,12 @@ async function toggleVoiceTalk() {
 
 /** voiced /asr → ceo-core /api/chat. Runs in main: no CORS, no port leaks. */
 async function transcribeAndSend(wav) {
-  const pill = (st, hide) => { voiceState(st); if (hide) hideVoicePillSoon(); };
+  const session = voiceSession;
+  const pill = (st, hide) => {
+    if (session !== voiceSession) return; // stale: a newer dictation took over
+    voiceState(st);
+    if (hide) hideVoicePillSoon(1400, session);
+  };
   try {
     const r = await fetch(`${VOICED_URL}/asr`, {
       method: 'POST',

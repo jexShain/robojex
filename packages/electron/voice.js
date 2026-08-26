@@ -27,14 +27,23 @@
   let chunks = null
   let sampleRate = 16000
   let recording = false
+  let starting = false
+  let wantStop = false
 
   async function startCapture() {
     if (recording) return
+    // a 'stop' that races the getUserMedia await would be DROPPED by
+    // stopCapture's !recording guard and the mic would keep recording past
+    // the user's stop press — remember the intent and honor it once the
+    // stream actually arrives
+    if (starting) { wantStop = true; return }
+    starting = true
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true },
       })
     } catch (e) {
+      starting = false
       setState('麦克风不可用', { dot: 'idle', hint: String((e && e.message) || e) })
       if (window.robojex && window.robojex.voice) window.robojex.voice.event('mic-denied')
       return
@@ -50,11 +59,20 @@
     src.connect(node)
     node.connect(ctx.destination) // ScriptProcessor needs a destination to run
     recording = true
+    starting = false
+    if (wantStop) { // stop arrived while the mic was still opening
+      wantStop = false
+      void stopCapture()
+      return
+    }
     setState('正在聆听…再按一次结束', { dot: '' })
   }
 
   async function stopCapture() {
-    if (!recording) return
+    if (!recording) {
+      if (starting) wantStop = true
+      return
+    }
     recording = false
     const frames = chunks || []
     chunks = null

@@ -96,4 +96,19 @@ describe("R138 lean patrol decide", () => {
     expect(user).not.toContain("# AVAILABLE AGENTS");
     expect(user).toContain("# BUILTIN TOOLS");
   });
+
+  it("the PRODUCTION patrol event (body embeds ';') stays patrol-only", async () => {
+    // R138c regression: the real patrol_walk body carries "tools; stay
+    // silent…" — runOnceQueue used to join events with "; " and cycle
+    // re-split the string, so every production patrol wake split mid-event
+    // and patrolOnly was never true (both the lean tail and the R137 gate
+    // silently no-oped). The queue now passes the event ARRAY through.
+    const patrol = "patrol_walk: quick health round — check disk space, load, and anything unusual with LOOKING tools; stay silent unless something genuinely needs the human (then reply once, concisely). A CLEAN round (all normal) replies NOTHING: an 'everything is fine' report is noise, not a need — silence is the healthy outcome";
+    const { loop, decideCalls } = makeRig();
+    await loop.runOnce(`tick; ${patrol}`, ["tick", patrol]);
+    expect(decideCalls.length).toBe(1);
+    const user = String(decideCalls[0][1].content);
+    expect(user).not.toContain("# AVAILABLE AGENTS");
+    expect(user).toContain("# BUILTIN TOOLS");
+  });
 });

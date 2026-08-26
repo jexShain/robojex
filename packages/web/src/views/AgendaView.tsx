@@ -8,6 +8,7 @@ import type { PointerEvent as RPointerEvent, ReactElement } from 'react'
 import { statusTone, useStore } from '../state/store'
 import { Icon } from '../ui/Icon'
 import { useT } from '../i18n'
+import type { TApi } from '../i18n'
 import { fill } from '../i18n'
 import type { Task } from '../state/types'
 import {
@@ -498,6 +499,57 @@ function DayView({ onOpen }: { onOpen(id: string): void }) {
 
 const DEFAULT_SLOT_MS = 9 * 3_600_000 // unscheduled item dropped on a day → 09:00
 
+/** A scheduled row: time col + dot + title + chips. Module-level on purpose:
+ *  defined inside ScheduleList it would be a NEW component type every render,
+ *  remounting the whole list on each pointermove/minute-tick — dropping
+ *  pointer capture (drag ghosts stuck when the pointer leaves the list) and
+ *  keyboard focus alike. */
+function ScheduleRow({ row, showDate, pending, t, now, onOpen, onRowDown }: {
+  row: ScheduleRow
+  showDate?: boolean
+  pending: Map<string, number>
+  t: TApi['t']
+  now: number
+  onOpen: (id: string) => void
+  onRowDown: (e: RPointerEvent, task: Task, scheduled: boolean) => void
+}): ReactElement {
+  const tsk = row.task
+  const isDone = tsk.status === 'done'
+  const cls = [
+    'agl-row',
+    toneOf(tsk),
+    isDone ? 'done' : '',
+    row.isOverdue ? 'overdue' : '',
+    row.isUpcoming ? 'upcoming' : '',
+    pending.has(tsk.id) ? 'pending' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const timeText = showDate ? fmtStamp(row.start, now) : fmtClock(row.start)
+  const rangeText =
+    row.end != null && !row.spansBeyond && dayStartOf(row.end) === dayStartOf(row.start)
+      ? `${timeText}–${fmtClock(row.end)}`
+      : timeText
+  return (
+    <button
+      type="button"
+      className={cls}
+      onClick={() => { if (!clickAfterDrag()) onOpen(tsk.id) }}
+      onPointerDown={(e) => onRowDown(e, tsk, true)}
+      title={blockTip(tsk)}
+    >
+      <span className="agl-time">{rangeText}</span>
+      <span className="agl-dot" />
+      <span className="agl-title">{tsk.title}</span>
+      {row.spansBeyond && row.end != null ? (
+        <span className="agl-chip">→ {fmtStamp(row.end, now)}</span>
+      ) : null}
+      {row.isOverdue ? <span className="agl-chip warn">{t('board.dueOver').split(' · ')[0]}</span> : null}
+      {pending.has(tsk.id) ? <Icon name="clock" size={10} className="agl-pend" /> : null}
+    </button>
+  )
+}
+
 function ScheduleList({ onOpen }: { onOpen(id: string): void }) {
   const { state } = useStore()
   const { t, lang } = useT()
@@ -593,44 +645,6 @@ function ScheduleList({ onOpen }: { onOpen(id: string): void }) {
   const headLabel = (day0: number, i: number): string =>
     i === 0 ? t('ag.today') : i === 1 ? t('ag.tomorrow') : `${fmtDayLabel(day0, lang)} ${weekdayOf(day0)}`
 
-  /** A scheduled row: time col + dot + title + chips. */
-  const Row = ({ row, showDate }: { row: ScheduleRow; showDate?: boolean }): ReactElement => {
-    const tsk = row.task
-    const isDone = tsk.status === 'done'
-    const cls = [
-      'agl-row',
-      toneOf(tsk),
-      isDone ? 'done' : '',
-      row.isOverdue ? 'overdue' : '',
-      row.isUpcoming ? 'upcoming' : '',
-      pending.has(tsk.id) ? 'pending' : '',
-    ]
-      .filter(Boolean)
-      .join(' ')
-    const timeText = showDate ? fmtStamp(row.start, now) : fmtClock(row.start)
-    const rangeText =
-      row.end != null && !row.spansBeyond && dayStartOf(row.end) === dayStartOf(row.start)
-        ? `${timeText}–${fmtClock(row.end)}`
-        : timeText
-    return (
-      <button
-        type="button"
-        className={cls}
-        onClick={() => { if (!clickAfterDrag()) onOpen(tsk.id) }}
-        onPointerDown={(e) => onRowDown(e, tsk, true)}
-        title={blockTip(tsk)}
-      >
-        <span className="agl-time">{rangeText}</span>
-        <span className="agl-dot" />
-        <span className="agl-title">{tsk.title}</span>
-        {row.spansBeyond && row.end != null ? (
-          <span className="agl-chip">→ {fmtStamp(row.end, now)}</span>
-        ) : null}
-        {row.isOverdue ? <span className="agl-chip warn">{t('board.dueOver').split(' · ')[0]}</span> : null}
-        {pending.has(tsk.id) ? <Icon name="clock" size={10} className="agl-pend" /> : null}
-      </button>
-    )
-  }
 
   return (
     <div className="agenda-list" ref={rootRef}>
@@ -656,7 +670,7 @@ function ScheduleList({ onOpen }: { onOpen(id: string): void }) {
             <span className="agl-head-n">{fill(t('ag.itemsN'), { n: over.length })}</span>
           </div>
           {over.map((r) => (
-            <Row key={r.task.id} row={r} showDate />
+            <ScheduleRow key={r.task.id} row={r} showDate pending={pending} t={t} now={now} onOpen={onOpen} onRowDown={onRowDown} />
           ))}
         </section>
       ) : null}
@@ -689,7 +703,7 @@ function ScheduleList({ onOpen }: { onOpen(id: string): void }) {
                       <span className="agl-now-time">{fmtClock(now)}</span>
                     </div>
                   ) : null}
-                  <Row row={r} />
+                  <ScheduleRow row={r} pending={pending} t={t} now={now} onOpen={onOpen} onRowDown={onRowDown} />
                 </Fragment>
               ))
             )}

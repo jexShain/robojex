@@ -1432,4 +1432,18 @@ test("R137: a patrol-only wake whose entire output is one bare reply gets suppre
   ];
   await loop.runOnce("patrol_walk: quick health round");
   expect(chatOut.mock.calls.some((c) => String(c[1]).includes("磁盘快满了"))).toBe(true);
+
+  // R137b: the gate is content-aware — a lone reply that IS a finding (the
+  // patrol prompt's designated report channel: "stay silent unless something
+  // genuinely needs the human, then reply once") must pass; only bare
+  // all-clear noise is dropped
+  decideActions = [{ type: "reply", text: "磁盘使用率 91%，根分区快满了，建议清理。" }];
+  await loop.runOnce("patrol_walk: quick health round");
+  expect(chatOut.mock.calls.some((c) => String(c[1]).includes("磁盘使用率"))).toBe(true);
+
+  // a negated all-clear ("无异常") is still all-clear: the concern-word sniff
+  // must not read "异常" inside its own negation
+  decideActions = [{ type: "reply", text: "一切正常，无异常。" }];
+  await loop.runOnce("patrol_walk: quick health round");
+  expect(chatOut.mock.calls.some((c) => String(c[1]).includes("无异常"))).toBe(false);
 });

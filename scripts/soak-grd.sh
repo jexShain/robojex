@@ -3,27 +3,43 @@
 # an external reaper wiped /tmp/robojex-grd mid-soak on 2026-08-24, board
 # and MEMORY included). Runtime lives in .soak/ (gitignored).
 # Usage: bash scripts/soak-grd.sh start|stop|status
+# The pid file makes stop kill EXACTLY this daemon — a bare `pkill -f
+# 'node dist/index.js'` also matched the user's live 7620 instance started
+# the same way, taking the real butler down with the soak.
 set -u
-RT=/home/xin/ai/robojex/.soak
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+RT="$REPO/.soak"
 LOG=$RT/server.log
+PIDFILE=$RT/pid
+API=http://127.0.0.1:7630/api/state
+
+alive() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; }
+
 case "${1:-status}" in
   start)
+    if alive; then echo "soak already running (pid $(cat "$PIDFILE"))"; exit 0; fi
     mkdir -p "$RT"
-    cd /home/xin/ai/robojex/packages/ceo-core || exit 1
+    cd "$REPO/packages/ceo-core" || exit 1
     setsid nohup env ROBOJEX_RUNTIME="$RT" node dist/index.js >> "$LOG" 2>&1 < /dev/null &
+    echo $! > "$PIDFILE"
     sleep 3
-    code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7630/api/state)
+    code=$(curl -s -o /dev/null -w '%{http_code}' "$API")
     echo "api=$code"
-    pgrep -af 'node dist/index' | head -2
+    echo "pid=$(cat "$PIDFILE")"
     ;;
   stop)
-    pkill -f 'node dist/index[.]js'
-    sleep 1
-    pgrep -af 'node dist/index[.]js' || echo "no soak process left"
+    if alive; then
+      kill "$(cat "$PIDFILE")"
+      sleep 1
+      alive || echo "soak (pid $(cat "$PIDFILE")) stopped"
+    else
+      echo "no soak process left"
+    fi
+    rm -f "$PIDFILE"
     ;;
   status)
-    code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7630/api/state)
+    code=$(curl -s -o /dev/null -w '%{http_code}' "$API")
     echo "api=$code"
-    pgrep -af 'node dist/index[.]js' | grep -v grep | head -2
+    if alive; then echo "pid=$(cat "$PIDFILE") alive"; else echo "daemon down"; fi
     ;;
 esac

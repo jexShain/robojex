@@ -91,6 +91,22 @@ function relTime(ts: number, now = Date.now()): string {
   return `${Math.max(1, Math.round(abs / unitMs))}${unit}${diff >= 0 ? "后" : "前"}`;
 }
 
+// R137b all-clear sniff: a patrol reply is suppressible noise ONLY when it is
+// short AND speaks pure "everything is fine" — no concern keywords, no
+const ALL_CLEAR_RE = /正常|安好|良好|平稳|稳定|没问题|无异常|没有异常|没有发现|未发现|all clear|all normal|no issues|nothing (unusual|to report|wrong)/i;
+// cert) has length or subject matter; it must reach the human.
+const CONCERN_RE = /异常|警告|告警|失败|错误|风险|磁盘|空间|温度|负载|内存|进程|崩溃|超时|泄漏|满|不足|过期|到期|掉线|断开|warning|error|fail|critical|full|low/i;
+function isBareAllClear(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0 || t.length > 60) return false; // verbosity is signal: a finding explains itself
+  if (!ALL_CLEAR_RE.test(t)) return false;
+  // strip NEGATED mentions ("无异常", "no issues") before sniffing concerns:
+  // the negation phrase itself contains the concern word, so a bare substring
+  // test would reject the purest all-clear of all
+  const stripped = t.replace(/(无|没有|未|不)(?:异常|问题|警告|告警|错误|风险|事|warning|error|issues?)/gi, "");
+  return !CONCERN_RE.test(stripped);
+}
+
 // Every action type the dispatch chain understands (R84b sugar gate): a
 // bare type outside this set that matches a builtin tool name routes onto
 // tool_call; anything else fails loudly instead of dropping silently.
@@ -503,10 +519,15 @@ export class SchedulerLoop {
       return;
     }
     const q = this.queue.splice(0);
-    if (q.length) await this.runOnce(q.join("; "));
+    // R138c: pass the raw queue ELEMENTS down, not just the joined string —
+    // event bodies themselves contain ";" (the patrol_walk prompt carries
+    // "tools; stay silent…"), so re-splitting the join breaks per-event
+    // predicates like patrolOnly/pureTick mid-event. The joined string stays
+    // the prompt/display form; the array is the structural truth.
+    if (q.length) await this.runOnce(q.join("; "), q);
   }
 
-  async runOnce(eventSummary: string): Promise<void> {
+  async runOnce(eventSummary: string, events?: string[]): Promise<void> {
     // in-flight guard: exactly one decision cycle executes at a time; later
     // callers queue behind the running one instead of interleaving with it.
     // (Node 18 lacks Promise.withResolvers, hence the executor form.)
@@ -518,14 +539,14 @@ export class SchedulerLoop {
     }
     this.running = true;
     try {
-      await this.cycle(eventSummary);
+      await this.cycle(eventSummary, events);
     } finally {
       this.running = false;
       this.idleWaiters.splice(0).forEach((r) => r());
     }
   }
 
-  private async cycle(eventSummary: string): Promise<void> {
+  private async cycle(eventSummary: string, events?: string[]): Promise<void> {
     this.wakeN++;
     this.tickCount++;
     this.vitals.cycles++;
@@ -540,7 +561,7 @@ export class SchedulerLoop {
       if (gate === "observe-only") return; // spend nothing, observe silently
       // eco thins the patrol cadence: pure tick wakes skip unless this is the
       // Nth tick; real events (chat, gantt, tool results) always pass through
-      const parts = eventSummary.split(";").map((s) => s.trim()).filter(Boolean);
+      const parts = (events ?? eventSummary.split(";")).map((s) => s.trim()).filter(Boolean);
       const pureTick = parts.length > 0 && parts.every((p) => p === "tick");
       if (pureTick && gdef.patrolEvery > 0 && this.tickCount % gdef.patrolEvery !== 0) return;
       // R72 quiet skip: nothing about the world changed since the last cycle
@@ -622,6 +643,8 @@ export class SchedulerLoop {
       // tick — without filtering it, patrolOnly is never true and both the
       // lean tail and the all-clear gate silently no-op (live soak proof:
       // 23:14 patrol+tick wake at 8,334 tok WITH the full tail, post-R138).
+      // R138c: parts now comes from the event ARRAY (queue elements), so a
+      // ";" inside an event body no longer splits it into fake carriers.
       const carriers = parts.filter((s) => s !== "tick");
       const patrolOnly = carriers.length > 0 && carriers.every((s) => s.startsWith("patrol_walk:"));
       // R138 lean patrol decide: a patrol-only wake pays for a house LOOK,
@@ -658,14 +681,20 @@ export class SchedulerLoop {
       // R137 patrol all-clear gate (mechanical, not doctrinal): the R135
       // prompt negation still leaked "晚上好，系统一切正常" bare replies from
       // patrol wakes — noise to a silent human and the priciest idle cycle
-      // (~13k tok). A patrol wake whose ENTIRE output is one reply carries no
-      // errand (a real finding would come with actions); drop it. Scoped to
-      // patrol-only wakes so morning_briefing / chat replies pass untouched.
+      // (~13k tok). Scoped to patrol-only wakes whose ENTIRE output is one
+      // SHORT all-clear reply: the patrol prompt's own reporting channel for
+      // a finding IS a lone reply ("stay silent unless something genuinely
+      // needs the human, then reply once"), so only content-matched all-clear
+      // noise is dropped — a real finding (disk SMART warning, thermal
+      // anomaly) with concern keywords or real length passes through.
       // (R138: patrolOnly is hoisted above the decide build — shared shape.)
       {
-        if (patrolOnly && actions.length === 1 && (actions[0] as any)?.type === "reply") {
-          console.log(`[loop] patrol all-clear reply suppressed (len=${String((actions[0] as any).text ?? "").length})`);
-          actions = [];
+        if (patrolOnly && actions.length === 1) {
+          const a = actions[0] as { type?: unknown; text?: unknown };
+          if (a?.type === "reply" && typeof a.text === "string" && isBareAllClear(a.text)) {
+            console.log(`[loop] patrol all-clear reply suppressed (len=${a.text.length})`);
+            actions = [];
+          }
         }
       }
       // R71: bank this cycle's replay line — the next decide sees what already
