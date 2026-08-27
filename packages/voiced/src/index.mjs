@@ -78,13 +78,17 @@ export function createVoiceHandler({ sherpaModule, modelsDir, asrLang = ASR_LANG
         tts = new sherpaModule.OfflineTts({
           model: {
             kokoro: {
-              model: join(TTS_DIR, "model.onnx"),
-              voices: join(TTS_DIR, "voices.bin"),
-              tokens: join(TTS_DIR, "tokens.txt"),
-              dataDir: join(TTS_DIR, "espeak-ng-data"),
+              // POSIX separators throughout — matching the sherpa-onnx docs'
+              // own path spelling; valid on Windows and verified end-to-end
+              // (the packaged sidecar round-trips 语音链路测试 → 语音联路测试。
+              // on Electron's node)
+              model: join(TTS_DIR, "model.onnx").replace(/\\/g, "/"),
+              voices: join(TTS_DIR, "voices.bin").replace(/\\/g, "/"),
+              tokens: join(TTS_DIR, "tokens.txt").replace(/\\/g, "/"),
+              dataDir: join(TTS_DIR, "espeak-ng-data").replace(/\\/g, "/"),
               // v1.1 multi-lang frontend: per-language lexicons, comma-joined
-              lexicon: [join(TTS_DIR, "lexicon-us-en.txt"), join(TTS_DIR, "lexicon-zh.txt")].join(","),
-              dictDir: join(TTS_DIR, "dict"),
+              lexicon: [join(TTS_DIR, "lexicon-us-en.txt"), join(TTS_DIR, "lexicon-zh.txt")].join(",").replace(/\\/g, "/"),
+              dictDir: join(TTS_DIR, "dict").replace(/\\/g, "/"),
               lengthScale: 1.0,
             },
           },
@@ -176,7 +180,11 @@ export function createVoiceHandler({ sherpaModule, modelsDir, asrLang = ASR_LANG
         const text = typeof q.text === "string" ? q.text.trim().slice(0, 2000) : "";
         if (!text) return json(res, 400, { error: "text must be a non-empty string" });
         const sid = Number.isInteger(q.sid) && q.sid >= 0 && q.sid <= 4 ? q.sid : 0; // 0..2 zh-female, 3..4 zh-male
-        const out = tts.generate({ text, sid, speed: 1.0 });
+        // enableExternalBuffer:false makes the addon COPY the samples into a
+        // plain ArrayBuffer — external-backed buffers throw "External
+        // buffers are not allowed" under Electron's V8 memory cage (the
+        // packaged app's sidecar runs Electron's node, sherpa-onnx PR #925)
+        const out = tts.generate({ text, sid, speed: 1.0, enableExternalBuffer: false });
         const wav = pcmWav(out.samples, out.sampleRate);
         // CORS on the SUCCESS body too: the renderer's cross-origin fetch
         // reads THIS response — the preflight passes but a headerless 200
