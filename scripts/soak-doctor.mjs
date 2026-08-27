@@ -82,6 +82,13 @@ try {
   if (msize > 120_000) problems.push(`MEMORY.md ${msize}B — rotation (R43) should have kicked in`);
 } catch { notes.push("MEMORY.md absent (fresh runtime)"); }
 
+// 5. STATS.md — the acceptance ledger; empty while idle is EXPECTED (no
+// verifications happen), growth only tracks real agent settlements
+try {
+  const ssize = statSync(join(RT, "STATS.md")).size;
+  console.log(`STATS.md=${ssize}B${ssize === 0 ? " (idle — no verifications, expected)" : ""}`);
+} catch { /* absent = idle runtime, not worth a note */ }
+
 for (const n of notes) console.log(`· ${n}`);
 if (problems.length) {
   for (const p of problems) console.log(`✗ ${p}`);
