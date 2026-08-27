@@ -45,3 +45,10 @@ cp "dist-electron/robojex $VER.exe" "$DESKTOP/robojex-$CODENAME.exe"
 cp "dist-electron/robojex $VER.exe" "$DESKTOP/robojex.exe"
 cp "dist-electron/robojex Setup $VER.exe" "$DESKTOP/robojex-$CODENAME-Setup.exe"
 echo "✓ robojex $VER ($CODENAME) → Desktop (portable + setup + alias)"
+
+# packaged voice smoke — the extraResources layout, Electron's V8 cage and
+# the downloader's output only bite in the built exe (0.2.18 first-run bug
+# class). SKIPs cleanly until the app has downloaded models once.
+echo "▶ packaged voice smoke"
+bash "$SRC/scripts/smoke-win-voice.sh" "$WIN/dist-electron/win-unpacked"; sc=$?
+if [ "$sc" -eq 3 ]; then echo "  (skipped — no models yet; run once after first launch download)"; elif [ "$sc" -ne 0 ]; then echo "  ✗ VOICE SMOKE FAILED — do not ship"; exit "$sc"; fi
