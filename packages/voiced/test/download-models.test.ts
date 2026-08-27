@@ -20,14 +20,11 @@ function recordingSpawn(calls: Call[], failOn?: string) {
   return (cmd: string, args: string[], opts: { cwd?: string }) => {
     if (failOn && cmd === failOn) throw Object.assign(new Error("spawn fail"), { status: 2 });
     calls.push({ cmd, args, opts });
-    if (cmd === "cp" || cmd === "xcopy") {
-      // simulate the copy: inner dir from tmp -> outDir (both in args)
-      const src = args.find((a) => a.includes("voiced-m-"))!;
-      const dst = args.find((a) => a.includes(join("asr", "sherpa")) || a.includes(join("tts", "kokoro")))!;
-      mkdirSync(dst, { recursive: true });
-      writeFileSync(join(dst, "model.int8.onnx"), "x");
-      writeFileSync(join(dst, "model.onnx"), "x");
-      void src;
+    if (cmd === "tar" && opts.cwd) {
+      // simulate the extraction: inner dir lands in the spawn cwd; the real
+      // fetchLeg then cpSync's it into dest
+      mkdirSync(join(opts.cwd, "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"), { recursive: true });
+      writeFileSync(join(opts.cwd, "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17", "model.int8.onnx"), "x");
     }
   };
 }

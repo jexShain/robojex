@@ -17,7 +17,7 @@
 // flavor, ever.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, mkdtempSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,10 +74,9 @@ export function fetchLeg(leg, opts = {}) {
     spawn("tar", ["-xjf", "m.tar.bz2"], { stdio: "inherit", cwd: tmp });
     mkdirSync(outDir, { recursive: true });
     rmSync(outDir, { recursive: true, force: true });
-    // rename() across devices throws — copy then clean, portable
-    spawn(process.platform === "win32" ? "xcopy" : "cp", process.platform === "win32"
-      ? [join(tmp, leg.inner), outDir, "\\E", "\\I", "\\Q", "\\Y"]
-      : ["-r", join(tmp, leg.inner), outDir], { stdio: "inherit" });
+    // the move is pure Node — xcopy's `\E` switch spelling parses as a drive
+    // spec (init error, exit 4) and cp -r is argv we don't need to build
+    cpSync(join(tmp, leg.inner), outDir, { recursive: true });
   } catch (e) {
     // one bad leg must not kill the run: the other model still installs and
     // the exit code reports the missing leg for a rerun
