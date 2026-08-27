@@ -113,4 +113,17 @@ describe("R138 lean patrol decide", () => {
     expect(user).not.toContain("# AVAILABLE AGENTS");
     expect(user).toContain("# BUILTIN TOOLS");
   });
+
+  it("mandated-wake duties are spelled in the decide system prompt (R142)", async () => {
+    // live soak 08-27 wake#335: the 6h agents_rescan burned 9.2k on full
+    // context and replied "[静默] 无新事件" — no toolscout. The decide layer
+    // read the "don't repeat what RECENT CYCLES shows" doctrine as a skip
+    // license; the system prompt now names each mandated wake's duty and
+    // states a mandated wake is owed EVERY time it fires.
+    const { loop, decideCalls } = makeRig();
+    await loop.runOnce("agents_rescan: agent CLIs may have been installed or removed — run the toolscout action");
+    const sys = String(decideCalls[0][0].content);
+    expect(sys).toContain("toolscout action in this very cycle");
+    expect(sys).toContain("is NOT a skip reason");
+  });
 });

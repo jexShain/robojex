@@ -1462,4 +1462,17 @@ test("R137: a patrol-only wake whose entire output is one bare reply gets suppre
   decideActions = [{ type: "reply", text: "温度正常但磁盘错误率上升。" }];
   await loop.runOnce("patrol_walk: quick health round");
   expect(chatOut.mock.calls.some((c) => String(c[1]).includes("磁盘错误率"))).toBe(true);
+
+  // R141: the butler parked its checked-subjects in a parenthetical and
+  // delivered the verdict with fillers — soak 08-27 wake#312 reached the
+  // human verbatim before this strip existed
+  decideActions = [{ type: "reply", text: "刚刚完成了一次例行健康巡检（磁盘、负载等），系统各项指标均正常，无需处理。目前没有待办任务，保持静默。" }];
+  await loop.runOnce("patrol_walk: quick health round");
+  expect(chatOut.mock.calls.some((c) => String(c[1]).includes("例行健康巡检"))).toBe(false);
+
+  // …but a parenthetical carrying an actual READING survives intact (the
+  // clean-word hit forces the strip path; the reading's 满 keeps the concern)
+  decideActions = [{ type: "reply", text: "巡检正常（磁盘 92% 快满），建议清理。" }];
+  await loop.runOnce("patrol_walk: quick health round");
+  expect(chatOut.mock.calls.some((c) => String(c[1]).includes("92%"))).toBe(true);
 });
