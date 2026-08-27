@@ -133,7 +133,7 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
   const orchestrator = new AgentOrchestrator({ llm, runtimeDir, registry });
   orchestrator.reapOrphans(); // detached sub-agents of a crashed jex must die before new work starts
   const budgetCfg = resolveBudgetConfig(cfg);
-  const budget = new BudgetGovernor(budgetCfg.budgetMode, budgetCfg.dailyTokens);
+  const budget = new BudgetGovernor(budgetCfg.budgetMode, budgetCfg.dailyTokens, undefined, runtimeDir);
   const scout = new ToolScout({ llm, runtimeDir, spend: (u) => budget.spend(u) }); // scout LLM calls are budget burn too
   const tentacles = new TentacleManager({ llm, runtimeDir, spend: (u) => budget.spend(u) }); // manual LLM calls likewise
   // agent recon (SPEC-BUTLER §2): probes known agent CLIs and wires the hits

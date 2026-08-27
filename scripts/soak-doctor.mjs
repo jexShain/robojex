@@ -38,8 +38,11 @@ if (existsSync(SNAP)) {
     const prev = JSON.parse(readFileSync(SNAP, "utf8"));
     const mins = (now - prev.at) / 60000;
     const gained = tickN - prev.tickN;
-    if (gained < mins / 2) problems.push(`tick stalled: +${gained} in ${mins.toFixed(0)}min`);
-    if (gained > mins * 3) problems.push(`tick runaway: +${gained} in ${mins.toFixed(0)}min`);
+    if (gained < 0) notes.push(`daemon restarted (tick ${prev.tickN}→${tickN}) — cadence/burn window resets this run`);
+    else {
+      if (gained < mins / 2) problems.push(`tick stalled: +${gained} in ${mins.toFixed(0)}min`);
+      if (gained > mins * 3) problems.push(`tick runaway: +${gained} in ${mins.toFixed(0)}min`);
+    }
     const burn = (spent - prev.spent) / Math.max(mins / 60, 0.1);
     if (burn > 25000) problems.push(`burn ${Math.round(burn).toLocaleString()}/h — hot (boot/brief hours are fine once; sustained means a loop)`);
     else if (burn > 8000) notes.push(`burn ${Math.round(burn).toLocaleString()}/h (boot/brief/rescan windows are by design)`);
