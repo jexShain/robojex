@@ -31,27 +31,33 @@ const tickN = state.tickN ?? 0;
 const spent = state.budget?.spentToday ?? 0;
 console.log(`tick=${tickN} spent=${spent} mode=${state.mode} gear=${state.gear}`);
 
-// 2. tick cadence vs last snapshot (allow >= half the wall-clock rate)
 const now = Date.now();
+const db = new DatabaseSync(join(RT, "traces.sqlite"), { readOnly: true });
+
+// 2. tick cadence + burn vs last snapshot — unless a daemon restart happened
+// in between (a boot row after the snapshot time proves it: the new daemon's
+// counters start at 0 and may already exceed the old snapshot either way,
+// so deltas across a restart mean nothing)
+let restarted = false;
 if (existsSync(SNAP)) {
   try {
     const prev = JSON.parse(readFileSync(SNAP, "utf8"));
+    restarted = db.prepare("SELECT COUNT(*) AS n FROM decisions WHERE ts > ? AND (context_digest LIKE '%boot%' OR context_digest LIKE '%agents discovered%')").get(prev.at).n > 0;
     const mins = (now - prev.at) / 60000;
     const gained = tickN - prev.tickN;
-    if (gained < 0) notes.push(`daemon restarted (tick ${prev.tickN}→${tickN}) — cadence/burn window resets this run`);
+    if (restarted) notes.push(`daemon restarted since last run (tick ${prev.tickN}→${tickN}) — cadence/burn window resets this run`);
     else {
       if (gained < mins / 2) problems.push(`tick stalled: +${gained} in ${mins.toFixed(0)}min`);
       if (gained > mins * 3) problems.push(`tick runaway: +${gained} in ${mins.toFixed(0)}min`);
+      const burn = (spent - prev.spent) / Math.max(mins / 60, 0.1);
+      if (burn > 25000) problems.push(`burn ${Math.round(burn).toLocaleString()}/h — hot (boot/brief hours are fine once; sustained means a loop)`);
+      else if (burn > 8000) notes.push(`burn ${Math.round(burn).toLocaleString()}/h (boot/brief/rescan windows are by design)`);
     }
-    const burn = (spent - prev.spent) / Math.max(mins / 60, 0.1);
-    if (burn > 25000) problems.push(`burn ${Math.round(burn).toLocaleString()}/h — hot (boot/brief hours are fine once; sustained means a loop)`);
-    else if (burn > 8000) notes.push(`burn ${Math.round(burn).toLocaleString()}/h (boot/brief/rescan windows are by design)`);
   } catch { /* corrupt snapshot — rewrite below */ }
 }
 writeFileSync(SNAP, JSON.stringify({ at: now, tickN, spent }));
 
 // 3. last hour of decisions: cost shape + duplicate failure stacking
-const db = new DatabaseSync(join(RT, "traces.sqlite"), { readOnly: true });
 const hourAgo = now - 3600_000;
 const rows = db.prepare(
   "SELECT ts, context_digest, cost, actions FROM decisions WHERE ts > ? ORDER BY ts"
