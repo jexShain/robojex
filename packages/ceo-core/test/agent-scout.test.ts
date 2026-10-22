@@ -25,9 +25,9 @@ function mkRig(which: AgentWhichFn, llm: LLMClient | null = null) {
 }
 
 describe("KNOWN_AGENTS", () => {
-  it("carries the ten SPEC agents, each with a {prompt} template, aliases and blurb", () => {
+  it("carries the eleven SPEC agents, each with a {prompt} template, aliases and blurb", () => {
     expect(KNOWN_AGENTS.map((a) => a.name)).toEqual([
-      "claude-code", "hermes", "opencode", "omp", "codex", "aider", "gemini", "qwen", "goose", "crush",
+      "claude-code", "hermes", "opencode", "omp", "codex", "aider", "cursor", "gemini", "qwen", "goose", "crush",
     ]);
     for (const a of KNOWN_AGENTS) {
       expect(a.cmd).toContain("{prompt}");

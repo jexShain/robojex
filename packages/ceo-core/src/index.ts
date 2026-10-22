@@ -8,7 +8,7 @@ import { LLMClient } from "./llm.js";
 import { TaskBoard } from "./board.js";
 import { ContextAssembler } from "./context.js";
 import { AgentOrchestrator } from "./orchestrator.js";
-import { AgentRegistry, BUILTIN_AGENTS } from "./agent-registry.js";
+import { AgentRegistry, BUILTIN_AGENTS, loadCustomAgents } from "./agent-registry.js";
 import { Auditor } from "./auditor.js";
 import { BudgetGovernor, type BudgetMode } from "./budget.js";
 import { SchedulerLoop, DEFAULT_SKILLS_DIR, resolvePolicy, type LoopDeps } from "./loop.js";
@@ -130,6 +130,9 @@ const DEFAULT_WEB_DIR = process.env.ROBOJEX_WEB_DIR
 export function assembleAndStart(cfg: Config, runtimeDir: string, deps: AssembleDeps = {}): Assembled {
   const llm = new LLMClient({ baseUrl: cfg.baseUrl ?? "", apiKey: cfg.apiKey ?? "", patrolModel: cfg.patrolModel ?? "", decideModel: cfg.decideModel ?? "", thinking: cfg.thinking === true });
   const registry = new AgentRegistry(BUILTIN_AGENTS);
+  // T5: human-declared custom agents (JSON specs under runtime/agents.json and
+  // runtime/agents/*.json) join the fleet; malformed files warn and are skipped
+  for (const spec of loadCustomAgents(runtimeDir).specs) registry.register(spec);
   const orchestrator = new AgentOrchestrator({ llm, runtimeDir, registry });
   orchestrator.reapOrphans(); // detached sub-agents of a crashed jex must die before new work starts
   const budgetCfg = resolveBudgetConfig(cfg);

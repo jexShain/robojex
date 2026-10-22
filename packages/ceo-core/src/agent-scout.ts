@@ -27,6 +27,7 @@ export const KNOWN_AGENTS: KnownAgent[] = [
   { name: "omp", aliases: ["omp"], cmd: "omp {prompt}", blurb: "omp — local agent CLI runner", capabilities: ["general"] },
   { name: "codex", aliases: ["codex"], cmd: "codex --quiet --full-auto {prompt}", blurb: "OpenAI Codex CLI — autonomous coding agent", capabilities: ["coding", "review"] },
   { name: "aider", aliases: ["aider"], cmd: "aider --yes-always --no-auto-commits --message {prompt}", blurb: "Aider — AI pair programmer working directly on git repos", capabilities: ["coding", "refactor"] },
+  { name: "cursor", aliases: ["cursor-agent"], cmd: "cursor-agent -p {prompt}", blurb: "Cursor CLI — headless agent of the Cursor editor", capabilities: ["coding", "review"] },
   { name: "gemini", aliases: ["gemini"], cmd: "gemini -p {prompt}", blurb: "Gemini CLI — Google's coding agent with Google-context reach", capabilities: ["coding", "web"] },
   { name: "qwen", aliases: ["qwen"], cmd: "qwen -p {prompt}", blurb: "Qwen Code — Alibaba's coding agent CLI", capabilities: ["coding"] },
   { name: "goose", aliases: ["goose"], cmd: "goose run --text {prompt}", blurb: "Goose — Block's extensible agent, MCP-savvy", capabilities: ["general", "coding"] },

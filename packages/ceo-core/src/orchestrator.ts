@@ -64,26 +64,33 @@ export class AgentOrchestrator {
     // 1) explicit override (opts.cmds) — raw command string, prompt shell-quoted;
     //    a discovery template owns a {prompt} slot that gets the quoted prompt
     // 2) DEFAULT_CMDS (hermes/claude-code) — functions that shell-quote the prompt
-    // 3) registry lookup — template with {prompt} placeholder, shell-quoted at substitution
+    // 3) registry lookup — template with {prompt} placeholder, shell-quoted at
+    //    substitution; the token is resolved by exact name, fuzzy name or
+    //    capability tag (T5: the model may answer with either), and the spec's
+    //    env/timeoutMs are honored unless the call overrides the timeout
     let full: string;
+    let specEnv: Record<string, string> | undefined;
+    let timeoutMs = o.timeoutMs ?? 30 * 60_000;
     if (override !== undefined) {
       full = override.includes("{prompt}") ? override.replace("{prompt}", shq(prompt)) : `${override} ${shq(prompt)}`;
     } else if (DEFAULT_CMDS[fw]) {
       full = DEFAULT_CMDS[fw](prompt);
     } else if (this.registry) {
-      const spec = this.registry.get(fw);
+      const spec = this.registry.resolve(fw);
       if (!spec) {
         const available = this.registry.names().join(", ");
         throw new Error(`unknown agent "${fw}". Available agents: ${available}`);
       }
       full = spec.cmd.replace("{prompt}", shq(prompt));
+      specEnv = spec.env;
+      if (o.timeoutMs === undefined && spec.timeoutMs !== undefined) timeoutMs = spec.timeoutMs;
     } else {
       const available = Object.keys(DEFAULT_CMDS).join(", ");
       throw new Error(`unknown framework "${fw}". Available frameworks: ${available}. Set a registry to enable more agents.`);
     }
     return new Promise<SpawnResult>((resolve) => {
       // detached: child leads its own process group (pgid == pid) so the whole tree dies together
-      const child = pspawn(full, { shell: "/bin/bash", stdio: ["ignore", "pipe", "pipe"], detached: true });
+      const child = pspawn(full, { shell: "/bin/bash", stdio: ["ignore", "pipe", "pipe"], detached: true, ...(specEnv ? { env: { ...process.env, ...specEnv } } : {}) });
       const pid = child.pid;
       this.running.set(id, child);
       if (typeof pid === "number") this.updateLedger((pids) => [...pids, pid]);
@@ -102,7 +109,7 @@ export class AgentOrchestrator {
         catch { try { child.kill("SIGKILL"); } catch { /* already gone */ } }
       };
       let timedOut = false;
-      const timeout = setTimeout(() => { timedOut = true; killTree(); }, o.timeoutMs ?? 30 * 60_000);
+      const timeout = setTimeout(() => { timedOut = true; killTree(); }, timeoutMs);
       let settled = false;
       const finish = async (code: number | null, errMsg?: string): Promise<void> => {
         if (settled) return; // 'error' and 'close' can both fire
