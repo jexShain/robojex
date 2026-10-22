@@ -305,6 +305,7 @@ export class ApiServer implements LoopOutlet {
     if (path === "/api/usage" && req.method === "GET") { this.getUsage(req, res); return; }
     if (path === "/api/stats" && req.method === "GET") { this.getStats(res); return; }
     if (path === "/api/rubric" && req.method === "GET") { this.getRubric(res); return; }
+    if (path === "/api/rubric/history" && req.method === "GET") { json(res, 200, { history: this.d.rubricHistory?.() ?? [] }); return; }
     if (path === "/api/mission" && req.method === "POST") { await this.postMission(req, res); return; }
     if (path === "/api/task" && req.method === "POST") { await this.postTask(req, res); return; }
     if (path === "/api/task" && req.method === "PUT") { await this.putTask(req, res); return; }
@@ -441,6 +442,26 @@ export class ApiServer implements LoopOutlet {
     let raw = "";
     try { raw = readFileSync(join(this.d.runtimeDir, "STATS.md"), "utf8"); } catch { /* no ledger yet */ }
     json(res, 200, { agents: aggregateStats(raw) });
+  }
+
+  // T9 auto-rubric read side: the live RUBRIC.md plus what the task-outcome
+  // ledger (runtime/STATS.md) currently proves — learned patterns, completion
+  // trends, and history-weighted advice for pending cards. A fresh runtime
+  // (no ledger) answers with the seeded rubric and empty views: 200, same
+  // "no record yet is ordinary state" convention as getStats.
+  private getRubric(res: ServerResponse): void {
+    let rubric = "";
+    try { rubric = readFileSync(join(this.d.runtimeDir, "RUBRIC.md"), "utf8"); } catch { /* fresh runtime */ }
+    let raw = "";
+    try { raw = readFileSync(join(this.d.runtimeDir, "STATS.md"), "utf8"); } catch { /* no ledger yet */ }
+    const outcomes = parseOutcomes(raw);
+    const patterns = extractPatterns(outcomes);
+    json(res, 200, {
+      rubric,
+      patterns,
+      trends: computeTrends(outcomes, Date.now()),
+      advice: priorityAdvice(this.d.board.list(), patterns),
+    });
   }
 
   private async postMission(req: IncomingMessage, res: ServerResponse): Promise<void> {

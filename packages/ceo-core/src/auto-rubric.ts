@@ -55,6 +55,7 @@ export function extractPatterns(outcomes: Outcome[]): Patterns {
   const byFw = new Map<string, FrameworkRecord>();
   for (const o of outcomes) {
     const r = byFw.get(o.framework) ?? { framework: o.framework, total: 0, pass: 0, partial: 0, fail: 0, passRate: 0 };
+    r.total++; // the swept-in T9 layer shipped without this — weak/strong could never fire
     if (o.verdict === "pass") r.pass++; else if (o.verdict === "partial") r.partial++; else r.fail++;
     byFw.set(o.framework, r);
   }
@@ -163,6 +164,9 @@ export interface MergeResult { text: string; added: number; updated: number }
 export function mergeRubric(existing: string, lines: string[]): MergeResult {
   if (lines.length === 0) return { text: existing, added: 0, updated: 0 };
   const arr = existing.split("\n");
+  // normalize the tail ONCE up front: without this, a no-change re-merge
+  // split a trailing newline into an empty element and re-emitted "\n\n"
+  while (arr.length && arr[arr.length - 1] === "") arr.pop();
   const owner = new Map<string, number>(); // fingerprint -> line index of the current rule
   arr.forEach((l, i) => { const fp = fpOf(l); if (fp && !owner.has(fp)) owner.set(fp, i); });
   let added = 0, updated = 0;
@@ -174,11 +178,8 @@ export function mergeRubric(existing: string, lines: string[]): MergeResult {
     if (at === undefined) fresh.push(l);
     else if (arr[at] !== l) { arr[at] = l; updated++; } // refresh in place: one rule per fingerprint
   }
-  if (fresh.length) {
-    while (arr.length && arr[arr.length - 1] === "") arr.pop();
-    for (const l of fresh) arr.push(l);
-    added = fresh.length;
-  }
+  for (const l of fresh) arr.push(l);
+  if (fresh.length) added = fresh.length;
   return { text: arr.join("\n") + "\n", added, updated };
 }
 

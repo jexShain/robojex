@@ -210,6 +210,7 @@ export function assembleAndStart(cfg: Config, runtimeDir: string, deps: Assemble
   const api = new ApiServer({
     port: cfg.apiPort ?? 7620, host: cfg.apiHost, board, budget, runtimeDir, loop,
     snapshotRuntime: () => auditor.snapshotRuntime(),
+    rubricHistory: () => auditor.rubricHistory(), // T9: `git log -- RUBRIC.md` over HTTP
     chat: chatService, gear: gearController, llm,
     ...(existsSync(webDir) ? { webDir } : {}),
   });

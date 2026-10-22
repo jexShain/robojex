@@ -938,3 +938,54 @@ test("POST /api/task/reorder: drop order lands as priority ladder + one broadcas
   }
   c.ws.close();
 });
+
+// -- T9 auto-rubric read surface --------------------------------------------
+interface RubricFrame {
+  rubric?: string;
+  patterns?: { frameworks: { framework: string; total: number; passRate: number }[]; weak: { framework: string }[]; strong: { framework: string }[]; failureKinds: { kind: string; fails: number }[] };
+  trends?: { total: number; completionRate: number; last7Rate: number | null; prev7Rate: number | null; delta7: number | null };
+  advice?: { taskId: string; title: string; advice: string }[];
+}
+
+test("GET /api/rubric: fresh runtime answers 200 with the seeded rubric and empty ledger views; a populated ledger folds patterns + trends + advice", async () => {
+  const rig = mkRig();
+  const api = makeApi(rig, { push: vi.fn() });
+  await api.start();
+  const fresh = await (await fetch(`http://127.0.0.1:${api.port}/api/rubric`)).json() as RubricFrame;
+  expect(fresh.rubric).toContain("# RUBRIC");
+  expect(fresh.patterns!.frameworks).toEqual([]);
+  expect(fresh.trends!.total).toBe(0);
+  expect(fresh.advice).toEqual([]);
+
+  const DAY = 86_400_000, now = Date.now();
+  writeFileSync(join(rig.runtimeDir, "STATS.md"), [
+    `weakfw|fail|任务甲|${now - DAY}`, `weakfw|fail|任务乙|${now - DAY}`, `weakfw|pass|任务丙|${now - 2 * DAY}`,
+    `weakfw|fail|登录修复|${now - 3 * DAY}`, `otherfw|fail|登录修复（重派#2）|${now - 11 * DAY}`,
+  ].join("\n") + "\n");
+  rig.board.add({ title: "登录修复（重派#3）", assignee: "weakfw" });
+  const r = await (await fetch(`http://127.0.0.1:${api.port}/api/rubric`)).json() as RubricFrame;
+  expect(r.patterns!.weak.map((w) => w.framework)).toContain("weakfw");
+  expect(r.patterns!.failureKinds).toEqual([{ kind: "登录修复", fails: 2, frameworks: ["weakfw", "otherfw"] }]);
+  expect(r.trends).toMatchObject({ total: 5, completionRate: 20, last7Rate: 25, prev7Rate: 0, delta7: 25 });
+  expect(r.advice).toHaveLength(1);
+  expect(r.advice![0].title).toBe("登录修复（重派#3）");
+  expect(r.advice![0].advice).toContain("同类已失败 2 次");
+  expect(r.advice![0].advice).toContain("框架 weakfw 历史通过率偏低");
+});
+
+test("GET /api/rubric/history: wired rubricHistory dep serves the git trail; unwired dep answers 200 with an empty list", async () => {
+  const rig = mkRig();
+  const api = new ApiServer({
+    port: 0, board: rig.board, budget: rig.budget, runtimeDir: rig.runtimeDir, loop: { push: vi.fn() },
+    rubricHistory: () => [{ commit: "abc1234", message: "auto-rubric pre-patch (1 new, 0 refreshed)" }],
+  });
+  servers.push(api);
+  await api.start();
+  const r = await (await fetch(`http://127.0.0.1:${api.port}/api/rubric/history`)).json() as { history?: { commit: string; message: string }[] };
+  expect(r.history).toEqual([{ commit: "abc1234", message: "auto-rubric pre-patch (1 new, 0 refreshed)" }]);
+
+  const bare = makeApi(mkRig(), { push: vi.fn() });
+  await bare.start();
+  const r2 = await (await fetch(`http://127.0.0.1:${bare.port}/api/rubric/history`)).json() as { history?: unknown };
+  expect(r2.history).toEqual([]);
+});
