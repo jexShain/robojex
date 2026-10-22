@@ -497,3 +497,36 @@ body[data-ds-dark-theme] {
   --rj-glow-error: 0 0 20px rgba(242, 90, 90, 0.3);
   --rj-glow-warn: 0 0 20px rgba(247, 173, 49, 0.3);
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   T6 gamified motion layer — elastic curves, celebration timing, dark-theme
+   glow + border-contrast uplift. Appended after the frozen dsh sheets on
+   purpose so this block wins the cascade without editing them.
+   ════════════════════════════════════════════════════════════════════════ */
+:root {
+  /* harder overshoot — state switches (status chips, mode pills, toggles) */
+  --rj-ease-elastic: cubic-bezier(0.5, 1.8, 0.4, 1);
+  /* vercel-style long deceleration — entrances, reveals, parallax */
+  --rj-ease-decel: cubic-bezier(0.16, 1, 0.3, 1);
+  --rj-duration-boot: 900ms;
+  --rj-duration-celebrate: 1400ms;
+  --rj-parallax-shift: 24px;
+}
+
+body[data-ds-dark-theme] {
+  /* glow reads as nearly nothing on near-black surfaces at 0.22–0.3 alpha;
+     raise it until the utility is actually visible in dark mode */
+  --rj-glow-sm: 0 0 12px rgba(103, 158, 254, 0.42);
+  --rj-glow-primary: 0 0 24px rgba(103, 158, 254, 0.4);
+  --rj-glow-success: 0 0 24px rgba(78, 209, 126, 0.36);
+  --rj-glow-error: 0 0 24px rgba(242, 90, 90, 0.36);
+  --rj-glow-warn: 0 0 24px rgba(247, 173, 49, 0.36);
+
+  /* contrast uplift: 0.06 hairlines vanish on the 950 background */
+  --dsw-alias-border-l1: rgba(255, 255, 255, 0.09);
+  --dsw-alias-border-l2: rgba(255, 255, 255, 0.15);
+  --dsw-alias-border-l3: rgba(255, 255, 255, 0.19);
+
+  /* skeleton shimmer must be distinguishable from resting surfaces */
+  --dsw-alias-bg-skeleton: rgba(255, 255, 255, 0.1);
+}

@@ -1,0 +1,324 @@
+<!doctype html>
+<!--
+  packages/web/demos/motion-lab.html — T6 motion-system showcase.
+  Self-contained (mirrors the keyframes from src/styles/effects.css so it
+  opens straight from disk with no build). Every panel demos one of the
+  seven T6 requirements; buttons trigger the live effects.
+  The production app wires the same system: boot splash + celebration root
+  in main.tsx, watcher + skeleton veil in App.tsx, tokens in tokens.css.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RoboJex · T6 动效系统 Motion Lab</title>
+<style>
+  :root {
+    --bg: #0b0f16; --bg2: #101725; --line: rgba(255,255,255,.15);
+    --text: #e6e9ef; --dim: #9aa3b2;
+    --violet:#8b5cf6; --blue:#679efe; --cyan:#22d3ee; --green:#4ed17e;
+    --grad: linear-gradient(135deg,#8b5cf6,#679efe 55%,#22d3ee);
+    --spring: cubic-bezier(.34,1.56,.64,1);
+    --elastic: cubic-bezier(.5,1.8,.4,1);
+    --decel: cubic-bezier(.16,1,.3,1);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.6 system-ui, "PingFang SC", sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px 120px; }
+  h1 { font-size: 26px; margin: 48px 0 8px; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { color: var(--dim); margin-bottom: 40px; }
+  section { margin-bottom: 56px; }
+  h2 { font-size: 16px; margin-bottom: 4px; }
+  h2 .no { color: var(--cyan); font-family: ui-monospace, monospace; margin-right: 8px; }
+  p.note { color: var(--dim); font-size: 13px; margin-bottom: 16px; }
+  .panel { border: 1px solid var(--line); border-radius: 12px; background: var(--bg2); padding: 20px; }
+  button.demo {
+    background: var(--grad); color: #fff; border: 0; border-radius: 8px;
+    padding: 10px 18px; font-weight: 600; cursor: pointer;
+    transition: transform .15s var(--spring), box-shadow .25s ease;
+    box-shadow: 0 0 24px rgba(103,158,254,.4);
+  }
+  button.demo:active { transform: scale(.92); }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); box-shadow: none; }
+
+  /* 1) boot splash */
+  .rj-boot { position: fixed; inset: 0; z-index: 9998; display: grid; place-items: center;
+    background: radial-gradient(1100px 700px at 50% 18%, rgba(103,158,254,.16), transparent 62%), var(--bg); }
+  .rj-boot.out { animation: boot-out .6s ease both; pointer-events: none; }
+  @keyframes boot-out { to { opacity: 0; transform: scale(1.05); filter: blur(8px); } }
+  .stage { display: flex; flex-direction: column; align-items: center; gap: 20px; animation: boot-pop .9s var(--decel) both; }
+  @keyframes boot-pop { from { opacity:0; transform:scale(.9) } to { opacity:1; transform:none } }
+  .mark { position: relative; width: 150px; height: 150px; display: grid; place-items: center; }
+  .orbit { position: absolute; inset: 0; animation: spin 7s linear infinite; }
+  .orbit i { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+  .orbit i:nth-child(1){ top:-3px; left:calc(50% - 3.5px) } .orbit i:nth-child(2){ bottom:20px; left:16px; opacity:.75 } .orbit i:nth-child(3){ bottom:20px; right:16px; opacity:.5 }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  .gear { position: relative; z-index: 1; filter: drop-shadow(0 0 12px rgba(103,158,254,.35)) }
+  .ring { fill:none; stroke:url(#grad); stroke-width:4; stroke-linecap:round; stroke-dasharray:289; stroke-dashoffset:289; animation: draw .9s var(--decel) .15s both }
+  @keyframes draw { to { stroke-dashoffset:0 } }
+  .dash { fill:none; stroke:url(#grad); stroke-width:2; stroke-dasharray:6 10; opacity:0; transform-origin:60px 60px; animation: spin 9s linear infinite reverse, fadein .4s .6s both }
+  .core { fill: var(--violet); transform-origin:60px 60px; animation: core-pulse 1.6s ease-in-out infinite }
+  @keyframes core-pulse { 50% { transform: scale(1.3) } }
+  @keyframes fadein { from { opacity:0 } to { opacity:1 } }
+  .word { font: 700 20px/1 ui-monospace, monospace; letter-spacing:.18em;
+    background: var(--grad); background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent;
+    animation: fadein .5s .45s both, shimmer 1.8s .9s linear infinite }
+  @keyframes shimmer { from { background-position:-200% 0 } to { background-position:200% 0 } }
+  .word em { font-style:normal; color:var(--cyan); animation: blink 1s steps(2,start) infinite }
+  @keyframes blink { 50% { opacity:0 } }
+  .bar { width:190px; height:3px; border-radius:99px; overflow:hidden; background:rgba(103,158,254,.12); animation: fadein .4s .7s both }
+  .bar i { display:block; width:42%; height:100%; background: var(--grad); animation: slide 1.15s ease-in-out infinite }
+  @keyframes slide { from { transform:translateX(-110%) } to { transform:translateX(360%) } }
+
+  /* 2) celebration */
+  .celebration { position: fixed; inset: 0; z-index: 9000; pointer-events:none; overflow:hidden }
+  .burst { position: absolute }
+  .burst-ring { position:absolute; left:-5px; top:-5px; width:10px; height:10px; border-radius:50%;
+    border:2px solid hsl(212 92% 72%); box-shadow:0 0 16px hsl(212 92% 72%/.8); animation: ring .7s ease-out both }
+  @keyframes ring { from { transform:scale(.4); opacity:1 } to { transform:scale(16); opacity:0 } }
+  .particle { position:absolute; left:0; top:0; width:8px; height:8px; margin:-4px; border-radius:2px;
+    background: hsl(var(--hue,212) 85% 62%); animation: confetti 1.4s var(--d,0ms) ease-out both }
+  .particle.spark { width:5px; height:5px; border-radius:50%; background:hsl(var(--hue,212) 90% 72%);
+    box-shadow:0 0 8px hsl(var(--hue,212) 90% 65%); animation-name: spark }
+  @keyframes confetti {
+    0% { transform: translate(0,0) rotate(0) scale(.5); opacity:0 }
+    8% { opacity:1 }
+    42% { transform: translate(calc(var(--tx) * .72), var(--ty)) rotate(calc(var(--rot) * .55)) scale(1) }
+    100% { transform: translate(var(--tx), calc(var(--ty) + 190px)) rotate(var(--rot)) scale(.85); opacity:0 } }
+  @keyframes spark {
+    0% { transform:translate(0,0) scale(.2); opacity:0 } 12% { opacity:1 }
+    55% { transform: translate(calc(var(--tx)*.8), calc(var(--ty)*.8)); opacity:.95 }
+    100% { transform: translate(var(--tx), var(--ty)) scale(.05); opacity:0 } }
+
+  /* 3) elastic state switch */
+  .chip-row { display:flex; gap:10px; flex-wrap:wrap }
+  .chip { border:1px solid var(--line); border-radius:99px; padding:8px 16px; cursor:pointer; user-select:none;
+    transition: background .25s var(--elastic), color .25s, border-color .25s, transform .25s var(--elastic) }
+  .chip.on { background: var(--grad); border-color: transparent; color:#fff; box-shadow: 0 0 24px rgba(103,158,254,.4); animation: pop .3s var(--elastic) both }
+  @keyframes pop { 0%{transform:scale(.72)} 55%{transform:scale(1.08)} 78%{transform:scale(.97)} 100%{transform:scale(1)} }
+  .statebox { margin-top:14px; border:1px dashed var(--line); border-radius:10px; padding:14px; min-height:56px }
+
+  /* 4) dark glow */
+  .glow-row { display:flex; gap:14px; flex-wrap:wrap }
+  .glow-card { flex:1; min-width:180px; border:1px solid var(--line); border-radius:12px; padding:16px; background:var(--bg2);
+    transition: box-shadow .25s, transform .15s var(--spring) }
+  .glow-card:hover { transform: translateY(-3px) scale(1.015) }
+  .glow-card.primary:hover { box-shadow: 0 0 24px rgba(103,158,254,.4) }
+  .glow-card.success:hover { box-shadow: 0 0 24px rgba(78,209,126,.36) }
+  .glow-card.error:hover { box-shadow: 0 0 24px rgba(242,90,90,.36) }
+  .glow-card b { display:block; margin-bottom:6px }
+  .glow-card small { color: var(--dim) }
+
+  /* 5) micro-interactions */
+  .tiles { display:flex; gap:14px; flex-wrap:wrap; align-items:stretch }
+  .tile { flex:1; min-width:160px; border:1px solid var(--line); border-radius:12px; padding:18px; background:var(--bg2);
+    transition: transform .15s var(--spring), box-shadow .25s }
+  .tile:hover { transform: translateY(-3px) scale(1.015); box-shadow: 0 2px 10px rgba(0,0,0,.45) }
+  .tile:active { transform: scale(.94) }
+  .flip { perspective: 1000px; min-height:110px }
+  .flip-inner { position:relative; width:100%; height:100%; min-height:110px; transform-style:preserve-3d; transition: transform .6s ease; cursor:pointer }
+  .flip.flipped .flip-inner { transform: rotateY(180deg) }
+  .flip-face { backface-visibility:hidden; -webkit-backface-visibility:hidden; position:absolute; inset:0;
+    border:1px solid var(--line); border-radius:12px; padding:18px; background:var(--bg2) }
+  .flip-back { transform: rotateY(180deg); background: linear-gradient(135deg, rgba(139,92,246,.2), rgba(34,211,238,.12)) }
+
+  /* 6) parallax */
+  .parallax-hero { position:relative; height:280px; border-radius:16px; overflow:hidden; border:1px solid var(--line); margin-bottom:20px }
+  .layer { position:absolute; inset:-40px; will-change: transform }
+  .l1 { background: radial-gradient(400px 300px at 20% 30%, rgba(139,92,246,.35), transparent 70%) }
+  .l2 { background: radial-gradient(500px 320px at 80% 60%, rgba(34,211,238,.25), transparent 70%) }
+  .l3 { display:grid; place-items:center; font-size:30px; font-weight:800;
+    background: var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent }
+  .reveal { opacity:0; transform: translateY(24px); transition: opacity .5s var(--decel), transform .5s var(--decel) }
+  .reveal.on { opacity:1; transform:none }
+
+  /* 7) skeleton */
+  .sk { border-radius:6px; background: linear-gradient(90deg, rgba(255,255,255,.06) 25%, rgba(255,255,255,.14) 50%, rgba(255,255,255,.06) 75%);
+    background-size:200% 100%; animation: sk 1.5s ease-in-out infinite }
+  @keyframes sk { from { background-position:200% 0 } to { background-position:-200% 0 } }
+  .sk-col { display:flex; flex-direction:column; gap:10px }
+  .sk-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin-top:12px }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RoboJex · T6 游戏化动效系统</h1>
+  <div class="sub">Vercel 级交互七件套 —— 生产代码在 packages/web（effects.css + tokens.css + src/ui/*），本页为可交互验收台。</div>
+
+  <section>
+    <h2><span class="no">01</span>页面加载动画（纯 CSS，无 lottie）</h2>
+    <p class="note">SVG 描边绘制 + 轨道点旋转 + 渐变字流光 + 进度条滑动。首帧即出现，load 后自动退场。</p>
+    <div class="panel"><button class="demo" id="replay">▶ 重放启动动画</button></div>
+  </section>
+
+  <section>
+    <h2><span class="no">02</span>任务完成庆祝粒子</h2>
+    <p class="note">任务状态 → done 时自动触发（CelebrationWatcher 挂在 store 上）；也可手动发射。26 彩片重力飘落 + 14 光粒爆散 + 中心光环。</p>
+    <div class="panel"><button class="demo" id="fire">🎉 庆祝！任务完成</button></div>
+  </section>
+
+  <section>
+    <h2><span class="no">03</span>状态切换弹性过渡</h2>
+    <p class="note">cubic-bezier(0.5, 1.8, 0.4, 1) 过冲曲线：点状态胶囊切换，颜色/阴影/形变弹性跟随。任务圆点与模式 chip 已全局应用。</p>
+    <div class="panel">
+      <div class="chip-row" id="chips">
+        <span class="chip">todo</span><span class="chip">running</span><span class="chip on">done</span><span class="chip">blocked</span>
+      </div>
+      <div class="statebox" id="statebox">当前状态：<b>done</b>（点击其他胶囊体验弹性切换）</div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">04</span>暗色主题对比度 + glow</h2>
+    <p class="note">近黑底上 glow 提到 0.36–0.42 alpha 才可见；0.06 发丝边框提到 0.09–0.19 才有分界。hover 卡片看三种语义 glow。</p>
+    <div class="panel glow-row">
+      <div class="glow-card primary"><b>primary</b><small>进行中 / 信息 0 0 24px rgba(103,158,254,.4)</small></div>
+      <div class="glow-card success"><b>success</b><small>完成 0 0 24px rgba(78,209,126,.36)</small></div>
+      <div class="glow-card error"><b>error</b><small>失败 0 0 24px rgba(242,90,90,.36)</small></div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">05</span>微交互：hover 缩放 / 按压反馈 / 卡片翻转</h2>
+    <p class="note">hover 悬浮缩放，:active 弹压（spring 曲线回弹），右卡点击 3D 翻转。任务行、按钮、图标钮已全部接线。</p>
+    <div class="panel tiles">
+      <div class="tile">hover 悬浮<br/>按住试试按压反馈</div>
+      <div class="tile">hover 悬浮<br/>transform 用 spring 曲线</div>
+      <div class="tile flip" id="flipbox">
+        <div class="flip-inner">
+          <div class="flip-face">正面 · 点我翻转</div>
+          <div class="flip-face flip-back">背面 · rotateY(180°)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">06</span>滚动视差 + 滚动揭示</h2>
+    <p class="note">三层视差（支持 view() 时间线走纯 CSS，否则 JS rAF 回退）。下方长滚动区逐块揭示。</p>
+    <div class="parallax-hero">
+      <div class="layer l1" data-shift="40"></div>
+      <div class="layer l2" data-shift="18"></div>
+      <div class="layer l3" data-shift="-10">jex · 三层视差</div>
+    </div>
+    <div style="height:340px; overflow-y:auto; border:1px solid var(--line); border-radius:12px; padding:20px" id="scrollzone">
+      <div class="reveal">第一块 · IntersectionObserver 触发 .revealed</div>
+      <div style="height:120px"></div>
+      <div class="reveal">第二块 · opacity + translateY(24px) 减速曲线进场</div>
+      <div style="height:120px"></div>
+      <div class="reveal">第三块 · 支持 reduced-motion 自动静止</div>
+      <div style="height:120px"></div>
+      <div class="reveal">第四块 · 生产代码用 ui/Reveal.tsx 的 useReveal / Parallax</div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="no">07</span>骨架屏 loading</h2>
+    <p class="note">hello 帧落地前全幅骨架覆盖真实界面（LoadingVeil），数据到达后淡出，不闪空白。侧栏 + 任务卡两种形态。</p>
+    <div class="panel">
+      <button class="demo ghost" id="sktoggle">切换骨架屏</button>
+      <div id="skarea" style="margin-top:14px">
+        <div class="sk-col">
+          <div class="sk" style="width:40%; height:16px"></div>
+          <div class="sk" style="width:82%; height:13px"></div>
+          <div class="sk" style="width:68%; height:13px"></div>
+        </div>
+        <div class="sk-cards">
+          <div class="sk" style="height:64px"></div><div class="sk" style="height:64px"></div><div class="sk" style="height:64px"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- boot splash markup (replayed by button) -->
+<div id="bootslot"></div>
+<div class="celebration" id="celebration"></div>
+
+<svg width="0" height="0"><defs>
+  <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#8b5cf6"/><stop offset=".55" stop-color="#679efe"/><stop offset="1" stop-color="#22d3ee"/>
+  </linearGradient>
+</defs></svg>
+
+<script>
+// 1) boot splash replay
+const BOOT_HTML = '<div class="rj-boot"><div class="stage"><div class="mark"><div class="orbit"><i></i><i></i><i></i></div>' +
+  '<svg class="gear" viewBox="0 0 120 120" width="110" height="110">' +
+  '<circle class="ring" cx="60" cy="60" r="46"/><circle class="dash" cx="60" cy="60" r="34"/>' +
+  '<rect class="core" x="52" y="52" width="16" height="16" rx="4"/></svg></div>' +
+  '<div class="word">jex console<em>_</em></div><div class="bar"><i></i></div></div></div>';
+function playBoot() {
+  const slot = document.getElementById('bootslot')
+  slot.innerHTML = BOOT_HTML
+  setTimeout(() => {
+    const b = slot.firstElementChild
+    if (b) { b.classList.add('out'); setTimeout(() => { slot.innerHTML = '' }, 620) }
+  }, 1600)
+}
+document.getElementById('replay').addEventListener('click', playBoot)
+playBoot()
+
+// 2) confetti
+const HUES = [212, 258, 174, 96, 38, 350]
+function burst(x, y) {
+  const wrap = document.createElement('div')
+  wrap.className = 'burst'
+  wrap.style.left = x + 'px'; wrap.style.top = y + 'px'
+  let html = '<span class="burst-ring"></span>'
+  for (let i = 0; i < 26; i++) {
+    const a = Math.random() * Math.PI * 2, d = 70 + Math.random() * 190
+    const tx = Math.round(Math.cos(a) * d), ty = Math.round(Math.sin(a) * d * 0.5 - (30 + Math.random() * 90))
+    html += `<span class="particle" style="--tx:${tx}px;--ty:${ty}px;--rot:${Math.round(Math.random()*1080-540)}deg;--hue:${HUES[i%6]};--d:${Math.round(Math.random()*120)}ms"></span>`
+  }
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2, d = 50 + Math.random() * 110
+    html += `<span class="particle spark" style="--tx:${Math.round(Math.cos(a)*d)}px;--ty:${Math.round(Math.sin(a)*d)}px;--hue:${HUES[i%6]};--d:${Math.round(Math.random()*60)}ms"></span>`
+  }
+  wrap.innerHTML = html
+  document.getElementById('celebration').appendChild(wrap)
+  setTimeout(() => wrap.remove(), 1700)
+}
+document.getElementById('fire').addEventListener('click', (e) => burst(e.clientX, e.clientY))
+
+// 3) elastic chips
+const box = document.getElementById('statebox')
+document.getElementById('chips').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip'); if (!chip) return
+  document.querySelectorAll('#chips .chip').forEach((c) => c.classList.remove('on'))
+  void chip.offsetWidth
+  chip.classList.add('on')
+  box.innerHTML = '当前状态：<b>' + chip.textContent + '</b>'
+})
+
+// 5) flip card
+document.getElementById('flipbox').addEventListener('click', () => {
+  document.getElementById('flipbox').classList.toggle('flipped')
+})
+
+// 6) parallax (JS path — same transform math as useParallax fallback) + reveal
+function parallax() {
+  const hero = document.querySelector('.parallax-hero')
+  const r = hero.getBoundingClientRect()
+  if (r.bottom < 0 || r.top > innerHeight) return
+  const mid = r.top + r.height / 2 - innerHeight / 2
+  document.querySelectorAll('.layer').forEach((l) => {
+    const s = parseFloat(l.dataset.shift || '20')
+    l.style.transform = 'translateY(' + (-mid / innerHeight * s).toFixed(2) + 'px)'
+  })
+}
+addEventListener('scroll', () => requestAnimationFrame(parallax), { passive: true })
+parallax()
+const zone = document.getElementById('scrollzone')
+const io = new IntersectionObserver((es) => es.forEach((en) => { if (en.isIntersecting) { en.target.classList.add('on'); io.unobserve(en.target) } }), { root: zone, threshold: .2 })
+zone.querySelectorAll('.reveal').forEach((el) => io.observe(el))
+
+// 7) skeleton toggle
+let skOn = true
+document.getElementById('sktoggle').addEventListener('click', () => {
+  skOn = !skOn
+  document.getElementById('skarea').style.display = skOn ? '' : 'none'
+})
+</script>
+</body>
+</html>
