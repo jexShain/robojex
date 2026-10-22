@@ -37,6 +37,7 @@ export const en: Record<string, string> = {
   'view.agenda': 'Calendar',
   'view.activity': 'Activity',
   'view.cockpit': 'Cockpit',
+  'view.live': 'Live Activity',
 
   /* chat stream */
   'chat.copy': 'Copy',
@@ -325,6 +326,17 @@ export const en: Record<string, string> = {
   'board.collapse': 'collapse',
   'board.childBlocked': 'a child task is blocked',
   'board.progressAria': 'progress {n}%',
+  'board.childrenProgressAria': '{d}/{n} children done',
+  'board.pop.created': 'Created',
+  'board.pop.sched': 'Scheduled',
+  'board.pop.due': 'Due',
+  'board.pop.progress': 'Progress',
+  'board.pop.children': 'Children',
+  'board.pop.priority': 'Priority',
+  'board.pop.assignee': 'Assignee',
+  'board.pop.verdict': 'Verdict',
+  'board.pop.acceptance': 'Acceptance',
+  'board.pop.result': 'Result',
 
   /* agenda / calendar */
   'ag.pendingBadge': 'Syncing reschedule…',
@@ -353,6 +365,18 @@ export const en: Record<string, string> = {
   'ag.unsDropHint': 'drop a row here to clear its schedule',
   'ag.unsRowHint': 'drag onto a day header to schedule (09:00 default)',
   'ag.unsEmpty': 'Nothing unscheduled',
+  'ag.modeGantt': 'Gantt',
+  'ag.hintGantt': 'day/week/month switching · drag blocks to move time · ◆ = milestone · red pulse = overdue',
+  'ag.rangeAria': 'Time range',
+  'ag.rangeDay': 'Day',
+  'ag.rangeWeek': 'Week',
+  'ag.rangeMonth': 'Month',
+  'ag.prevRange': 'Previous range',
+  'ag.nextRange': 'Next range',
+  'ag.msOn': 'Mark as milestone',
+  'ag.msOff': 'Clear milestone',
+  'ag.msErr': 'milestone toggle failed',
+  'ag.milestoneTip': 'Milestone',
 
   /* activity feed */
   'act.title': 'Activity',
@@ -365,6 +389,21 @@ export const en: Record<string, string> = {
   'act.thinking': 'thinking…',
   'act.heartbeat': 'heartbeat',
   'act.modeLine': 'mode → {n}',
+
+  /* live activity (T2) */
+  'live.title': 'Live Activity',
+  'live.running': 'Running now',
+  'live.recent': 'Recently done',
+  'live.stream': 'Thinking · Decisions',
+  'live.emptyRunning': 'Nothing in flight',
+  'live.emptyRecent': 'No completions yet',
+  'live.emptyStream': 'waiting for thoughts…',
+  'live.heartbeat': 'System heartbeat',
+  'live.beat': 'last beat {n} ago',
+  'live.noBeat': 'awaiting first beat',
+  'live.stateDown': 'connection lost',
+  'live.openTask': 'Open task details',
+  'live.inProgress': 'in progress…',
 
   /* details panel */
   'detail.tabTask': 'Task',

@@ -476,6 +476,28 @@ async function transcribeAndSend(wav) {
 const TRAY_ICON_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABu0lEQVR42o3T3UvTARTG8fMXBUIYROGPoixKLbO0sjK1NDXfQ3Em1sLKF4qpMBwkuCCYF8K8ENbFj9aV3rm7dad33rXU5nTrG4+4yHKbf8CH5znncCw0igVe4kx4cId6oLMtw9PONC29aZr692gc3OXh8C73X6W4+yZFzfgON9/vuJVTSafCn7R9/NEH06Pw2gv9HgphKqeSVPiTXA38dEzJwh9m4J0PXoxBt5fjYC7Pbrum2koW9s/B2xnwTELbGIUwF4PbmGZWbSUL+0LgnYNnAXg8SV58/tMWll2YaitZeDwMz0PQEYS6ADmxM7+F/b0w1Vay8EgE+sLwZB7uBDkSn13YxP7dtmorWXg4Cl0RaAhDVYj/8OnFTeyobau2koUHlqH1C9yLQHmYQ/jU0g8s16lUW8nCvavwaBmqo3Ap8usPPvk5geU7lWorWbg9Dg9W4foKnItm9nGRm8AK3Vm1lSzcvAa343AlBmdW0pz4+h0rdGfNrNpKFq7fgBtrcOEbFMf2sIPHyImzC1NtJQvXJqBsA0rWce3gq/Li7MJUW8nCt1JQmsAxvaS+So+RD2thmlm1lSx8Dew3IWjocbg/jZAAAAAASUVORK5CYII=';
 
+/* Live jex status pushed by the renderer (tray:status): the tray is the only
+ * surface visible when the window is hidden, so it mirrors gear + connection.
+ * null/'' = never heard from the renderer (page still loading) — fall back to
+ * the pre-0.2.20 static presentation. */
+let trayGear = null;    // 0..4, mirrors GEARS ids
+let trayLabel = '';     // e.g. '⚖️ 均衡'
+let trayOnline = null;  // true | false | null
+
+function trayTooltip() {
+  const bits = ['RoboJex'];
+  if (trayLabel) bits.push(trayLabel);
+  if (trayOnline === true) bits.push('运行中');
+  else if (trayOnline === false) bits.push('后端离线');
+  return bits.join(' · ');
+}
+
+function applyTrayStatus() {
+  if (!tray || tray.isDestroyed()) return;
+  tray.setToolTip(trayTooltip());
+  tray.setContextMenu(buildTrayMenu()); // radios follow the live gear
+}
+
 function sendAction(type, payload = {}) {
   // tray/menu actions ride one channel; the renderer's onAction() fans out
   let createdFresh = false;
@@ -511,7 +533,7 @@ function buildTrayMenu() {
       submenu: GEARS.map((g) => ({
         label: g.label,
         type: 'radio',
-        checked: g.id === 2,
+        checked: g.id === (trayGear ?? 2), // renderer pushes the live gear; balanced until proven
         click: () => sendAction('set-gear', { gear: g.id }),
       })),
     },
@@ -888,6 +910,58 @@ async function resolveUiBase() {
   return ok ? `http://127.0.0.1:${backend.port}` : null;
 }
 
+/* ───────────────────────── autostart (开机自启) ─────────────────────────
+ * win32/darwin: Electron's LoginItemSettings (packaged build registers the
+ * real exe; a dev run registers electron.exe — dev toggles are not shipped).
+ * linux: no LoginItemSettings support — manage the XDG autostart entry by
+ * hand so the same IPC works everywhere. */
+
+function linuxAutostartFile() {
+  const configHome = process.env.XDG_CONFIG_HOME || path.join(app.getPath('home'), '.config');
+  return path.join(configHome, 'autostart', 'robojex.desktop');
+}
+
+function getAutostart() {
+  if (process.platform !== 'linux') {
+    try { return app.getLoginItemSettings().openAtLogin; } catch { return false; }
+  }
+  try { return fs.existsSync(linuxAutostartFile()); } catch { return false; }
+}
+
+function setAutostart(enabled) {
+  if (process.platform !== 'linux') {
+    try {
+      app.setLoginItemSettings({ openAtLogin: !!enabled, args: [] });
+      return getAutostart(); // read back: the OS is the truth
+    } catch (err) {
+      console.warn('[robojex] autostart 设置失败：', err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+  const file = linuxAutostartFile();
+  try {
+    if (enabled) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      // quoted Exec survives AppImage paths with spaces
+      fs.writeFileSync(file, [
+        '[Desktop Entry]',
+        'Type=Application',
+        'Name=RoboJex',
+        `Exec="${process.execPath}"`,
+        'X-GNOME-Autostart-enabled=true',
+        'Comment=RoboJex desktop (toggled from settings)',
+        '',
+      ].join('\n'));
+    } else if (fs.existsSync(file)) {
+      fs.rmSync(file);
+    }
+    return getAutostart();
+  } catch (err) {
+    console.warn('[robojex] autostart 设置失败：', err instanceof Error ? err.message : err);
+    return getAutostart();
+  }
+}
+
 /* ─────────────────── IPC surface ─────────────────── */
 
 function registerIpc() {
@@ -935,6 +1009,22 @@ function registerIpc() {
   // settings › 聊天 › 语音汇报: fetch the ~2GB model trees (long-running; the
   // renderer polls /health to flip the card to ready)
   ipcMain.handle('voice:download-models', () => downloadVoiceModels());
+
+  // settings › 通用 › 开机自启 — the desktop shell owns the OS integration;
+  // set returns the post-write value so the renderer never trusts its guess
+  ipcMain.handle('autostart:get', () => getAutostart());
+  ipcMain.handle('autostart:set', (_e, enabled) => setAutostart(!!enabled));
+
+  // renderer → tray status mirror: { gear: 0..4, label, connected }
+  // untrusted payload: clamp gear range, clip the label, coerce the tri-state
+  ipcMain.on('tray:status', (_e, payload) => {
+    const g = Number(payload?.gear);
+    trayGear = Number.isInteger(g) && g >= 0 && g < GEARS.length ? g : null;
+    const l = typeof payload?.label === 'string' ? payload.label.trim() : '';
+    trayLabel = l.slice(0, 40);
+    trayOnline = payload?.connected === true ? true : payload?.connected === false ? false : null;
+    applyTrayStatus();
+  });
 }
 
 /* ─────────────────── app lifecycle ─────────────────── */

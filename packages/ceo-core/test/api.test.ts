@@ -830,3 +830,111 @@ test("hello carries tickN; hud frames broadcast to ws clients", async () => {
   expect(hud).toMatchObject({ t: "hud", kind: "due_spawn", taskId: "x" });
   expect(typeof hud.ts).toBe("number");
 });
+
+test("PATCH /api/task priority: bump lands, broadcasts, reorders list(); bad shapes 4xx", async () => {
+  const rig = mkRig();
+  rig.board.add({ title: "a" }); // all default priority 0
+  const b = rig.board.add({ title: "b" });
+  const fin = rig.board.add({ title: "finished" });
+  rig.board.update(fin.id, { status: "done" });
+  const api = makeApi(rig, { push: vi.fn() });
+  await api.start();
+  const c = wsCollect(api);
+  await c.opened;
+
+  const patch = (body: unknown): Promise<Response> =>
+    fetch(`http://127.0.0.1:${api.port}/api/task`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  const r = await patch({ id: b.id, priority: 5.4 });
+  expect(r.status).toBe(202);
+  expect((await r.json() as { task: { priority: number } }).task.priority).toBe(5); // rounded
+  expect(rig.board.list()[0]!.id).toBe(b.id); // priority DESC wins
+  await until(() => c.frames.some((f) => f.t === "tasks" && (f.tasks as Array<{ id: string; priority?: number }>).some((t) => t.id === b.id && t.priority === 5)));
+
+  for (const [body, code] of [
+    [{ id: b.id, priority: "high" }, 400],
+    [{ id: b.id, priority: 1e999 }, 400], // JSON Infinity
+    [{ id: fin.id, priority: 9 }, 409],   // history immutable
+    [{ id: "missing", priority: 1 }, 404],
+    [{ id: b.id }, 400],                  // needs at least one editable field
+  ] as [unknown, number][]) {
+    const rr = await patch(body);
+    expect(rr.status, `body ${JSON.stringify(body)}`).toBe(code);
+  }
+  c.ws.close();
+});
+
+test("PATCH /api/task milestone: flag lands and broadcasts both ways; history refuses, non-boolean 400", async () => {
+  const rig = mkRig();
+  const live = rig.board.add({ title: "ship v1", dueAt: Date.now() + 60_000 });
+  const fin = rig.board.add({ title: "old" });
+  rig.board.update(fin.id, { status: "done" });
+  const api = makeApi(rig, { push: vi.fn() });
+  await api.start();
+  const c = wsCollect(api);
+  await c.opened;
+
+  const patch = (body: unknown): Promise<Response> =>
+    fetch(`http://127.0.0.1:${api.port}/api/task`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  expect(rig.board.list().find((t) => t.id === live.id)!.milestone).toBe(false); // default
+  const r = await patch({ id: live.id, milestone: true });
+  expect(r.status).toBe(202);
+  expect((await r.json() as { task: { milestone: boolean } }).task.milestone).toBe(true);
+  expect(rig.board.list().find((t) => t.id === live.id)!.milestone).toBe(true);
+  await until(() => c.frames.some((f) => f.t === "tasks" && (f.tasks as Array<{ id: string; milestone?: boolean }>).some((t) => t.id === live.id && t.milestone === true)));
+
+  const off = await patch({ id: live.id, milestone: false });
+  expect(off.status).toBe(202);
+  expect(rig.board.list().find((t) => t.id === live.id)!.milestone).toBe(false);
+
+  for (const [body, code] of [
+    [{ id: live.id, milestone: "yes" }, 400],
+    [{ id: live.id, milestone: 1 }, 400],
+    [{ id: fin.id, milestone: true }, 409], // history immutable
+    [{ id: "missing", milestone: true }, 404],
+  ] as [unknown, number][]) {
+    const rr = await patch(body);
+    expect(rr.status, `body ${JSON.stringify(body)}`).toBe(code);
+  }
+  c.ws.close();
+});
+
+test("POST /api/task/reorder: drop order lands as priority ladder + one broadcast; shape/history guards", async () => {
+  const rig = mkRig();
+  const root = rig.board.add({ title: "epic" });
+  const c1 = rig.board.add({ title: "first", parentId: root.id });
+  const c2 = rig.board.add({ title: "second", parentId: root.id });
+  const c3 = rig.board.add({ title: "third", parentId: root.id });
+  const other = rig.board.add({ title: "different parent" });
+  const api = makeApi(rig, { push: vi.fn() });
+  await api.start();
+  const c = wsCollect(api);
+  await c.opened;
+
+  const reorder = (body: unknown): Promise<Response> =>
+    fetch(`http://127.0.0.1:${api.port}/api/task/reorder`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  const r = await reorder({ ids: [c3.id, c1.id, c2.id] });
+  expect(r.status).toBe(202);
+  const order = rig.board.list().filter((t) => t.parentId === root.id).map((t) => t.id);
+  expect(order).toEqual([c3.id, c1.id, c2.id]); // priority DESC = drop order
+  await until(() => c.frames.some((f) => f.t === "tasks"));
+  const frame = c.frames.filter((f) => f.t === "tasks").pop()!;
+  expect((frame.tasks as Array<{ id: string; priority: number }>).find((t) => t.id === c3.id)!.priority)
+    .toBeGreaterThan((frame.tasks as Array<{ id: string; priority: number }>).find((t) => t.id === c2.id)!.priority);
+
+  for (const [body, code] of [
+    [{ ids: [c1.id] }, 400],                                  // needs at least two
+    [{ ids: [c1.id, c1.id] }, 400],                           // duplicate
+    [{ ids: [c1.id, "ghost"] }, 404],                         // missing
+    [{ ids: [c1.id, other.id] }, 400],                        // mixed parent groups
+    [{ ids: [c1.id, other.id], parentId: root.id }, 400],     // pinned parent mismatch
+    [{ ids: "nope" }, 400],
+    [{ ids: [] }, 400],
+  ] as [unknown, number][]) {
+    const rr = await reorder(body);
+    expect(rr.status, `body ${JSON.stringify(body)}`).toBe(code);
+  }
+  c.ws.close();
+});

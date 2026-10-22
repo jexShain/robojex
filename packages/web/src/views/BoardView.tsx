@@ -4,7 +4,7 @@
 // and the filter/expand toolbar. Re-renders are frame-driven: any hello/tasks
 // frame swaps state.tasks and CSS transitions tween the card positions.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { statusTone, useStore } from '../state/store'
 import { useT } from '../i18n'
 import { fill } from '../i18n'
@@ -13,6 +13,7 @@ import { parseQuickTime } from './quickTime'
 import { takeBoardFocus } from './boardFocus'
 import type { Task } from '../state/types'
 import {
+  CARD_W,
   type BoardFilter,
   type PlacedNode,
   buildForest,
@@ -60,27 +61,36 @@ function Badges({ task, now }: { task: Task; now: number }) {
 
 const VERDICTS = new Set(['pass', 'partial', 'fail', 'unchecked'])
 
-/** Card-corner progress ring (20px SVG) + verdict badge. The ring fill arcs
- * by task.progress; stroke color follows the verdict semantics:
- * pass→green, partial→amber, fail→red, unchecked→gray. */
-function ProgressRing({ task }: { task: Task }) {
+/** Card-corner progress ring (20px SVG) + verdict badge. A parent with live
+ * children earns the ladder instead of a mystery: the ring arcs to the
+ * children's done/total ratio so collapsing a subtree never hides the very
+ * progress the collapse hides. Otherwise the ring fills by task.progress.
+ * Stroke color follows the verdict semantics: pass→green, partial→amber,
+ * fail→red, unchecked→gray. */
+function ProgressRing({ task, childDone = 0, childTotal = 0 }: { task: Task; childDone?: number; childTotal?: number }) {
   const { t } = useT()
   const verdict = (task.verdict ?? 'unchecked').toLowerCase()
   const v = VERDICTS.has(verdict) ? verdict : 'unchecked'
   const progress = typeof task.progress === 'number' ? Math.max(0, Math.min(100, task.progress)) : 0
+  const showKids = childTotal > 0
+  const pct = showKids ? Math.round((childDone / childTotal) * 100) : progress
+  const strokeV = showKids ? (pct === 100 ? 'pass' : pct > 0 ? 'partial' : 'unchecked') : v
+  const aria = showKids
+    ? fill(t('board.childrenProgressAria'), { d: childDone, n: childTotal })
+    : fill(t('board.progressAria'), { n: progress })
   return (
     <div className="bc-progress">
-      <svg className="ring" viewBox="0 0 36 36" width="20" height="20" aria-label={fill(t('board.progressAria'), { n: progress })}>
+      <svg className="ring" viewBox="0 0 36 36" width="20" height="20" aria-label={aria}>
         <circle cx="18" cy="18" r="15.9" className="ring-bg" />
         <circle
           cx="18"
           cy="18"
           r="15.9"
-          className={`ring-fg v-${v}`}
-          strokeDasharray={`${progress} 100`}
+          className={`ring-fg v-${strokeV}`}
+          strokeDasharray={`${pct} 100`}
           pathLength={100}
         />
-        <text x="18" y="21" textAnchor="middle" className="ring-txt">{progress}</text>
+        <text x="18" y="21" textAnchor="middle" className="ring-txt">{pct}</text>
       </svg>
       <span className={`bc-verdict v-${v}`} title={`verdict: ${v}`}>
         <Icon name={verdictIcon(v)} size={11} />
@@ -89,24 +99,93 @@ function ProgressRing({ task }: { task: Task }) {
   )
 }
 
-/** One node card: status dot, title, sched/due badges, caret + child count.
- * The card selects the task (details panel); the caret button toggles. */
+/** Hover detail — the details panel answers clicks, this answers glances.
+ * pointer-events: none keeps the card underneath hot: the pop never steals
+ * the cursor that spawned it, and leaving the card simply retracts it. */
+function TaskPop({ placed, now, canvasW, canvasH }: { placed: PlacedNode; now: number; canvasW: number; canvasH: number }) {
+  const { t } = useT()
+  const { task, childDone, childTotal } = placed.node
+  const POP_W = 264
+  const tone = statusTone(task.status)
+  // prefer the right of the card, flip inside the canvas when it would clip;
+  // vertical clamps keep a deep card's pop reachable without scrolling blind
+  const right = placed.x + CARD_W + 12
+  const left = right + POP_W <= canvasW ? Math.min(right, canvasW - POP_W) : Math.max(0, placed.x - POP_W - 12)
+  const top = Math.max(0, Math.min(placed.y, canvasH - 140))
+  const rows: Array<[string, string]> = []
+  if (task.scheduledAt != null) rows.push([t('board.pop.sched'), fmtStamp(task.scheduledAt, now)])
+  if (task.dueAt != null) rows.push([t('board.pop.due'), fmtStamp(task.dueAt, now)])
+  rows.push([t('board.pop.created'), fmtStamp(task.createdAt, now)])
+  if (typeof task.progress === 'number') rows.push([t('board.pop.progress'), `${Math.max(0, Math.min(100, task.progress))}%`])
+  if (childTotal > 0) rows.push([t('board.pop.children'), `${childDone}/${childTotal}`])
+  if (task.assignee) rows.push([t('board.pop.assignee'), task.assignee])
+  if (task.verdict) rows.push([t('board.pop.verdict'), task.verdict])
+  return (
+    <div className={`board-pop tone-${tone}`} style={{ left, top, width: POP_W }} data-testid="board-task-pop">
+      <div className="bp-head">
+        <span className={`bp-dot tone-${tone}`} />
+        <span className="bp-title">{task.title}</span>
+      </div>
+      <div className="bp-status">
+        {task.status}
+        {(task.priority ?? 0) > 0 ? <span className="bp-prio">p{task.priority}</span> : null}
+      </div>
+      {rows.map(([k, v]) => (
+        <div className="bp-row" key={k}>
+          <span>{k}</span>
+          <b>{v}</b>
+        </div>
+      ))}
+      {task.acceptance ? (
+        <div className="bp-note" title={task.acceptance}>
+          {t('board.pop.acceptance')}: {task.acceptance}
+        </div>
+      ) : null}
+      {task.resultSummary ? (
+        <div className="bp-note" title={task.resultSummary}>
+          {t('board.pop.result')}: {task.resultSummary}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** One node card: status dot, title, sched/due badges, caret + child count,
+ * a bottom ladder bar when it has children, drag-to-reorder among siblings
+ * and hover-to-pop details. The card selects the task (details panel); the
+ * caret button toggles. */
 function BoardCard({
   placed,
   collapsed,
   now,
   active,
+  dragging,
+  dropHalf,
+  canDrop,
   onSelect,
   onToggle,
   onRemove,
+  onDragStart,
+  onDragOverCard,
+  onDropCard,
+  onDragEnd,
+  onHover,
 }: {
   placed: PlacedNode
   collapsed: boolean
   now: number
   active: boolean
+  dragging: boolean
+  dropHalf: 'before' | 'after' | null
+  canDrop: boolean
   onSelect(): void
   onToggle(): void
   onRemove(): void
+  onDragStart(e: DragEvent<HTMLDivElement>): void
+  onDragOverCard(e: DragEvent<HTMLDivElement>): void
+  onDropCard(): void
+  onDragEnd(): void
+  onHover(id: string | null): void
 }) {
   const { t } = useT()
   // two-step cancel: cancelled is terminal (no un-cancel API), and a hover
@@ -115,9 +194,10 @@ function BoardCard({
   const [armed, setArmed] = useState(false)
   const armTimer = useRef(0)
   useEffect(() => () => window.clearTimeout(armTimer.current), [])
-  const { task, children, subtreeBlocked, subtreeRunning, allChildrenDone } = placed.node
+  const { task, children, childDone, childTotal, subtreeBlocked, subtreeRunning, allChildrenDone } = placed.node
   const tone = statusTone(task.status)
   const hasKids = children.length > 0
+  const kidsPct = childTotal > 0 ? Math.round((childDone / childTotal) * 100) : 0
   const staggerCls = placed.childIndex > 0 ? `rj-stagger-${Math.min(placed.childIndex, 6)}` : ''
   return (
     <div
@@ -130,6 +210,9 @@ function BoardCard({
         active ? 'active' : '',
         subtreeRunning ? 'subtree-pulse' : '',
         allChildrenDone ? 'subtree-celebrate' : '',
+        dragging ? 'dragging' : '',
+        dropHalf === 'before' ? 'drop-before' : dropHalf === 'after' ? 'drop-after' : '',
+        canDrop && !dragging ? 'droppable' : '',
         staggerCls,
       ]
         .filter(Boolean)
@@ -138,7 +221,17 @@ function BoardCard({
       role="button"
       tabIndex={0}
       aria-label={`${task.title} · ${task.status}`}
+      draggable
       onClick={onSelect}
+      onDragStart={onDragStart}
+      onDragOver={onDragOverCard}
+      onDrop={(e) => {
+        e.preventDefault()
+        onDropCard()
+      }}
+      onDragEnd={onDragEnd}
+      onMouseEnter={() => onHover(task.id)}
+      onMouseLeave={() => onHover(null)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
@@ -148,7 +241,9 @@ function BoardCard({
     >
       <span className="bc-dot" />
       <span className="bc-title">{task.title}</span>
-      {typeof task.progress === 'number' || task.verdict ? <ProgressRing task={task} /> : null}
+      {typeof task.progress === 'number' || task.verdict || childTotal > 0 ? (
+        <ProgressRing task={task} childDone={childDone} childTotal={childTotal} />
+      ) : null}
       <div className="bc-meta">
         <Badges task={task} now={now} />
         {task.status !== 'done' && task.status !== 'cancelled' ? (
@@ -196,6 +291,14 @@ function BoardCard({
           </span>
         ) : null}
       </div>
+      {hasKids ? (
+        <span
+          className={`bc-kids${kidsPct === 100 ? ' full' : ''}`}
+          style={{ ['--fill' as string]: `${kidsPct}%` }}
+          title={fill(t('board.childrenProgressAria'), { d: childDone, n: childTotal })}
+          aria-hidden="true"
+        />
+      ) : null}
     </div>
   )
 }
@@ -272,6 +375,72 @@ export function BoardView() {
   const forest = useMemo(() => buildForest(state.tasks), [state.tasks])
   const filtered = useMemo(() => filterForest(forest, filter), [forest, filter])
   const layout = useMemo(() => layoutForest(filtered, collapsed), [filtered, collapsed])
+  const placedById = useMemo(
+    () => new Map(layout.nodes.map((p) => [p.node.task.id, p])),
+    [layout],
+  )
+
+  // drag-drop priority: the drop slot is half-of-target (above the fold =
+  // before, below = after); POST /api/task/reorder rewrites the ladder in one
+  // shot and its tasks broadcast drives the left/top tween — no optimistic
+  // patch, the board order is exactly what the server persisted. Reordering
+  // is sibling-local: cross-parent drops are refused, reparenting stays an
+  // explicit act (the loop's job), not a drag accident.
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ id: string; half: 'before' | 'after' } | null>(null)
+  const [hoverId, setHoverId] = useState<string | null>(null)
+  const groupOf = (id: string): string => placedById.get(id)?.node.task.parentId ?? ''
+  const groupSize = (gid: string): number =>
+    layout.nodes.reduce((n, p) => (p.node.task.parentId ?? '') === gid ? n + 1 : n, 0)
+
+  const startDrag = (e: DragEvent<HTMLDivElement>, id: string): void => {
+    setDragId(id)
+    setHoverId(null) // the pop follows the cursor out — dragging is the intent
+    e.dataTransfer.setData('text/plain', id)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+  const overCard = (e: DragEvent<HTMLDivElement>, id: string): void => {
+    if (!dragId || dragId === id || groupOf(dragId) !== groupOf(id)) return
+    if (groupSize(groupOf(id)) < 2) return
+    e.preventDefault() // only same-group siblings accept the drop cursor
+    e.dataTransfer.dropEffect = 'move'
+    const r = e.currentTarget.getBoundingClientRect()
+    const half: 'before' | 'after' = e.clientY < r.top + r.height / 2 ? 'before' : 'after'
+    setDropTarget((d) => (d && d.id === id && d.half === half ? d : { id, half }))
+  }
+  const endDrag = (): void => {
+    setDragId(null)
+    setDropTarget(null)
+  }
+  const commitDrop = async (): Promise<void> => {
+    const target = dropTarget
+    if (!dragId || !target || target.id === dragId) return endDrag()
+    const gid = groupOf(dragId)
+    const ids = layout.nodes
+      .filter((p) => (p.node.task.parentId ?? '') === gid)
+      .map((p) => p.node.task.id) // DOM order = top-to-bottom = current ladder
+    if (!ids.includes(dragId) || !ids.includes(target.id)) return endDrag()
+    const next = ids.filter((x) => x !== dragId)
+    // slot in the ladder WITHOUT the dragged card — anchoring on ids[] would
+    // be off by one whenever the drag came from above the target
+    const idx = next.indexOf(target.id)
+    next.splice(target.half === 'after' ? idx + 1 : idx, 0, dragId)
+    if (next.join('|') === ids.join('|')) return endDrag()
+    endDrag()
+    try {
+      const res = await fetch('/api/task/reorder', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ids: next }),
+      })
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(d.error || `HTTP ${res.status}`)
+      }
+    } catch (err) {
+      setCreateErr(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   // Ghost exit pass: nodes that vanish (collapse or filter) fade out at their
   // old spot while the survivors tween into place — the "height + opacity"
@@ -411,11 +580,31 @@ export function BoardView() {
                 collapsed={collapsed.has(p.node.task.id)}
                 now={now}
                 active={p.node.task.id === state.selectedTaskId}
+                dragging={p.node.task.id === dragId}
+                dropHalf={dropTarget && dropTarget.id === p.node.task.id ? dropTarget.half : null}
+                canDrop={
+                  dragId != null &&
+                  dragId !== p.node.task.id &&
+                  groupOf(dragId) === groupOf(p.node.task.id)
+                }
                 onSelect={() => selectTask(p.node.task.id)}
                 onToggle={() => toggle(p.node.task.id)}
                 onRemove={() => void removeTask(p.node.task.id)}
+                onDragStart={(e) => startDrag(e, p.node.task.id)}
+                onDragOverCard={(e) => overCard(e, p.node.task.id)}
+                onDropCard={() => void commitDrop()}
+                onDragEnd={endDrag}
+                onHover={(id) => setHoverId((h) => (id === null ? (h === p.node.task.id ? null : h) : id))}
               />
             ))}
+            {hoverId && !dragId && placedById.has(hoverId) ? (
+              <TaskPop
+                placed={placedById.get(hoverId)!}
+                now={now}
+                canvasW={layout.width}
+                canvasH={layout.height}
+              />
+            ) : null}
             {ghosts.map((g) => (
               <div
                 key={`ghost-${g.node.task.id}`}

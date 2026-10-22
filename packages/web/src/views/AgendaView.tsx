@@ -13,22 +13,30 @@ import { fill } from '../i18n'
 import type { Task } from '../state/types'
 import {
   type AgendaBlock,
+  addDaysLocal,
   blocksForDay,
+  ganttDropTime,
+  ganttRows,
   nowPct,
+  nowPctRange,
   overdueRows,
+  RANGE_KINDS,
+  type RangeKind,
+  rangeSnapMinutes,
+  rangeWindow,
   scheduleGroups,
   type ScheduleRow,
+  snapTo,
   unscheduledTasks,
+  xToTimeRange,
   ZOOM_LEVELS,
   type ZoomLevel,
   clampZoom,
   hourHeight,
   snapMinutes,
-  snapTo,
   yToTime,
 } from './agendaModel'
 import { dayColHead, dayStartOf, fmtClock, fmtDayLabel, fmtStamp } from './timefmt'
-import { addDaysLocal } from './agendaModel'
 
 /** Max tree indentation in px. */
 const TREE_INDENT = 20
@@ -757,17 +765,407 @@ function ScheduleList({ onOpen }: { onOpen(id: string): void }) {
   )
 }
 
+/* ============================================================
+   T4 Gantt — horizontal timeline (甘特图风格): rows are tasks (one
+   per row, never overlapping), the x axis is time. Range switches:
+   今日 (hours) / 本周 (Mon–Sun days) / 本月 (calendar days). Blocks
+   drag horizontally to adjust scheduledAt (snap per range), ◆ marks
+   milestones, overdue blocks pulse red, and a now-pointer glides
+   along live (10s heartbeat + a 10s CSS slide between ticks).
+   ============================================================ */
+
+const GANTT_LABEL_W = 'var(--agt-label-w, 170px)'
+
+function loadGanttKind(): RangeKind {
+  const raw = window.localStorage.getItem('robojex-gantt-kind')
+  return raw === 'day' || raw === 'month' || raw === 'week' ? raw : 'week'
+}
+
+interface GanttDrag {
+  task: Task
+  /** original scheduledAt (or dueAt when unscheduled) — time-of-day keeper */
+  orig: number
+  /** row-track viewport rect captured at pointerdown (rows never shift x) */
+  rect: { left: number; width: number }
+  x: number
+  y: number
+  moved: boolean
+  /** live snapped drop time, shown in the ghost; null until first move */
+  drop: number | null
+}
+
+function GanttView({ onOpen }: { onOpen(id: string): void }) {
+  const { state } = useStore()
+  const { t, lang } = useT()
+  const [kind, setKind] = useState<RangeKind>(loadGanttKind)
+  const [walk, setWalk] = useState(0)
+  const [, setTick] = useState(0)
+  const [pending, setPending] = useState<Map<string, number>>(() => new Map())
+  const [msPending, setMsPending] = useState<Map<string, boolean>>(() => new Map())
+  const [stageErr, setStageErr] = useState<string | null>(null)
+  const [msErr, setMsErr] = useState<string | null>(null)
+  const [drag, setDrag] = useState<GanttDrag | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    window.localStorage.setItem('robojex-gantt-kind', kind)
+  }, [kind])
+
+  // 10s heartbeat drives the now-pointer; the CSS transition (10s linear)
+  // interpolates between ticks so it looks like it moves in real time.
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((x) => x + 1), 10_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const now = Date.now() + state.clockOffset
+  const win = useMemo(() => rangeWindow(kind, now, walk), [kind, walk, now])
+  const today0 = dayStartOf(now)
+
+  // optimistic stages ride on the task list itself: pending = reschedule
+  // (confirmed by the broadcast), msPending = milestone toggle (same rule).
+  const tasks = useMemo(
+    () =>
+      pending.size === 0 && msPending.size === 0
+        ? state.tasks
+        : state.tasks.map((t) => {
+            const patch: Partial<Task> = {}
+            if (pending.has(t.id)) patch.scheduledAt = pending.get(t.id) ?? null
+            if (msPending.has(t.id)) patch.milestone = msPending.get(t.id) ?? false
+            return { ...t, ...patch }
+          }),
+    [state.tasks, pending, msPending],
+  )
+  useEffect(() => {
+    setPending((m) => retireConfirmed(m, state.tasks))
+  }, [state.tasks])
+  useEffect(() => {
+    if (msPending.size === 0) return
+    setMsPending((m) => {
+      const next = new Map(m)
+      for (const [id, flag] of m) {
+        const cur = state.tasks.find((x) => x.id === id)
+        if (!cur || cur.milestone === flag) next.delete(id)
+      }
+      return next.size === m.size ? m : next
+    })
+  }, [state.tasks, msPending])
+  useEffect(() => {
+    if (stageErr === null && msErr === null) return
+    const a = window.setTimeout(() => setStageErr(null), 4_000)
+    const b = window.setTimeout(() => setMsErr(null), 4_000)
+    return () => { window.clearTimeout(a); window.clearTimeout(b) }
+  }, [stageErr, msErr])
+
+  const rows = useMemo(() => ganttRows(tasks, win, now), [tasks, win, now])
+
+  // column grid: 24 hours / 7 days / month days — same data paints the
+  // ruler labels and the per-row vertical bands (weekend tint, edges).
+  const cols = useMemo(() => {
+    if (kind === 'day') {
+      return Array.from({ length: 24 }, (_, h) => ({
+        left: (h / 24) * 100,
+        width: 100 / 24,
+        label: String(h).padStart(2, '0'),
+        weekend: false,
+        today: false,
+      }))
+    }
+    const n = kind === 'week' ? 7 : new Date(new Date(win.start).getFullYear(), new Date(win.start).getMonth() + 1, 0).getDate()
+    return Array.from({ length: n }, (_, i) => {
+      const day0 = addDaysLocal(win.start, i)
+      const wd = new Date(day0).getDay()
+      const d = new Date(day0)
+      return {
+        left: (i / n) * 100,
+        width: 100 / n,
+        label: kind === 'week' ? `${dayColHead(day0, lang).weekday} ${d.getDate()}` : String(d.getDate()),
+        weekend: wd === 0 || wd === 6,
+        today: day0 === today0,
+      }
+    })
+  }, [kind, win, today0, lang])
+
+  const rangeLabel =
+    kind === 'day'
+      ? fmtDayLabel(win.start, lang)
+      : kind === 'week'
+        ? `${fmtDayLabel(win.start, lang)} – ${fmtDayLabel(addDaysLocal(win.start, 6), lang)}`
+        : `${new Date(win.start).getFullYear()}-${String(new Date(win.start).getMonth() + 1).padStart(2, '0')}`
+
+  const nowP = nowPctRange(now, win)
+
+  /* ---- drag: horizontal move = new scheduledAt (duration kept — only the
+     start moves, same contract as the vertical timeline's drag). ---- */
+  const onBlockDown = useCallback((e: PointerEvent, task: Task) => {
+    const track = (e.target as HTMLElement).closest('.agt-rowtrack') as HTMLElement | null
+    if (!track) return
+    const r = track.getBoundingClientRect()
+    ;(e.target as HTMLElement).setPointerCapture?.(e.pointerId)
+    setDrag({
+      task,
+      orig: task.scheduledAt ?? task.dueAt ?? Date.now(),
+      rect: { left: r.left, width: r.width },
+      x: e.clientX,
+      y: e.clientY,
+      moved: false,
+      drop: null,
+    })
+  }, [])
+
+  const dropTime = useCallback(
+    (d: GanttDrag, clientX: number): number => {
+      const xPct = ((clientX - d.rect.left) / Math.max(1, d.rect.width)) * 100
+      const ms = xToTimeRange(xPct, win)
+      if (kind === 'month') return ganttDropTime(dayStartOf(ms), d.orig)
+      return snapTo(ms, rangeSnapMinutes(kind))
+    },
+    [kind, win],
+  )
+
+  const onPointerMove = useCallback(
+    (e: PointerEvent) => {
+      setDrag((d) => {
+        if (!d) return d
+        const moved = d.moved || Math.abs(e.clientX - d.x) > DRAG_THRESHOLD
+        return moved ? { ...d, x: e.clientX, y: e.clientY, moved, drop: dropTime(d, e.clientX) } : d
+      })
+    },
+    [dropTime],
+  )
+
+  const onPointerUp = useCallback(
+    (e: PointerEvent) => {
+      const cur = drag
+      setDrag(null)
+      if (!cur || !cur.moved) return
+      markDragEnd()
+      // only a drop inside this row's track commits; outside cancels the gesture
+      if (e.clientX < cur.rect.left || e.clientX > cur.rect.left + cur.rect.width) return
+      sendReschedule(cur.task.id, dropTime(cur, e.clientX), setPending, setStageErr)
+    },
+    [drag, dropTime],
+  )
+
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    el.addEventListener('pointermove', onPointerMove as unknown as EventListener)
+    el.addEventListener('pointerup', onPointerUp as unknown as EventListener)
+    return () => {
+      el.removeEventListener('pointermove', onPointerMove as unknown as EventListener)
+      el.removeEventListener('pointerup', onPointerUp as unknown as EventListener)
+    }
+  }, [onPointerMove, onPointerUp])
+
+  // milestone toggle — boolean flag on the wire contract (PATCH milestone)
+  const toggleMilestone = useCallback((task: Task): void => {
+    const next = task.milestone !== true
+    setMsPending((m) => new Map(m).set(task.id, next))
+    void fetch('/api/task', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: task.id, milestone: next }),
+    })
+      .then((r) => { if (!r.ok) throw new Error(`PATCH -> ${r.status}`); return undefined })
+      .catch(() => {
+        setMsPending((m) => { const c = new Map(m); c.delete(task.id); return c })
+        setMsErr('—')
+      })
+  }, [])
+
+  const blockRange = (r: (typeof rows)[number]): string => {
+    const s = r.task.scheduledAt ?? r.task.dueAt
+    const d = r.task.dueAt
+    if (s == null) return ''
+    if (kind === 'day') return d != null && d > s ? `${fmtClock(s)}–${fmtClock(d)}` : fmtClock(s)
+    return d != null && d > s ? `${fmtStamp(s, now)}–${fmtStamp(d, now)}` : fmtStamp(s, now)
+  }
+
+  return (
+    <div className="agenda-body-wrap" ref={rootRef}>
+      <div className="agenda-subbar">
+        <div className="seg" role="group" aria-label={t('ag.rangeAria')}>
+          {RANGE_KINDS.map((k) => (
+            <button
+              key={k}
+              type="button"
+              className={kind === k ? 'active' : ''}
+              aria-pressed={kind === k}
+              onClick={() => { setKind(k); setWalk(0) }}
+            >
+              {t(k === 'day' ? 'ag.rangeDay' : k === 'week' ? 'ag.rangeWeek' : 'ag.rangeMonth')}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="nav-btn"
+          title={t('ag.prevRange')}
+          aria-label={t('ag.prevRange')}
+          onClick={() => setWalk((w) => w - 1)}
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <path d="M10 3.5 5.5 8l4.5 4.5" />
+          </svg>
+        </button>
+        <span className="agenda-date">{rangeLabel}</span>
+        <button
+          type="button"
+          className="nav-btn"
+          title={t('ag.nextRange')}
+          aria-label={t('ag.nextRange')}
+          onClick={() => setWalk((w) => w + 1)}
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <path d="M6 3.5 10.5 8 6 12.5" />
+          </svg>
+        </button>
+        {walk !== 0 ? (
+          <button type="button" className="nav-btn today" onClick={() => setWalk(0)}>
+            {t('ag.today')}
+          </button>
+        ) : (
+          <span className="agenda-date dim">{t('ag.today')}</span>
+        )}
+        {pending.size > 0 ? (
+          <span className="agenda-staged" role="status" title={t('ag.stagedTitle')}>
+            {fill(t('ag.staged'), { n: pending.size })}
+          </span>
+        ) : null}
+        {stageErr ? (
+          <span className="agenda-staged err" role="alert" title={stageErr}>
+            {fill(t('ag.stageErr'), { t: stageErr })}
+          </span>
+        ) : null}
+        {msErr ? (
+          <span className="agenda-staged err" role="alert">
+            {t('ag.msErr')}
+          </span>
+        ) : null}
+      </div>
+      {rows.length === 0 ? (
+        <div className="agt-empty">{t('ag.empty')}</div>
+      ) : (
+        <div className="agt">
+          <div className="agt-ruler">
+            <span className="agt-corner" />
+            <div className="agt-ruler-track">
+              {cols.map((c, i) => (
+                <span
+                  key={i}
+                  className={`agt-col${c.weekend ? ' wk' : ''}${c.today ? ' today' : ''}`}
+                  style={{ left: `${c.left}%`, width: `${c.width}%` }}
+                >
+                  {c.label}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="agt-rows">
+            {rows.map((r) => {
+              const live = r.task.status !== 'done' && r.task.status !== 'cancelled'
+              return (
+                <div className="agt-row" key={r.task.id}>
+                  <div className="agt-label">
+                    <span className={`agl-dot ${toneOf(r.task)}`} />
+                    <button type="button" className="agt-ltitle" title={r.task.title} onClick={() => { if (!clickAfterDrag()) onOpen(r.task.id) }}>
+                      {r.task.title}
+                    </button>
+                    {live ? (
+                      <button
+                        type="button"
+                        className={`agt-ms${r.task.milestone === true ? ' on' : ''}`}
+                        title={r.task.milestone === true ? t('ag.msOff') : t('ag.msOn')}
+                        aria-label={r.task.milestone === true ? t('ag.msOff') : t('ag.msOn')}
+                        aria-pressed={r.task.milestone === true}
+                        onClick={() => toggleMilestone(r.task)}
+                      >
+                        ◆
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="agt-rowtrack">
+                    {cols.map((c, i) => (
+                      <span
+                        key={i}
+                        className={`agt-band${c.weekend ? ' wk' : ''}`}
+                        style={{ left: `${c.left}%`, width: `${c.width}%` }}
+                      />
+                    ))}
+                    <button
+                      type="button"
+                      className={[
+                        'agt-block',
+                        toneOf(r.task),
+                        r.task.status === 'done' ? 'done' : '',
+                        r.isOverdue ? 'overdue' : '',
+                        r.isUpcoming ? 'upcoming' : '',
+                        r.clippedStart ? 'clip-l' : '',
+                        r.clippedEnd ? 'clip-r' : '',
+                      ].filter(Boolean).join(' ')}
+                      style={{ left: `${r.leftPct}%`, width: `${r.widthPct}%` }}
+                      data-tip={blockTip(r.task)}
+                      title={`${blockRange(r)} ${r.task.title}`}
+                      onPointerDown={(e) => onBlockDown(e.nativeEvent, r.task)}
+                      onClick={() => { if (!clickAfterDrag()) onOpen(r.task.id) }}
+                    >
+                      <span className="agt-btext">{blockRange(r)}</span>
+                      {pending.has(r.task.id) ? (
+                        <span className="ab-pend" title={t('ag.pendingBadge')}>
+                          <Icon name="clock" size={10} />
+                        </span>
+                      ) : null}
+                    </button>
+                    {r.milestonePct !== null ? (
+                      <span
+                        className="agt-milestone"
+                        style={{ left: `${r.milestonePct}%` }}
+                        title={`${t('ag.milestoneTip')} ${fmtStamp(r.task.dueAt ?? (r.task.scheduledAt as number), now)}`}
+                      >
+                        ◆
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              )
+            })}
+            {nowP !== null ? (
+              <div
+                className="agt-now"
+                style={{ left: `calc(${GANTT_LABEL_W} + (100% - ${GANTT_LABEL_W}) * ${(nowP / 100).toFixed(4)})` }}
+                aria-hidden="true"
+              >
+                <span className="an-dot rj-pulse-dot" />
+                <span className="agt-now-time">{fmtClock(now)}</span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+      {drag && drag.moved && drag.drop !== null ? (
+        <div
+          className="drag-ghost"
+          style={{ position: 'fixed', top: drag.y - 40, left: drag.x + 14, zIndex: 9999, pointerEvents: 'none' }}
+        >
+          {fmtStamp(drag.drop, now)}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 /** The picked mode survives reloads — a reader stays in 日程, a planner
  *  lives in 时间轴. */
-function loadAgendaMode(): 'list' | 'timeline' {
+function loadAgendaMode(): 'list' | 'timeline' | 'gantt' {
   const raw = window.localStorage.getItem('robojex-agenda-mode')
-  return raw === 'timeline' ? 'timeline' : 'list'
+  return raw === 'timeline' || raw === 'gantt' ? raw : 'list'
 }
 
 export function AgendaView({ onOpenTask }: { onOpenTask(id: string): void }) {
   const { state } = useStore()
   const { t } = useT()
-  const [mode, setMode] = useState<'list' | 'timeline'>(loadAgendaMode)
+  const [mode, setMode] = useState<'list' | 'timeline' | 'gantt'>(loadAgendaMode)
   useEffect(() => {
     window.localStorage.setItem('robojex-agenda-mode', mode)
   }, [mode])
@@ -808,10 +1206,18 @@ export function AgendaView({ onOpenTask }: { onOpenTask(id: string): void }) {
           >
             {t('ag.modeTimeline')}
           </button>
+          <button
+            type="button"
+            className={mode === 'gantt' ? 'active' : ''}
+            aria-pressed={mode === 'gantt'}
+            onClick={() => setMode('gantt')}
+          >
+            {t('ag.modeGantt')}
+          </button>
         </div>
-        <span className="agenda-hint">{mode === 'list' ? t('ag.hintList') : t('ag.hintDay')}</span>
+        <span className="agenda-hint">{mode === 'list' ? t('ag.hintList') : mode === 'gantt' ? t('ag.hintGantt') : t('ag.hintDay')}</span>
       </div>
-      {mode === 'list' ? <ScheduleList onOpen={onOpenTask} /> : <DayView onOpen={onOpenTask} />}
+      {mode === 'list' ? <ScheduleList onOpen={onOpenTask} /> : mode === 'gantt' ? <GanttView onOpen={onOpenTask} /> : <DayView onOpen={onOpenTask} />}
     </div>
   )
 }

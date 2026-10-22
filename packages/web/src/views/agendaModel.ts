@@ -319,3 +319,144 @@ export function snapMinutes(zoom: ZoomLevel): number {
 export function snapTo15(ms: number): number {
   return snapTo(ms, 15)
 }
+
+/* ---- Horizontal Gantt timeline (T4): day/week/month range windows, the
+   task→x percent mapping for the time band, milestone marker placement and
+   the moving now-pointer. Pure math again — the geometry is unit-tested. ---- */
+
+export type RangeKind = 'day' | 'week' | 'month'
+export const RANGE_KINDS: RangeKind[] = ['day', 'week', 'month']
+
+export interface RangeWindow {
+  kind: RangeKind
+  /** inclusive start (epoch ms) */
+  start: number
+  /** exclusive end (epoch ms) */
+  end: number
+}
+
+/** Local midnight of the 1st of ms's month. */
+export function monthStartOf(ms: number): number {
+  const d = new Date(dayStartOf(ms))
+  return new Date(d.getFullYear(), d.getMonth(), 1).getTime()
+}
+
+/** Monday 00:00 of ms's week (weeks start Monday — the CN/ISO reading). */
+export function weekStartOf(ms: number): number {
+  const d0 = dayStartOf(ms)
+  const wd = new Date(d0).getDay() // 0 = Sunday
+  return addDaysLocal(d0, wd === 0 ? -6 : 1 - wd)
+}
+
+/** The visible window for kind anchored at an arbitrary instant; walk shifts
+ *  the whole range (prev/next navigation): ±1 day, ±7 days, ±1 calendar
+ *  month (calendar month arithmetic — DAY_MS stepping would drift per month). */
+export function rangeWindow(kind: RangeKind, anchorMs: number, walk = 0): RangeWindow {
+  if (kind === 'day') {
+    const start = addDaysLocal(dayStartOf(anchorMs), walk)
+    return { kind, start, end: addDaysLocal(start, 1) }
+  }
+  if (kind === 'week') {
+    const start = addDaysLocal(weekStartOf(anchorMs), walk * 7)
+    return { kind, start, end: addDaysLocal(start, 7) }
+  }
+  const m = new Date(monthStartOf(anchorMs))
+  const start = new Date(m.getFullYear(), m.getMonth() + walk, 1).getTime()
+  const next = new Date(m.getFullYear(), m.getMonth() + walk + 1, 1).getTime()
+  return { kind, start, end: next }
+}
+
+/** ms → percent across the window (may overshoot 0..100 before clamping). */
+export function pctOf(ms: number, win: RangeWindow): number {
+  return ((ms - win.start) / (win.end - win.start)) * 100
+}
+
+/** The now-pointer's percent, or null when now falls outside the window. */
+export function nowPctRange(now: number, win: RangeWindow): number | null {
+  if (now < win.start || now >= win.end) return null
+  return pctOf(now, win)
+}
+
+/** Minimum bar width as percent of the window — point-in-time tasks need a
+ *  visible, draggable handle at every zoom the range view offers. */
+export function minBarPct(kind: RangeKind): number {
+  return kind === 'day' ? 2 : kind === 'week' ? 0.8 : 0.4
+}
+
+/** Snap granularity for a drag inside a range (month drags land on whole
+ *  days; the view preserves the task's time-of-day, see ganttDropTime). */
+export function rangeSnapMinutes(kind: RangeKind): number {
+  return kind === 'day' ? 5 : kind === 'week' ? 30 : 1440
+}
+
+/** X-percent → epoch ms inside the window (drag math; x is clamped so a drop
+ *  at an edge lands on the edge, not on yesterday). */
+export function xToTimeRange(xPct: number, win: RangeWindow): number {
+  const c = Math.max(0, Math.min(100, xPct))
+  return win.start + (c / 100) * (win.end - win.start)
+}
+
+/** The committed time for a month-view drop: snapped day keeps origMs's
+ *  time-of-day (midnight-dragging a 20:00 task to the 23rd should land at
+ *  20:00, not 00:00 — same contract as the schedule list's day drop). */
+export function ganttDropTime(targetMs: number, origMs: number): number {
+  return dayStartOf(targetMs) + (origMs - dayStartOf(origMs))
+}
+
+export interface GanttRow {
+  task: Task
+  leftPct: number
+  widthPct: number
+  /** bar was cut at the window's left edge (its true start is earlier). */
+  clippedStart: boolean
+  /** bar was cut at the window's right edge (its true end is later). */
+  clippedEnd: boolean
+  isOverdue: boolean
+  isUpcoming: boolean
+  /** ◆ marker percent (dueAt ?? scheduledAt), null when not a milestone. */
+  milestonePct: number | null
+}
+
+/** Rows for every non-cancelled task whose time band touches [start, end):
+ *  one row per task (rows never share a lane — the whole point of a list of
+ *  rows over the vertical overlap-mush). Sorted by band start, then created. */
+export function ganttRows(tasks: Task[], win: RangeWindow, now: number): GanttRow[] {
+  const min = minBarPct(win.kind)
+  const items: { s: number; row: GanttRow }[] = []
+  for (const t of tasks) {
+    if (t.status === 'cancelled') continue
+    const anchor = t.scheduledAt ?? t.dueAt
+    if (anchor == null) continue
+    const start = t.scheduledAt != null && t.dueAt != null ? Math.min(t.scheduledAt, t.dueAt) : anchor
+    const end = t.dueAt != null && t.dueAt > start ? t.dueAt : start
+    if (end < win.start || start >= win.end) continue // band misses the window
+    const leftRaw = pctOf(start, win)
+    const rightRaw = pctOf(end, win)
+    let leftPct = Math.max(0, leftRaw)
+    let widthPct = Math.max(min, rightRaw - leftRaw)
+    if (leftPct + widthPct > 100) {
+      // a bar whose right edge needs the minimum width slides left
+      widthPct = Math.min(widthPct, 100)
+      leftPct = Math.max(0, 100 - widthPct)
+    }
+    const live = t.status !== 'done'
+    items.push({
+      s: start,
+      row: {
+        task: t,
+        leftPct,
+        widthPct,
+        clippedStart: leftRaw < 0,
+        clippedEnd: rightRaw > 100,
+        isOverdue: t.dueAt != null && t.dueAt < now && live,
+        isUpcoming: t.dueAt != null && t.dueAt >= now && t.dueAt - now <= HOUR_MS && live,
+        milestonePct:
+          t.milestone === true
+            ? Math.max(0, Math.min(100, pctOf(t.dueAt ?? (t.scheduledAt as number), win)))
+            : null,
+      },
+    })
+  }
+  items.sort((a, b) => a.s - b.s || a.row.task.createdAt - b.row.task.createdAt)
+  return items.map((i) => i.row)
+}

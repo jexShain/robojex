@@ -26,6 +26,10 @@ export interface BoardNode {
   allChildrenDone: boolean
   /** True when any node in this subtree (incl. self) is 'running'. */
   subtreeRunning: boolean
+  /** Direct-child completion tally — the parent card's progress ring/bar
+   * renders done/total, so collapsing hides nothing the operator must see. */
+  childDone: number
+  childTotal: number
 }
 
 export interface PlacedNode {
@@ -66,7 +70,7 @@ export function edgePath(x1: number, y1: number, x2: number, y2: number): string
 export function buildForest(tasks: Task[]): BoardNode[] {
   const nodes = new Map<string, BoardNode>()
   for (const t of tasks)
-    nodes.set(t.id, { task: t, children: [], depth: 0, subtreeBlocked: false, allChildrenDone: false, subtreeRunning: false })
+    nodes.set(t.id, { task: t, children: [], depth: 0, subtreeBlocked: false, allChildrenDone: false, subtreeRunning: false, childDone: 0, childTotal: 0 })
   const roots: BoardNode[] = []
   for (const t of tasks) {
     const n = nodes.get(t.id)!
@@ -76,7 +80,12 @@ export function buildForest(tasks: Task[]): BoardNode[] {
   }
   const walk = (n: BoardNode, depth: number): void => {
     n.depth = depth
-    n.children.sort((a, b) => a.task.createdAt - b.task.createdAt)
+    // priority DESC wins (drag-drop reorder writes the ladder server-side);
+    // createdAt is the stable tiebreak, mirroring board.list()'s rowid order
+    n.children.sort(
+      (a, b) =>
+        (b.task.priority ?? 0) - (a.task.priority ?? 0) || a.task.createdAt - b.task.createdAt,
+    )
     let blocked = n.task.status === 'blocked'
     let running = n.task.status === 'running'
     for (const c of n.children) {
@@ -86,7 +95,9 @@ export function buildForest(tasks: Task[]): BoardNode[] {
     }
     n.subtreeBlocked = blocked
     n.subtreeRunning = running
-    n.allChildrenDone = n.children.length > 0 && n.children.every((c) => c.task.status === 'done')
+    n.childDone = n.children.filter((c) => c.task.status === 'done').length
+    n.childTotal = n.children.length
+    n.allChildrenDone = n.childTotal > 0 && n.childDone === n.childTotal
   }
   for (const r of roots) walk(r, 0)
   // orphan sweep: cycle members never got visited from a root — promote them
@@ -145,6 +156,11 @@ export function filterForest(
   const redepth = (n: BoardNode, d: number): BoardNode => {
     n.depth = d
     n.children = n.children.map((c) => redepth(c, d + 1))
+    // a promoted/re-pruned child set invalidates the tally — recount from the
+    // surviving children so the parent ring never over-promises
+    n.childTotal = n.children.length
+    n.childDone = n.children.filter((c) => c.task.status === 'done').length
+    n.allChildrenDone = n.childTotal > 0 && n.childDone === n.childTotal
     return n
   }
   return out.map((r) => redepth(r, 0))

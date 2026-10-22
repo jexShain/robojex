@@ -9,12 +9,22 @@ import {
   blocksForDay,
   clampZoom,
   dayColumns,
+  ganttDropTime,
+  ganttRows,
   hourHeight,
+  minBarPct,
+  monthStartOf,
   nowPct,
+  nowPctRange,
+  pctOf,
+  rangeSnapMinutes,
+  rangeWindow,
   snapMinutes,
   snapTo,
   snapTo15,
   unscheduledTasks,
+  weekStartOf,
+  xToTimeRange,
 } from '../src/views/agendaModel'
 import { DAY_MS, dayStartOf } from '../src/views/timefmt'
 import type { Task } from '../src/state/types'
@@ -29,6 +39,7 @@ const T = (over: Partial<Task> = {}): Task => ({
   parentId: over.parentId ?? null,
   scheduledAt: over.scheduledAt ?? null,
   dueAt: over.dueAt ?? null,
+  milestone: over.milestone,
 })
 
 const DAY0 = dayStartOf(Date.now())
@@ -236,5 +247,122 @@ describe("scheduleGroups (R136 list)", () => {
     ]
     const rows = overdueRows(tasks, DAY0, NOW)
     expect(rows.map((r) => r.task.id)).toEqual(["old"])
+  })
+})
+
+/* ---- T4 Gantt: horizontal range windows, bar geometry, milestones ---- */
+
+describe("gantt range windows", () => {
+  test("day window is exactly one local day; walk steps days", () => {
+    const w = rangeWindow("day", DAY0 + 13 * 3_600_000)
+    expect(w).toEqual({ kind: "day", start: DAY0, end: DAY0 + DAY_MS })
+    expect(rangeWindow("day", DAY0, -1).start).toBe(addDaysLocal(DAY0, -1))
+  })
+
+  test("week window starts Monday and holds 7 days; walk steps weeks", () => {
+    const w = rangeWindow("week", Date.now())
+    expect(new Date(w.start).getDay()).toBe(1)
+    expect(w.end - w.start).toBe(7 * DAY_MS)
+    expect(rangeWindow("week", Date.now(), -1).start).toBe(addDaysLocal(w.start, -7))
+    // weekStartOf agrees with the window, and Sunday belongs to the Monday week
+    expect(weekStartOf(addDaysLocal(w.start, 6))).toBe(w.start)
+  })
+
+  test("month window is the calendar month; walk crosses year bounds by month", () => {
+    const jan = new Date(2026, 0, 17, 12).getTime()
+    const w = rangeWindow("month", jan)
+    expect(new Date(w.start)).toEqual(new Date(2026, 0, 1))
+    expect(new Date(w.end)).toEqual(new Date(2026, 1, 1))
+    expect(monthStartOf(jan)).toBe(w.start)
+    // walking back from January must land on December of the previous year
+    const back = rangeWindow("month", jan, -1)
+    expect(new Date(back.start)).toEqual(new Date(2025, 11, 1))
+    expect(new Date(back.end)).toEqual(new Date(2026, 0, 1))
+  })
+
+  test("now-pointer percent: inside clamps to 0..100, outside is null", () => {
+    const w = rangeWindow("day", DAY0)
+    expect(nowPctRange(at(12), w)).toBeCloseTo(50)
+    expect(nowPctRange(at(12) - DAY_MS, w)).toBeNull()
+    expect(nowPctRange(at(12) + DAY_MS, w)).toBeNull()
+  })
+})
+
+describe("ganttRows", () => {
+  const W = rangeWindow("day", DAY0)
+
+  test("scheduled→due spans the bar; point task floors at the minimum width", () => {
+    const span = ganttRows([T({ id: "a", scheduledAt: at(6), dueAt: at(12) })], W, at(9))[0]!
+    expect(span.leftPct).toBeCloseTo(25)
+    expect(span.leftPct + span.widthPct).toBeCloseTo(50)
+    const point = ganttRows([T({ id: "p", scheduledAt: at(6) })], W, at(9))[0]!
+    expect(point.widthPct).toBeCloseTo(minBarPct("day"))
+  })
+
+  test("bands outside the window are excluded, cancelled always is", () => {
+    const tasks = [
+      T({ id: "yest", scheduledAt: DAY0 - 2 * 3_600_000 }),
+      T({ id: "in", scheduledAt: at(9) }),
+      T({ id: "dead", status: "cancelled", scheduledAt: at(9) }),
+      T({ id: "free" }),
+    ]
+    expect(ganttRows(tasks, W, at(10)).map((r) => r.task.id)).toEqual(["in"])
+  })
+
+  test("a band crossing the window clips and flags; rows sort by band start", () => {
+    const long = ganttRows([T({ id: "long", scheduledAt: DAY0 - 6 * 3_600_000, dueAt: at(6) })], W, at(10))[0]!
+    expect(long.leftPct).toBe(0)
+    expect(long.clippedStart).toBe(true)
+    expect(long.clippedEnd).toBe(false)
+    const byStart = ganttRows([T({ id: "b", scheduledAt: at(15) }), T({ id: "a", scheduledAt: at(9) })], W, at(10))
+    expect(byStart.map((r) => r.task.id)).toEqual(["a", "b"])
+  })
+
+  test("overdue pulses live cards only; upcoming within the hour", () => {
+    const rows = ganttRows(
+      [
+        T({ id: "late", scheduledAt: at(7), dueAt: at(9), status: "running" }),
+        T({ id: "late-done", scheduledAt: at(7), dueAt: at(9), status: "done" }),
+        T({ id: "soon", scheduledAt: at(9), dueAt: at(10, 30) }),
+      ],
+      W,
+      at(10),
+    )
+    const by = (id: string) => rows.find((r) => r.task.id === id)!
+    expect(by("late").isOverdue).toBe(true)
+    expect(by("late-done").isOverdue).toBe(false)
+    expect(by("soon").isUpcoming).toBe(true)
+  })
+
+  test("milestone marker rides dueAt (or scheduledAt), clamped; others are null", () => {
+    const ms = ganttRows([T({ id: "m", scheduledAt: at(6), dueAt: at(12), milestone: true })], W, at(9))[0]!
+    expect(ms.milestonePct).toBeCloseTo(50)
+    const plain = ganttRows([T({ id: "p", scheduledAt: at(6) })], W, at(9))[0]!
+    expect(plain.milestonePct).toBeNull()
+    // a milestone whose dueAt trails past the window edge still marks the edge
+    const edge = ganttRows([T({ id: "e", scheduledAt: at(20), dueAt: DAY0 + 2 * DAY_MS, milestone: true })], W, at(9))[0]!
+    expect(edge.milestonePct).toBe(100)
+  })
+})
+
+describe("gantt drag math", () => {
+  test("x→time: mid-track is the mid-window, edges clamp into the window", () => {
+    const W = rangeWindow("day", DAY0)
+    expect(xToTimeRange(50, W)).toBe(at(12))
+    expect(xToTimeRange(-20, W)).toBe(W.start)
+    expect(xToTimeRange(120, W)).toBe(W.end)
+  })
+
+  test("snap granularity per range: 5min day, 30min week, whole days month", () => {
+    expect(rangeSnapMinutes("day")).toBe(5)
+    expect(rangeSnapMinutes("week")).toBe(30)
+    expect(rangeSnapMinutes("month")).toBe(1440)
+    expect(snapTo(at(10, 27), rangeSnapMinutes("day"))).toBe(at(10, 25))
+  })
+
+  test("month drop keeps the task's time-of-day on the snapped day", () => {
+    const orig = at(20) // a 20:00 task
+    const target = DAY0 + 3 * DAY_MS + 14 * 3_600_000 // dropped near 14:00 on +3d
+    expect(ganttDropTime(target, orig)).toBe(DAY0 + 3 * DAY_MS + 20 * 3_600_000)
   })
 })

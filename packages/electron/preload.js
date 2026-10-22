@@ -64,6 +64,17 @@ contextBridge.exposeInMainWorld('robojex', {
   // follows automatically); resolves { ok, log }
   downloadVoiceModels: () => ipcRenderer.invoke('voice:download-models'),
 
+  // settings › 通用 › 开机自启 — main process owns the OS integration
+  // (LoginItemSettings on win/mac, XDG autostart on linux); both calls
+  // resolve to the post-read OS truth
+  autostart: {
+    get: () => ipcRenderer.invoke('autostart:get'),
+    set: (enabled) => ipcRenderer.invoke('autostart:set', !!enabled),
+  },
+
+  // push { gear: 0..4, label, connected } to the tray tooltip + menu radios
+  setTrayStatus: (payload) => ipcRenderer.send('tray:status', payload),
+
   // embedded ceo-core failed to boot; payload: { message }
   onBackendDown: (cb) => subscribe('robojex:backend-down', cb),
 

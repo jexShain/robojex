@@ -17,6 +17,7 @@ import type { GearController } from "./gears.js";
 import { isGearId, GEAR_IDS } from "./gears.js";
 import type { LLMClient } from "./llm.js";
 import { aggregateStats } from "./stats.js";
+import { computeTrends, extractPatterns, parseOutcomes, priorityAdvice } from "./auto-rubric.js";
 import { jobSnapshot } from "./tools/jobs.js";
 
 export type ChatFrom = "user" | "jex" | "system";
@@ -48,6 +49,7 @@ export interface ApiDeps {
   host?: string;                       // default 127.0.0.1
   version?: string;                    // override for tests / embedded builds
   snapshotRuntime?: () => void;        // history hook fired before a mission append
+  rubricHistory?: () => { commit: string; message: string }[]; // T9: commits that touched RUBRIC.md
   httpFactory?: () => Server;          // test seam: substitute the http server
   wssFactory?: () => WebSocketServer;  // test seam: substitute the ws server
   chat?: ChatService;                  // direct-chat surface (conversations + SSE); absent = routes 503
@@ -58,8 +60,8 @@ export interface ApiDeps {
 // Trimmed card shape the protocol ships, both in state and in tasks frames.
 // parentId/scheduledAt/dueAt are board-v2 fields (epoch ms numbers); the ?? null
 // keeps hand-built Task fixtures (tests) shipping an explicit null, not undefined.
-export function taskView(t: Task): { id: string; title: string; status: string; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null; acceptance: string; progress: number; verdict: string; assignee: string } {
-  return { id: t.id, title: t.title, status: t.status, resultSummary: t.resultSummary, createdAt: t.createdAt, parentId: t.parentId ?? null, scheduledAt: t.scheduledAt ?? null, dueAt: t.dueAt ?? null, acceptance: t.acceptance, progress: t.progress, verdict: t.verdict, assignee: t.assignee };
+export function taskView(t: Task): { id: string; title: string; status: string; priority: number; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null; acceptance: string; progress: number; verdict: string; assignee: string; milestone: boolean } {
+  return { id: t.id, title: t.title, status: t.status, priority: t.priority, resultSummary: t.resultSummary, createdAt: t.createdAt, parentId: t.parentId ?? null, scheduledAt: t.scheduledAt ?? null, dueAt: t.dueAt ?? null, acceptance: t.acceptance, progress: t.progress, verdict: t.verdict, assignee: t.assignee, milestone: t.milestone };
 }
 
 const RING_MAX = 100;               // chat history: last 100 messages, in memory
@@ -302,10 +304,12 @@ export class ApiServer implements LoopOutlet {
     if (path === "/api/models" && req.method === "GET") { await this.getModels(res); return; }
     if (path === "/api/usage" && req.method === "GET") { this.getUsage(req, res); return; }
     if (path === "/api/stats" && req.method === "GET") { this.getStats(res); return; }
+    if (path === "/api/rubric" && req.method === "GET") { this.getRubric(res); return; }
     if (path === "/api/mission" && req.method === "POST") { await this.postMission(req, res); return; }
     if (path === "/api/task" && req.method === "POST") { await this.postTask(req, res); return; }
     if (path === "/api/task" && req.method === "PUT") { await this.putTask(req, res); return; }
     if (path === "/api/task" && req.method === "PATCH") { await this.patchTask(req, res); return; }
+    if (path === "/api/task/reorder" && req.method === "POST") { await this.reorderTasks(req, res); return; }
     if (path === "/api/mode" && req.method === "POST") { await this.postMode(req, res); return; }
     if (path === "/api/settings" && req.method === "GET") { this.getSettings(res); return; }
     if (path === "/api/settings" && req.method === "PUT") { await this.putSettings(req, res); return; }
@@ -517,21 +521,29 @@ export class ApiServer implements LoopOutlet {
     json(res, 202, { ok: true, task: taskView(now) });
   }
 
-  // PATCH /api/task: operator card edit — { id, scheduledAt?, dueAt?, title? }
-  // with epoch-ms numbers (null clears) and a rename (same shape rule as
-  // POST: non-empty, ≤200 bytes). Times land through the loop's reschedule
-  // (pump re-arm included); a typo fix no longer costs cancel+recreate,
-  // which would orphan the card's times and children. done/cancelled are
-  // history: 409.
+  // PATCH /api/task: operator card edit — { id, scheduledAt?, dueAt?, title?, priority?, milestone? }
+  // with epoch-ms numbers (null clears), a rename (same shape rule as
+  // POST: non-empty, ≤200 bytes), a priority bump (finite number, rounded
+  // to an integer — board.list() orders priority DESC), and a milestone flag
+  // (boolean — the T4 gantt view marks it, no times involved). Times land
+  // through the loop's reschedule (pump re-arm included); a typo fix no
+  // longer costs cancel+recreate, which would orphan the card's times and
+  // children. done/cancelled are history: 409.
   private async patchTask(req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body: Record<string, unknown>;
     try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
     if (typeof body.id !== "string" || body.id.length === 0) { json(res, 400, { error: "id must be a non-empty task id" }); return; }
     const hasTimes = body.scheduledAt !== undefined || body.dueAt !== undefined;
-    if (!hasTimes && body.title === undefined) { json(res, 400, { error: "scheduledAt, dueAt, or title is required" }); return; }
+    if (!hasTimes && body.title === undefined && body.priority === undefined && body.milestone === undefined) { json(res, 400, { error: "scheduledAt, dueAt, title, priority, or milestone is required" }); return; }
     for (const k of ["scheduledAt", "dueAt"] as const) {
       const v = body[k];
       if (v !== undefined && v !== null && typeof v !== "number") { json(res, 400, { error: `${k} must be epoch ms or null` }); return; }
+    }
+    if (body.priority !== undefined && (typeof body.priority !== "number" || !Number.isFinite(body.priority))) {
+      json(res, 400, { error: "priority must be a finite number" }); return; // JSON 1e999 parses to Infinity
+    }
+    if (body.milestone !== undefined && typeof body.milestone !== "boolean") {
+      json(res, 400, { error: "milestone must be a boolean" }); return;
     }
     if (body.title !== undefined && (typeof body.title !== "string" || body.title.trim().length === 0 || Buffer.byteLength(body.title, "utf8") > 200)) {
       json(res, 400, { error: "title must be a non-empty string of at most 200 bytes" });
@@ -543,6 +555,8 @@ export class ApiServer implements LoopOutlet {
     const resched = this.d.loop.rescheduleById; // captured: board.update below would blur property narrowing
     if (hasTimes && !resched) { json(res, 503, { error: "loop not wired for reschedule" }); return; }
     if (body.title !== undefined) this.d.board.update(hit.id, { title: body.title });
+    if (body.priority !== undefined) this.d.board.update(hit.id, { priority: Math.round(body.priority as number) });
+    if (body.milestone !== undefined) this.d.board.update(hit.id, { milestone: body.milestone as boolean });
     if (hasTimes) {
       resched!(hit.id, {
         ...(body.scheduledAt !== undefined ? { scheduledAt: body.scheduledAt as number | null } : {}),
@@ -553,6 +567,48 @@ export class ApiServer implements LoopOutlet {
     }
     const now = this.d.board.list().find((t) => t.id === hit.id)!;
     json(res, 202, { ok: true, task: taskView(now) });
+  }
+
+  // POST /api/task/reorder: drag-drop sibling reprioritisation — { ids: string[] }
+  // (an optional parentId must match every card's parent). Priority lands as
+  // ids.length - index, so the drop order IS the board order (list() renders
+  // priority DESC). One broadcast replaces the PATCH storm a naive per-card
+  // swap would produce; cards outside the list keep their old priority and
+  // merely interleave around the new ladder. History cards ride along: priority
+  // is ordering, not history content.
+  private async reorderTasks(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let body: Record<string, unknown>;
+    try { body = await this.readJson(req); } catch (e) { json(res, 400, { error: e instanceof Error ? e.message : "bad body" }); return; }
+    const ids = body.ids;
+    if (!Array.isArray(ids) || ids.length < 2 || !ids.every((x): x is string => typeof x === "string" && x.length > 0)) {
+      json(res, 400, { error: "ids must be an array of at least two task ids" }); return;
+    }
+    if (body.parentId !== undefined && body.parentId !== null && typeof body.parentId !== "string") {
+      json(res, 400, { error: "parentId must be a task id or null" }); return;
+    }
+    const byId = new Map(this.d.board.list().map((t) => [t.id, t]));
+    const seen = new Set<string>();
+    const group: Task[] = [];
+    for (const id of ids) {
+      if (seen.has(id)) { json(res, 400, { error: `duplicate id ${id}` }); return; }
+      seen.add(id);
+      const t = byId.get(id);
+      if (!t) { json(res, 404, { error: `no such task ${id}` }); return; }
+      const parent = t.parentId ?? null;
+      if (body.parentId !== undefined && body.parentId !== null && parent !== body.parentId) {
+        json(res, 400, { error: `${id} does not belong to the requested parent group` }); return;
+      }
+      group.push(t);
+    }
+    if (body.parentId === undefined) {
+      const first = group[0]!.parentId ?? null;
+      if (group.some((t) => (t.parentId ?? null) !== first)) {
+        json(res, 400, { error: "ids must share one parent group; pass parentId to pin it" }); return;
+      }
+    }
+    ids.forEach((id, i) => this.d.board.update(id, { priority: ids.length - i }));
+    this.broadcast({ t: "tasks", tasks: this.d.board.list().map(taskView) });
+    json(res, 202, { ok: true, ordered: ids.length });
   }
 
   private async postMode(req: IncomingMessage, res: ServerResponse): Promise<void> {

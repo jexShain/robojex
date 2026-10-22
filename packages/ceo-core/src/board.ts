@@ -2,7 +2,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 
-export interface Task { id: string; title: string; status: "todo" | "running" | "done" | "blocked" | "cancelled"; priority: number; assignee: string; attempts: number; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null; overdueNaggedAt: number | null; acceptance: string; progress: number; verdict: "unchecked" | "pass" | "partial" | "fail"; }
+export interface Task { id: string; title: string; status: "todo" | "running" | "done" | "blocked" | "cancelled"; priority: number; assignee: string; attempts: number; resultSummary: string; createdAt: number; parentId: string | null; scheduledAt: number | null; dueAt: number | null; overdueNaggedAt: number | null; acceptance: string; progress: number; verdict: "unchecked" | "pass" | "partial" | "fail"; milestone: boolean; }
 
 // Task plus its nested children: the shape of the board tree view.
 export interface TaskNode extends Task { children: TaskNode[]; }
@@ -56,18 +56,19 @@ export class TaskBoard {
     if (!have.has("acceptance")) this.db.exec("ALTER TABLE tasks ADD COLUMN acceptance TEXT NOT NULL DEFAULT ''");
     if (!have.has("progress")) this.db.exec("ALTER TABLE tasks ADD COLUMN progress INTEGER NOT NULL DEFAULT 0");
     if (!have.has("verdict")) this.db.exec("ALTER TABLE tasks ADD COLUMN verdict TEXT NOT NULL DEFAULT 'unchecked'");
+    if (!have.has("milestone")) this.db.exec("ALTER TABLE tasks ADD COLUMN milestone INTEGER NOT NULL DEFAULT 0");
   }
-  add(t: { title: string; priority?: number; assignee?: string; parentId?: string | null; scheduledAt?: number | null; dueAt?: number | null; acceptance?: string }): Task {
-    const task: Task = { id: randomUUID(), title: t.title, status: "todo", priority: t.priority ?? 0, assignee: t.assignee ?? "", attempts: 0, resultSummary: "", createdAt: Date.now(), parentId: t.parentId ?? null, scheduledAt: t.scheduledAt ?? null, dueAt: t.dueAt ?? null, overdueNaggedAt: null, acceptance: t.acceptance ?? "", progress: 0, verdict: "unchecked" };
-    this.db.prepare("INSERT INTO tasks (id,title,status,priority,assignee,attempts,resultSummary,createdAt,parent_id,scheduled_at,due_at,overdue_nagged_at,acceptance,progress,verdict) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(task.id, task.title, task.status, task.priority, task.assignee, task.attempts, task.resultSummary, task.createdAt, task.parentId, task.scheduledAt, task.dueAt, task.overdueNaggedAt, task.acceptance, task.progress, task.verdict);
+  add(t: { title: string; priority?: number; assignee?: string; parentId?: string | null; scheduledAt?: number | null; dueAt?: number | null; acceptance?: string; milestone?: boolean }): Task {
+    const task: Task = { id: randomUUID(), title: t.title, status: "todo", priority: t.priority ?? 0, assignee: t.assignee ?? "", attempts: 0, resultSummary: "", createdAt: Date.now(), parentId: t.parentId ?? null, scheduledAt: t.scheduledAt ?? null, dueAt: t.dueAt ?? null, overdueNaggedAt: null, acceptance: t.acceptance ?? "", progress: 0, verdict: "unchecked", milestone: t.milestone ?? false };
+    this.db.prepare("INSERT INTO tasks (id,title,status,priority,assignee,attempts,resultSummary,createdAt,parent_id,scheduled_at,due_at,overdue_nagged_at,acceptance,progress,verdict,milestone) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(task.id, task.title, task.status, task.priority, task.assignee, task.attempts, task.resultSummary, task.createdAt, task.parentId, task.scheduledAt, task.dueAt, task.overdueNaggedAt, task.acceptance, task.progress, task.verdict, task.milestone ? 1 : 0);
     return task;
   }
 
   // snake_case rows -> Task; suffix is a literal fragment from this class only
   private rows(suffix: string, ...params: (string | number)[]): Task[] {
-    const rows = this.db.prepare(`SELECT * FROM tasks ${suffix}`).all(...params) as unknown as (Task & { parent_id?: string | null; scheduled_at?: number | null; due_at?: number | null; overdue_nagged_at?: number | null })[];
-    return rows.map(({ parent_id, scheduled_at, due_at, overdue_nagged_at, ...t }) => ({ ...t, parentId: parent_id ?? null, scheduledAt: scheduled_at ?? null, dueAt: due_at ?? null, overdueNaggedAt: overdue_nagged_at ?? null }));
+    const rows = this.db.prepare(`SELECT * FROM tasks ${suffix}`).all(...params) as unknown as (Omit<Task, "milestone"> & { parent_id?: string | null; scheduled_at?: number | null; due_at?: number | null; overdue_nagged_at?: number | null; milestone?: number | boolean | null })[];
+    return rows.map(({ parent_id, scheduled_at, due_at, overdue_nagged_at, milestone, ...t }) => ({ ...t, parentId: parent_id ?? null, scheduledAt: scheduled_at ?? null, dueAt: due_at ?? null, overdueNaggedAt: overdue_nagged_at ?? null, milestone: milestone === 1 || milestone === true }));
   }
   list(): Task[] { return this.rows("ORDER BY priority DESC, rowid ASC"); }
   // Nested view: roots with children in createdAt order (see nestTasks).
@@ -90,7 +91,7 @@ export class TaskBoard {
     // before the write lands (add() cannot self-reference — it mints the id)
     if (patch.parentId === id) throw new Error("task cannot be its own parent");
     const next = { ...cur, ...patch };
-    this.db.prepare("UPDATE tasks SET title=?,status=?,priority=?,assignee=?,attempts=?,resultSummary=?,createdAt=?,parent_id=?,scheduled_at=?,due_at=?,overdue_nagged_at=?,acceptance=?,progress=?,verdict=? WHERE id=?")
-      .run(next.title, next.status, next.priority, next.assignee, next.attempts, next.resultSummary, next.createdAt, next.parentId ?? null, next.scheduledAt ?? null, next.dueAt ?? null, next.overdueNaggedAt ?? null, next.acceptance, next.progress, next.verdict, next.id);
+    this.db.prepare("UPDATE tasks SET title=?,status=?,priority=?,assignee=?,attempts=?,resultSummary=?,createdAt=?,parent_id=?,scheduled_at=?,due_at=?,overdue_nagged_at=?,acceptance=?,progress=?,verdict=?,milestone=? WHERE id=?")
+      .run(next.title, next.status, next.priority, next.assignee, next.attempts, next.resultSummary, next.createdAt, next.parentId ?? null, next.scheduledAt ?? null, next.dueAt ?? null, next.overdueNaggedAt ?? null, next.acceptance, next.progress, next.verdict, next.milestone ? 1 : 0, next.id);
   }
 }

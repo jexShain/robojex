@@ -20,6 +20,7 @@ const T = (over: Partial<Task> = {}): Task => ({
   id: over.id ?? `t${++n}`,
   title: over.title ?? `task ${n}`,
   status: over.status ?? 'todo',
+  priority: over.priority ?? 0,
   resultSummary: over.resultSummary ?? '',
   createdAt: over.createdAt ?? 1_000 + n,
   parentId: over.parentId ?? null,
@@ -79,6 +80,30 @@ describe('buildForest', () => {
     expect(byId(forest, 'a').subtreeBlocked).toBe(true)
     expect(byId(forest, 'root').subtreeBlocked).toBe(true)
     expect(byId(forest, 'b').subtreeBlocked).toBe(false)
+  })
+
+  test('siblings order priority DESC first, createdAt only as tiebreak', () => {
+    const forest = buildForest([
+      T({ id: 'p' }),
+      T({ id: 'lo1', parentId: 'p', createdAt: 1 }),
+      T({ id: 'hi', parentId: 'p', createdAt: 2, priority: 9 }),
+      T({ id: 'lo2', parentId: 'p', createdAt: 3 }),
+      T({ id: 'hi2', parentId: 'p', createdAt: 4, priority: 5 }),
+    ])
+    expect(forest[0]!.children.map((c) => c.task.id)).toEqual(['hi', 'hi2', 'lo1', 'lo2'])
+  })
+
+  test('childDone/childTotal count direct children by status', () => {
+    const forest = buildForest([
+      T({ id: 'p' }),
+      T({ id: 'c1', parentId: 'p', status: 'done' }),
+      T({ id: 'c2', parentId: 'p', status: 'running' }),
+      T({ id: 'c3', parentId: 'p', status: 'todo' }),
+      T({ id: 'grand', parentId: 'c3', status: 'running' }), // not direct — excluded
+    ])
+    const p = forest[0]!
+    expect([p.childDone, p.childTotal]).toEqual([1, 3])
+    expect(p.allChildrenDone).toBe(false)
   })
 })
 
@@ -184,6 +209,18 @@ describe('filterForest', () => {
     ])
     const out = filterForest(forest, 'all')
     expect(out.map((r) => r.task.id)).toEqual(['kid'])
+  })
+
+  test('pruned children recount into the parent tally (no phantom done/total)', () => {
+    const forest = buildForest([
+      T({ id: 'p' }),
+      T({ id: 'd', parentId: 'p', status: 'done' }),
+      T({ id: 't', parentId: 'p', status: 'todo' }),
+      T({ id: 'x', parentId: 'p', status: 'cancelled' }), // pruned out of 'all'
+    ])
+    const out = filterForest(forest, 'all')
+    const p = out.find((r) => r.task.id === 'p')!
+    expect([p.childDone, p.childTotal]).toEqual([1, 2])
   })
 })
 

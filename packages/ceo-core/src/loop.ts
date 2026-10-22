@@ -15,6 +15,7 @@ import type { BudgetGovernor } from "./budget.js";
 import { manualsBlock } from "./skills.js";
 import { taskView, type ChatFrom } from "./api.js";
 import { getGearDef, loopPrompt, type GearId } from "./gears.js";
+import { computeTrends, extractPatterns, mergeRubric, parseOutcomes, renderAdvice, renderRubricLines } from "./auto-rubric.js";
 import type { ToolScout } from "./toolscout.js";
 import type { TentacleManager } from "./tentacles.js";
 import type { ToolManager, Gate } from "./tools/manager.js";
@@ -145,6 +146,13 @@ export class SchedulerLoop {
   /** the in-flight cycle's event parts — maybeAudit reads them for the trace
    *  digest (event-kind summary); empty between cycles. */
   private currentEventParts: string[] = [];
+  // T7 thinking stream: the in-flight cycle's phase trace (patrol triage →
+  // decide plan → spawn → audit review), each entry timestamped and carrying
+  // its own token spend; the cycle frame ships it whole so the operator UI
+  // can render jex's reasoning as a live log. thinkingRing keeps the recent
+  // steps across cycles for late joiners (hello.state.thinking).
+  private cycleTrace: Record<string, unknown>[] = [];
+  private thinkingRing: Record<string, unknown>[] = [];
   private timer: NodeJS.Timeout | undefined;
   private debounce: NodeJS.Timeout | undefined;
   private wakeN = 0;
@@ -172,6 +180,16 @@ export class SchedulerLoop {
   /** ApiLoopHandle seam: the tickN the wire ships — HUD clients compare it
    *  across hello.state and cycle frames to detect a stalled loop. */
   tickN(): number { return this.tickCount; }
+
+  /** T7 wire seam: recent thinking-trace steps (oldest first) for late
+   *  joiners — hello.state.thinking replays the reasoning window on connect. */
+  recentThinking(): Record<string, unknown>[] { return this.thinkingRing.slice(); }
+
+  /** T7: append one phase step to the in-flight cycle trace. Every step
+   *  carries its own timestamp; callers add the phase's token numbers. */
+  private tracePhase(step: Record<string, unknown>): void {
+    this.cycleTrace.push({ ts: Date.now(), ...step });
+  }
 
   // takeover mode as last reported by takeoverd; observe is the safe default
   private modeNow: Gate = "observe";
@@ -577,10 +595,12 @@ export class SchedulerLoop {
     this.wakeN++;
     this.tickCount++;
     this.vitals.cycles++;
+    this.cycleTrace = []; // T7: one trace per cycle; the frame ships it in finally
     // the cycle frame reports whatever this wake cost and decided, even on the
     // cheap early exits — the operator sees every heartbeat
     let cost = 0;
     let actions: unknown[] = [];
+    let traceEvents: string[] | undefined; // raw wake events on the frame: the UI highlights agent settlements
     try {
       const gdef = getGearDef(this.gearNow)!;
       if (gdef.id === "dormant") return; // jex asleep: no patrol, no decide; direct chat still streams
@@ -590,6 +610,7 @@ export class SchedulerLoop {
       // Nth tick; real events (chat, gantt, tool results) always pass through
       const parts = (events ?? eventSummary.split(";")).map((s) => s.trim()).filter(Boolean);
       this.currentEventParts = parts;
+      traceEvents = parts.slice(0, 8).map((s) => s.slice(0, 200)); // bounded: an event body can be long
       const pureTick = parts.length > 0 && parts.every((p) => p === "tick");
       if (pureTick && gdef.patrolEvery > 0 && this.tickCount % gdef.patrolEvery !== 0) return;
       // R72 quiet skip: nothing about the world changed since the last cycle
@@ -624,15 +645,21 @@ export class SchedulerLoop {
         { role: "system", content: (gearPrefix ? `${gearPrefix}\n\n` : "") + "You triage events for an autonomous jex agent. Reply ONLY JSON: {\"action\":\"none\"} if nothing needs a decision, {\"action\":\"act\"} otherwise. A 'chat:' event is the human talking to jex: act on it whenever it carries an errand or delegation — asking jex to do/make/write/fix/check/arrange something (帮我/做/建/写/修/查/安排…) or anything the direct-chat reply did not already settle; act on a chat: event unless it is a pure greeting or social chatter with no ask — a question about this machine or jex's work (hardware, system, files, processes, tasks, progress) ALWAYS acts (the direct-chat reply alone never settles it: it may be ungrounded), and any request or delegation always acts. When unsure, act — the human's words outrank thrift. A chat carrying an explicit acceptance ruling (验收/判定 + a task name + 通过/不通过/合格/不合格) is a direct order: act and emit the matching verify action in the same cycle (the note can cite the human's ruling itself). A 'tool <name> -> ...' event is a builtin tool result jex itself just produced mid-flow: always act on it (continue: next tool, reply to the human, or wrap the task up). The same applies to 'tool approval ...' events: a queued write just got approved or denied, continue the flow. The same applies to 'due_spawn:', 'overdue:', 'unlocked:', 'task due:' and 'verify_due:' events (minute-Gantt: something is due now, late, freed by its parent, hit its deadline and needs chasing, or needs its acceptance checked — always act). An 'overdue_spawn:' event means a scheduled task's time has ARRIVED and it is STILL not dispatched — always act, and dispatch it (spawn) this very cycle: the daytime-deferral doctrine only applies BEFORE the scheduled time, never after. A 'plan_created:' event means a goal was just decomposed into child steps on the board — always act: dispatch the ready steps (in the listed order when they depend on each other, in parallel when independent). A 'morning_briefing:' event is the daily digest mandate — always act: compose it and deliver with the reply action. An 'agents_rescan:' event means the agent inventory may be stale — act by running the toolscout action. A 'patrol_walk:' event is the quiet house round — act on it (LOOK with tools; reply ONLY if something genuinely needs the human — a clean round takes NO reply action at all: an '一切正常' health report is noise and pure cost, silence is the healthy outcome). A 'boot:' event is the startup recon mandate — survey the system and today's goals, always act. An 'agents discovered:' event means fresh delegation capacity on this machine — always act." },
         { role: "user", content: context },
       ], { json: true, maxTokens: 512 }); // reasoning models spend completion tokens on reasoning before content
-      let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; } // patrol cost still booked on parse failure
-      if (gate === "patrol-only") { cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; } // near the cap: no expensive decide pass
+      // T7: the triage verdict becomes a trace step with its OWN token count —
+      // the thinking stream shows which layer paid, not just the cycle total
+      const tracePatrol = (verdict: string): void => {
+        this.tracePhase({ kind: "patrol", verdict, promptTokens: p.usage.promptTokens, completionTokens: p.usage.completionTokens, tokens: p.usage.promptTokens + p.usage.completionTokens });
+      };
+      let triage: { action?: unknown } = {}; try { triage = JSON.parse(p.content); } catch { tracePatrol("unparseable"); cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; } // patrol cost still booked on parse failure
+      if (gate === "patrol-only") { tracePatrol("observe"); cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; } // near the cap: no expensive decide pass
       // R85: an explicit acceptance ruling (验收/判定 + 通过/不通过…) is a
       // direct order from the human — the triage model occasionally classed
       // one as chatter (live soak: the ruling woke a cycle, triage said
       // none, and the verdict never landed). Code-level bypass: rulings
       // always reach decide, triage's vote is irrelevant for them.
       const isRuling = parts.some((x) => x.startsWith("chat: ") && /验收|判定|裁决/.test(x) && /通过|不通过|合格|不合格/.test(x));
-      if (!isRuling && triage.action !== "act") { cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; }
+      if (!isRuling && triage.action !== "act") { tracePatrol("none"); cost = await this.maybeAudit(p.usage, []); this.lastCycleActed = false; return; }
+      tracePatrol("act");
 
       // layer 2: strong decide pass — the only prompt that carries the framework manuals
       const manuals = manualsBlock(this.d.skillsDir ?? DEFAULT_SKILLS_DIR);
@@ -694,10 +721,12 @@ export class SchedulerLoop {
       ] satisfies ChatMsg[];
       const decideMax = gdef.decideMaxTokens; // the gear buys the decide budget
       let dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: decideMax }); // big contexts (tools+tentacles inventories) starve reasoning models below this
+      let decideRetried = false;
       // reasoning models can burn the whole completion budget on reasoning and
       // emit no content; one adaptive retry at double budget recovers those
       // cycles instead of silently no-opping them
       if (dec.content.length === 0 && dec.usage.completionTokens >= decideMax) {
+        decideRetried = true;
         console.warn(`[loop] decide starved (completion=${dec.usage.completionTokens}) — retrying at ${decideMax * 2}`);
         dec = await this.d.llm.chat("decide", decideMessages, { json: true, maxTokens: decideMax * 2 });
       }
@@ -1158,38 +1187,69 @@ export class SchedulerLoop {
    *  write failure must never break the verify that earned it. */
   private appendStat(framework: string, verdict: string, title: string): void {
     try {
-      appendFileSync(join(this.d.runtimeDir, "STATS.md"), `${framework}|${verdict}|${title.slice(0, 60).replaceAll("|", "/")}\n`);
+      // T9: the trailing 4th field is the completion stamp — trends need it;
+      // pre-T9 readers take the first three fields and ignore it (see stats.ts)
+      appendFileSync(join(this.d.runtimeDir, "STATS.md"), `${framework}|${verdict}|${title.slice(0, 60).replaceAll("|", "/")}|${Date.now()}\n`);
     } catch (e) {
       console.warn(`[loop] stats append failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
   /** R8 aggregate: last 200 stat lines folded into a per-agent track record
-   *  for the decide context. Empty ledger → empty string (nothing injected). */
+   *  for the decide context. Empty ledger → empty string (nothing injected).
+   *  T9 tail: the same ledger is folded once more into history-weighted
+   *  priority advice for the open todo cards — the decide pass sees both the
+   *  track record and what it implies for the tasks sitting on the board. */
   private statsBlock(): string {
     try {
       const raw = readFileSync(join(this.d.runtimeDir, "STATS.md"), "utf8");
-      const lines = raw.split("\n").filter((l) => l.includes("|")).slice(-200);
-      if (lines.length === 0) return "";
+      const outcomes = parseOutcomes(raw.split("\n").filter((l) => l.includes("|")).slice(-200).join("\n"));
+      if (outcomes.length === 0) return "";
       const byAgent = new Map<string, { pass: number; fail: number; partial: number; titles: string[] }>();
-      for (const l of lines) {
-        const [fw, verdict, title] = l.split("|");
-        if (!fw || !verdict) continue;
-        const s = byAgent.get(fw) ?? { pass: 0, fail: 0, partial: 0, titles: [] };
-        if (verdict === "pass") s.pass++;
-        else if (verdict === "fail") s.fail++;
-        else if (verdict === "partial") s.partial++;
-        if (title && s.titles.length < 3) s.titles.push(title);
-        byAgent.set(fw, s);
+      for (const o of outcomes) {
+        const s = byAgent.get(o.framework) ?? { pass: 0, fail: 0, partial: 0, titles: [] };
+        if (o.verdict === "pass") s.pass++;
+        else if (o.verdict === "fail") s.fail++;
+        else if (o.verdict === "partial") s.partial++;
+        if (o.title && s.titles.length < 3) s.titles.push(o.title);
+        byAgent.set(o.framework, s);
       }
       const rows = [...byAgent.entries()].map(([fw, s]) => {
         const total = s.pass + s.fail + s.partial;
         const pct = total > 0 ? Math.round((s.pass / total) * 100) : 0;
         return `- ${fw}: ${total} 次验收，通过率 ${pct}%（${s.pass}✓ ${s.partial}◐ ${s.fail}✗）${s.titles.length ? `，近期：${s.titles.join("、")}` : ""}`;
       });
-      return `# AGENT STATS（各代理实测战绩——派活时优先选同类任务通过率高的）\n${rows.join("\n")}`;
+      const track = `# AGENT STATS（各代理实测战绩——派活时优先选同类任务通过率高的）\n${rows.join("\n")}`;
+      const advice = renderAdvice(this.d.board.list(), extractPatterns(outcomes));
+      return advice ? `${track}\n\n${advice}` : track;
     } catch {
       return ""; // no ledger yet: inject nothing
+    }
+  }
+
+  /** T9 auto-rubric: each audit-review window also re-derives the TASK-level
+   *  standard from the outcome ledger — deterministic, zero tokens, unlike
+   *  the LLM wake-decision review. Changed rubric lines are git-snapshotted
+   *  BEFORE the write (version management: every learned rule is revertable
+   *  and `git log -- RUBRIC.md` shows the learning trail). */
+  private autoLearnRubric(): void {
+    try {
+      const raw = readFileSync(join(this.d.runtimeDir, "STATS.md"), "utf8");
+      const outcomes = parseOutcomes(raw.split("\n").filter((l) => l.includes("|")).slice(-200).join("\n"));
+      if (outcomes.length === 0) return; // nothing verified yet: nothing to learn
+      const patterns = extractPatterns(outcomes);
+      const lines = renderRubricLines(patterns, computeTrends(outcomes, Date.now()));
+      if (lines.length === 0) return;
+      const rubricPath = join(this.d.runtimeDir, "RUBRIC.md");
+      let rubric = "";
+      try { rubric = readFileSync(rubricPath, "utf8"); } catch { /* fresh runtime: merge onto empty */ }
+      const merged = mergeRubric(rubric, lines);
+      if (merged.added === 0 && merged.updated === 0) return; // the standard already says it
+      this.d.auditor.snapshotRuntime(`auto-rubric pre-patch (${merged.added} new, ${merged.updated} refreshed)`);
+      writeFileSync(rubricPath, merged.text);
+      console.log(`[auto-rubric] RUBRIC.md +${merged.added} ~${merged.updated} (weak=${patterns.weak.length}, strong=${patterns.strong.length}, failing kinds=${patterns.failureKinds.length})`);
+    } catch (e) {
+      console.warn(`[auto-rubric] ${e instanceof Error ? e.message : String(e)}`); // never break the audit cycle
     }
   }
 
@@ -1519,6 +1579,7 @@ A pass without an evidence note is refused. After a tool result you MUST answer 
       this.d.budget.spend(patches.usage); // the review pass itself burns tokens — book them
       booked += patches.usage.promptTokens + patches.usage.completionTokens;
       this.d.auditor.applyPatches(patches);
+      this.autoLearnRubric(); // T9: the deterministic task-outcome half of the review — zero token cost
       if (patches.missionNote && patches.missionNote !== "none") console.log(`[audit] mission note: ${patches.missionNote}`);
     }
     return booked;

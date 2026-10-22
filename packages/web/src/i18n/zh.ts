@@ -37,6 +37,7 @@ export const zh: Record<string, string> = {
   'view.agenda': '日历',
   'view.activity': '活动',
   'view.cockpit': '驾驶舱',
+  'view.live': '实时动态',
 
   /* chat stream */
   'chat.copy': '复制',
@@ -325,6 +326,17 @@ export const zh: Record<string, string> = {
   'board.collapse': '折叠',
   'board.childBlocked': '子任务受阻',
   'board.progressAria': '进度 {n}%',
+  'board.childrenProgressAria': '{d}/{n} 个子任务已完成',
+  'board.pop.created': '创建',
+  'board.pop.sched': '排程',
+  'board.pop.due': '截止',
+  'board.pop.progress': '进度',
+  'board.pop.children': '子任务',
+  'board.pop.priority': '优先级',
+  'board.pop.assignee': '执行者',
+  'board.pop.verdict': '结论',
+  'board.pop.acceptance': '验收',
+  'board.pop.result': '结果',
 
   /* agenda / calendar */
   'ag.pendingBadge': '改期同步中…',
@@ -353,6 +365,18 @@ export const zh: Record<string, string> = {
   'ag.unsDropHint': '拖行到此=清除排程',
   'ag.unsRowHint': '拖到某天头部即可排期（默认 09:00）',
   'ag.unsEmpty': '没有未排程任务',
+  'ag.modeGantt': '甘特图',
+  'ag.hintGantt': '今日/本周/本月切换 · 拖任务块改时间 · ◆=里程碑 · 红闪=已到期',
+  'ag.rangeAria': '时间范围',
+  'ag.rangeDay': '今日',
+  'ag.rangeWeek': '本周',
+  'ag.rangeMonth': '本月',
+  'ag.prevRange': '上一个区间',
+  'ag.nextRange': '下一个区间',
+  'ag.msOn': '标为里程碑',
+  'ag.msOff': '取消里程碑',
+  'ag.msErr': '里程碑切换失败',
+  'ag.milestoneTip': '里程碑',
 
   /* activity feed */
   'act.title': '动态',
@@ -365,6 +389,21 @@ export const zh: Record<string, string> = {
   'act.thinking': '思考中…',
   'act.heartbeat': '心跳',
   'act.modeLine': '模式 → {n}',
+
+  /* live activity (T2) */
+  'live.title': '实时动态',
+  'live.running': '正在执行',
+  'live.recent': '最近完成',
+  'live.stream': '思考 · 决策',
+  'live.emptyRunning': '暂无执行中的任务',
+  'live.emptyRecent': '暂无完成记录',
+  'live.emptyStream': '等待思考…',
+  'live.heartbeat': '系统心跳',
+  'live.beat': '最近心跳 {n} 前',
+  'live.noBeat': '等待心跳',
+  'live.stateDown': '连接中断',
+  'live.openTask': '查看任务详情',
+  'live.inProgress': '进行中…',
 
   /* details panel */
   'detail.tabTask': '任务',

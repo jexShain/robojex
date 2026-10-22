@@ -33,6 +33,9 @@ export interface Task {
   id: string
   title: string
   status: string
+  /** board ordering ladder — higher renders first among siblings; drag-drop
+   * reorder (POST /api/task/reorder) rewrites it server-side */
+  priority?: number
   resultSummary?: string
   createdAt: number
   parentId?: string | null
@@ -43,6 +46,8 @@ export interface Task {
   acceptance?: string
   /** agent framework the card was dispatched to ('' = never dispatched; only those are operator-done-able) */
   assignee?: string
+  /** T4 gantt milestone flag — drawn as a ◆ on the timeline, operator-toggled */
+  milestone?: boolean
 }
 
 export interface Budget {

@@ -45,8 +45,10 @@ export class Auditor {
   }
 
   // Public snapshot: jex self-edits (mission_update) commit runtime docs
-  // BEFORE mutating them, so evolution history stays recoverable.
-  snapshotRuntime(): void {
+  // BEFORE mutating them, so evolution history stays recoverable. `reason`
+  // labels the commit so `git log` on RUBRIC.md reads as an audit trail of
+  // WHO changed the standard and WHY (T9 version management).
+  snapshotRuntime(reason = "audit snapshot"): void {
     const d = this.opts.runtimeDir;
     try {
       const git = (args: string) => execSync(`git ${args}`, { cwd: d });
@@ -58,7 +60,10 @@ export class Auditor {
           try { git(`add ${f}`); } catch {}
         }
       });
-      git('-c user.email=ceo@robojex -c user.name=ceo-core commit -qm "audit snapshot" --allow-empty');
+      // strip shell metacharacters from the label: reasons are code-authored
+      // one-liners, and a stray quote/`$` must never break the commit call
+      const label = reason.replace(/["'`$\\;]/g, " ").slice(0, 120);
+      git(`-c user.email=ceo@robojex -c user.name=ceo-core commit -qm "${label}" --allow-empty`);
     } catch {
       // git missing (bare binary distribution): patches still apply, history
       // tracking is unavailable — same degradation as first-boot
@@ -66,6 +71,23 @@ export class Auditor {
         console.warn("[audit] git unavailable — snapshot history disabled");
         Auditor.gitWarned = true;
       }
+    }
+  }
+
+  // T9: read side of the rubric version history — the commits that touched
+  // RUBRIC.md, newest first. Empty when git is unavailable (same graceful
+  // degradation as snapshotRuntime).
+  rubricHistory(n = 20): { commit: string; message: string }[] {
+    try {
+      const out = execSync(`git log --pretty=format:%h%x09%s -n ${n} -- RUBRIC.md`, { cwd: this.opts.runtimeDir })
+        .toString().trim();
+      if (!out) return [];
+      return out.split("\n").map((l) => {
+        const [commit, ...msg] = l.split("\t");
+        return { commit, message: msg.join("\t") };
+      });
+    } catch {
+      return []; // no git / no history yet
     }
   }
   private static gitWarned = false;

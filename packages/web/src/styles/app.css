@@ -2489,6 +2489,262 @@ body[data-ds-dark-theme] .chip.full {
 
 
 /* ============================================================
+   T4b Gantt horizontal timeline: rows=tasks × time=×, 今日/本周/本月
+   ranges, drag-to-move blocks, ◆ milestones, red overdue pulse,
+   a live now-pointer that glides between heartbeat ticks
+   ============================================================ */
+
+.agt {
+  --agt-label-w: 170px;
+  --agt-row-h: 34px;
+  position: relative;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.agt-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12.5px;
+}
+
+/* ruler: corner spacer + absolutely-placed column labels */
+.agt-ruler {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  height: 26px;
+  background: var(--dsw-alias-surface-primary);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.agt-corner {
+  flex: 0 0 var(--agt-label-w);
+}
+
+.agt-ruler-track {
+  position: relative;
+  flex: 1;
+}
+
+.agt-col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 4px;
+  font-size: 10.5px;
+  color: var(--dsw-alias-label-secondary);
+  border-left: 1px solid var(--dsw-alias-border-l1);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.agt-col.wk { background: var(--dsw-alias-surface-secondary); color: var(--dsw-alias-label-dimmed); }
+.agt-col.today { color: var(--dsw-alias-accent-default); font-weight: 600; }
+
+/* rows */
+.agt-rows { position: relative; }
+
+.agt-row {
+  display: flex;
+  height: var(--agt-row-h);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.agt-label {
+  flex: 0 0 var(--agt-label-w);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  min-width: 0;
+}
+
+.agt-label .agl-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-dimmed);
+}
+
+.agt-label .agl-dot.tone-done { background: var(--dsw-alias-state-success-primary); }
+.agt-label .agl-dot.tone-running { background: var(--dsw-alias-state-business-primary); }
+.agt-label .agl-dot.tone-failed { background: var(--dsw-alias-state-error-primary); }
+
+.agt-ltitle {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.agt-ltitle:hover { text-decoration: underline; }
+
+/* milestone toggle in the label column — ◆ fills when set */
+.agt-ms {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  padding: 2px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-label-dimmed);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--rj-duration-instant, 80ms), color var(--rj-duration-fast, 150ms);
+}
+
+.agt-row:hover .agt-ms { opacity: 0.7; }
+.agt-ms.on { opacity: 1; color: var(--dsw-alias-state-warn-label); }
+.agt-ms:hover { opacity: 1; }
+
+/* the time track: bands (weekend/grid) sit under the draggable block */
+.agt-rowtrack {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.agt-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.agt-band.wk { background: var(--dsw-alias-surface-secondary); opacity: 0.45; }
+
+.agt-block {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: none;
+  border-left: 3px solid var(--dsw-alias-accent-default);
+  border-radius: 5px;
+  background: var(--dsw-alias-surface-secondary);
+  color: var(--dsw-alias-label-primary);
+  font-size: 10.5px;
+  cursor: grab;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+.agt-block:active { cursor: grabbing; opacity: 0.8; }
+
+.agt-block.tone-done { border-left-color: var(--dsw-alias-state-success-primary); }
+.agt-block.tone-running { border-left-color: var(--dsw-alias-state-business-primary); }
+.agt-block.tone-failed { border-left-color: var(--dsw-alias-state-error-primary); }
+.agt-block.tone-pending { border-left-color: var(--dsw-alias-label-dimmed); }
+.agt-block.done { opacity: 0.55; }
+
+.agt-btext {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-family-code);
+  opacity: 0.9;
+}
+
+/* bars cut by the window edges fade into the boundary */
+.agt-block.clip-l { border-top-left-radius: 0; border-bottom-left-radius: 0; mask-image: linear-gradient(90deg, transparent 0, #000 10%); }
+.agt-block.clip-r { border-top-right-radius: 0; border-bottom-right-radius: 0; mask-image: linear-gradient(270deg, transparent 0, #000 10%); }
+
+/* T4 warning: overdue blocks pulse red */
+.agt-block.overdue {
+  border-left-color: var(--dsw-alias-state-error-primary);
+  animation: rj-glow-red var(--rj-duration-slow, 2s) ease-in-out infinite alternate;
+}
+
+/* T4 upcoming keeps the accent glow of its siblings */
+.agt-block.upcoming {
+  animation: rj-glow-accent var(--rj-duration-slow, 2s) ease-in-out infinite alternate;
+}
+
+/* ◆ milestone marker on the deadline point */
+.agt-milestone {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--dsw-alias-state-warn-label);
+  pointer-events: none;
+  text-shadow: 0 0 6px rgba(242, 90, 90, 0.35);
+}
+
+/* live now-pointer: a 10s heartbeat re-positions it, the transition
+   interpolates — it reads as continuous motion between ticks */
+.agt-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 5;
+  width: 0;
+  border-left: 1.5px solid var(--dsw-alias-accent-default);
+  pointer-events: none;
+  transition: left var(--rj-duration-now-glide, 10s) linear;
+}
+
+.agt-now .an-dot {
+  position: absolute;
+  left: -4px;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-accent-default);
+}
+
+.agt-now-time {
+  position: absolute;
+  top: 2px;
+  left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--dsw-alias-accent-default);
+  color: var(--dsw-alias-label-primary-inverted);
+  font-size: 10px;
+  font-family: var(--ds-font-family-code);
+  white-space: nowrap;
+}
+
+/* the now-marker of the day view also paints above the ruler seam */
+.agt-rows > .agt-now { min-height: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .agt-block.overdue,
+  .agt-block.upcoming {
+    animation: none;
+  }
+  .agt-now {
+    transition: none;
+  }
+}
+
+
+/* ============================================================
    T3 Board Tree Enhancements: parent card style, pulse, celebrate,
    stagger, junction dot glow
    ============================================================ */
@@ -2518,6 +2774,216 @@ body[data-ds-dark-theme] .chip.full {
 /* Stagger entrance for child cards (driven by rj-stagger-N from effects.css) */
 .board-card[class*="rj-stagger"] {
   animation: rj-fade-slide-in var(--rj-duration-normal, 250ms) var(--rj-ease-out, ease-out) backwards;
+}
+
+/* ============================================================
+   T3 tree-view upgrade: children ladder bar, drag-drop priority
+   slots, hover detail pop, and a gamified (brighter) tone pass
+   ============================================================ */
+
+/* children ladder: a 3px rail in the parent card's bottom gutter —
+ * collapsed subtrees still score childDone/childTotal at a glance */
+.board-card .bc-kids {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 5px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  overflow: hidden;
+}
+
+.board-card .bc-kids::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: var(--fill, 0%);
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--dsw-static-deepseek-450), var(--dsw-static-deepseek-300));
+  transition: width 0.35s var(--ds-ease-in-out);
+}
+
+.board-card .bc-kids.full::after {
+  background: linear-gradient(90deg, var(--dsw-alias-state-success-primary),
+    color-mix(in srgb, var(--dsw-alias-state-success-primary) 55%, #7ef0a8));
+}
+
+/* drag-to-reorder priority: the source card fades, matching siblings
+ * light up, and the insert line pulses where the ladder will renumber */
+.board-card.dragging {
+  opacity: 0.35;
+  cursor: grabbing;
+}
+
+.board-card.droppable {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 45%, var(--dsw-alias-border-l2));
+}
+
+.board-card.drop-before::before,
+.board-card.drop-after::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 8px rgba(103, 158, 254, 0.65);
+  animation: board-drop-line 0.55s var(--ds-ease-in-out) infinite alternate;
+}
+
+.board-card.drop-before::before {
+  top: -9px;
+}
+
+.board-card.drop-after::after {
+  bottom: -9px;
+}
+
+@keyframes board-drop-line {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* hover detail pop: glance-level answers, never steals the cursor */
+.board-pop {
+  position: absolute;
+  z-index: 30;
+  pointer-events: none;
+  box-sizing: border-box;
+  padding: 10px 12px 11px;
+  border-radius: var(--rj-radius-lg, 12px);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 94%, transparent);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--dsw-alias-border-l2);
+  box-shadow: 0 10px 28px var(--dsw-alias-bg-mask-2);
+  animation: board-pop-in 0.16s var(--ds-ease-in-out) backwards;
+}
+
+@keyframes board-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+.board-pop .bp-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.board-pop .bp-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.board-pop .bp-dot.tone-done { background: var(--dsw-alias-state-success-primary); }
+.board-pop .bp-dot.tone-running { background: var(--dsw-alias-state-business-primary); }
+.board-pop .bp-dot.tone-pending { background: var(--dsw-alias-label-tertiary); }
+.board-pop .bp-dot.tone-failed { background: var(--dsw-alias-state-error-primary); }
+
+.board-pop .bp-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.board-pop .bp-status {
+  margin: 3px 0 6px;
+  font-family: var(--ds-font-family-code);
+  font-size: 10.5px;
+  color: var(--dsw-alias-label-tertiary);
+  display: flex;
+  gap: 7px;
+}
+
+.board-pop .bp-prio {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.board-pop .bp-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  padding: 1.5px 0;
+}
+
+.board-pop .bp-row span {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.board-pop .bp-row b {
+  min-width: 0;
+  text-align: right;
+  font-family: var(--ds-font-family-code);
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.board-pop .bp-note {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dsw-alias-label-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* gamified status pass (spec: 更鲜明的游戏化配色) — each tone carries its
+ * own light: done settles green, failed blazes red, blocked smolders amber;
+ * running already glows from the earlier rule above */
+.board-card.tone-done {
+  opacity: 0.72;
+  border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 45%, var(--dsw-alias-border-l2));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--dsw-alias-state-success-primary) 26%, transparent),
+    0 0 12px color-mix(in srgb, var(--dsw-alias-state-success-primary) 22%, transparent);
+}
+
+.board-card.tone-failed {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, transparent),
+    0 0 14px color-mix(in srgb, var(--dsw-alias-state-error-primary) 26%, transparent);
+}
+
+.board-card.warn {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--dsw-alias-state-warn-primary) 35%, transparent),
+    0 0 12px color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-card.drop-before::before,
+  .board-card.drop-after::after {
+    animation: none;
+  }
+  .board-pop {
+    animation: none;
+  }
+  .board-card .bc-kids::after {
+    transition: none;
+  }
 }
 
 /* ============================================================

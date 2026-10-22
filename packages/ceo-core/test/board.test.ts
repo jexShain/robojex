@@ -107,3 +107,20 @@ test("self-parent cycle never enters the store: update rejects it", () => {
   b.update(t.id, { parentId: other.id, status: "done" }); // legitimate reparent still works
   expect(b.list()[0]).toMatchObject({ parentId: other.id, status: "done" });
 });
+
+test("milestone flag: default false, add honors it, update flips it, persists across reopen", () => {
+  const dir = mkdtempSync(join(tmpdir(), "robojex-board-"));
+  const p = join(dir, "b.sqlite");
+  const b = new TaskBoard(p);
+  const plain = b.add({ title: "plain" });
+  expect(plain.milestone).toBe(false);
+  expect(b.list()[0]!.milestone).toBe(false); // row read maps 0 → false
+  const marked = b.add({ title: "ship", milestone: true });
+  expect(marked.milestone).toBe(true);
+  b.update(plain.id, { milestone: true });
+  b.update(marked.id, { milestone: false });
+  const b2 = new TaskBoard(p); // reopen: milestone column survives on disk
+  const byId = new Map(b2.list().map((t) => [t.id, t]));
+  expect(byId.get(plain.id)!.milestone).toBe(true);
+  expect(byId.get(marked.id)!.milestone).toBe(false);
+});

@@ -27,9 +27,10 @@ import { connectEvents, eventsUrl } from './connection'
 import type { ConnectionHandle } from './connection'
 import * as api from './api'
 import type { DirectMessage, DirectPrefs, StreamHandle } from './api'
-import { fill, langSnapshot, setLangPref, translate } from '../i18n/event'
+import { fill, LANG_EVENT, langSnapshot, setLangPref, translate } from '../i18n/event'
 import { setThemePref, themeSnapshot } from './theme'
 import { readVoiceReport, speak } from './voice'
+import { pushTrayStatus, trayStatusFor } from './desktop'
 import { gearDisplayName } from '../views/gearDefs'
 import type {
   Budget,
@@ -729,6 +730,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const connRef = useRef<ConnectionHandle | null>(null)
   const streamRef = useRef<StreamHandle | null>(null)
+  /* tray status mirror (desktop shell only — a silent no-op in a browser):
+     gear + connection are the live jex state the tray surfaces while the
+     window is hidden. Language switches re-push so the localized gear
+     label never goes stale behind the static last value. */
+  useEffect(() => {
+    const push = (): void =>
+      pushTrayStatus(trayStatusFor(stateRef.current.gear, stateRef.current.gears, stateRef.current.conn === 'live'))
+    push()
+    window.addEventListener(LANG_EVENT, push)
+    return () => window.removeEventListener(LANG_EVENT, push)
+  }, [state.gear, state.gears, state.conn])
   /** conversation the most recent /jex was dispatched from; later jex
    * chat_out frames render as 'agent-notice' cards there. Session-local. */
   const agentConvRef = useRef<string | null>(null)
