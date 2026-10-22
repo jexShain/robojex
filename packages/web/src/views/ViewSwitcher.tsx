@@ -1,5 +1,5 @@
-// packages/web/src/views/ViewSwitcher.tsx — six-view segmented control
-// (指挥中心 / 对话 / 任务板 / 日历 / 活动 / 驾驶舱) for the sidebar foot.
+// packages/web/src/views/ViewSwitcher.tsx — seven-view segmented control
+// (指挥中心 / 对话 / 任务板 / 日历 / 活动 / 实时动态 / 驾驶舱) for the sidebar foot.
 // The top bar tabs in frame/AppFrame reuse VIEW_META (same icons; labels are
 // dictionary keys resolved with t() at render).
 
@@ -51,6 +51,13 @@ const COCKPIT_ICON = (
     <circle cx="8" cy="12" r="1" fill="currentColor" stroke="none" />
   </svg>
 )
+const LIVE_ICON = (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <circle cx="8" cy="8" r="1.8" fill="currentColor" stroke="none" />
+    <path d="M4.6 4.6a4.8 4.8 0 0 0 0 6.8M11.4 4.6a4.8 4.8 0 0 1 0 6.8" />
+    <path d="M2.2 2.2a8.2 8.2 0 0 0 0 11.6M13.8 2.2a8.2 8.2 0 0 1 0 11.6" opacity=".45" />
+  </svg>
+)
 
 export const VIEW_META: ViewMeta[] = [
   { id: 'command', labelKey: 'view.command', icon: COMMAND_ICON },
@@ -58,6 +65,7 @@ export const VIEW_META: ViewMeta[] = [
   { id: 'board', labelKey: 'view.board', icon: BOARD_ICON },
   { id: 'agenda', labelKey: 'view.agenda', icon: AGENDA_ICON },
   { id: 'activity', labelKey: 'view.activity', icon: ACTIVITY_ICON },
+  { id: 'live', labelKey: 'view.live', icon: LIVE_ICON },
   { id: 'cockpit', labelKey: 'view.cockpit', icon: COCKPIT_ICON },
 ]
 

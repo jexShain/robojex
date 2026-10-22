@@ -19,6 +19,7 @@ import { CommandCenter } from '../views/CommandCenter'
 import { AgendaView } from '../views/AgendaView'
 import { BoardView } from '../views/BoardView'
 import { GearPanel } from '../views/GearPanel'
+import { LiveActivity } from '../views/LiveActivity'
 import { SettingsView } from '../views/SettingsView'
 import { gearsOrFallback } from '../views/gearDefs'
 import { VIEW_META } from '../views/ViewSwitcher'
@@ -336,6 +337,7 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
                     />
                   ) : null}
                   {view === 'activity' ? <ActivityFeed /> : null}
+                  {view === 'live' ? <LiveActivity /> : null}
                   {view === 'cockpit' ? <GearPanel /> : null}
                 </div>
               ) : null}
@@ -364,6 +366,7 @@ export function AppFrame({ theme }: { theme: ThemeApi }) {
                   />
                 ) : null}
                 {view === 'activity' ? <ActivityFeed /> : null}
+                {view === 'live' ? <LiveActivity /> : null}
                 {view === 'cockpit' ? <GearPanel /> : null}
               </div>
             ) : null}

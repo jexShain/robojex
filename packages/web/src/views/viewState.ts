@@ -2,7 +2,7 @@
 // persisted in localStorage like the theme pref. Pure loaders/savers keep
 // AppFrame free of storage concerns.
 
-export type ViewId = 'command' | 'chat' | 'board' | 'agenda' | 'activity' | 'cockpit'
+export type ViewId = 'command' | 'chat' | 'board' | 'agenda' | 'activity' | 'live' | 'cockpit'
 
 const KEY = 'robojex-view'
 const SIDEBAR_KEY = 'robojex-sidebar-collapsed'
@@ -14,6 +14,7 @@ const VALID: Record<ViewId, true> = {
   board: true,
   agenda: true,
   activity: true,
+  live: true,
   cockpit: true,
 }
 
