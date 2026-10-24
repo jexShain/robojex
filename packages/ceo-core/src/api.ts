@@ -37,6 +37,7 @@ export interface ApiLoopHandle {
   resolveToolApproval?(id: string, ok: boolean): Promise<string | null>; // settles a pending assist-mode tool write
   setPolicy?(policy: string): void;     // hot autonomy-policy switch (butler|conservative)
   policy?(): string;                    // current policy for state snapshots; absent = butler
+  recentThinking?(): Record<string, unknown>[]; // T7: recent thinking-trace steps (oldest first) for late joiners
 }
 
 export interface ApiDeps {
@@ -251,6 +252,9 @@ export class ApiServer implements LoopOutlet {
       policy: this.d.loop.policy?.() ?? "butler",
       mission: read("MISSION.md"), rubric: read("RUBRIC.md"), memory: read("MEMORY.md"),
       chat: this.ring.slice(),
+      // T7 late-joiner replay: the recent thinking-trace window so a fresh
+      // tab paints jex's reasoning history before the next wake
+      thinking: this.d.loop.recentThinking?.() ?? [],
       version: this.d.version ?? VERSION,
     };
   }

@@ -75,6 +75,34 @@ export interface StateSnapshot {
   now?: number
   tickN?: number
   gear?: GearId
+  /** T7 late-joiner replay: recent thinking-trace steps (oldest first).
+   *  Optional: cores predating the thinking stream omit the field. */
+  thinking?: ThinkStep[]
+}
+
+/** T7 thinking stream: one backend-authoritative reasoning step.
+ *  Every step carries an id (shared by the live `think` frame, the cycle
+ *  frame's trace and the hello replay — the client deduplicates on it),
+ *  a wall-clock ts, the owning wake, and whatever token bill that phase
+ *  paid. Kinds: wake | patrol | decide | spawn | spawn_done | audit |
+ *  audit_review | error. Unknown kinds must render as a plain line —
+ *  a newer core may ship more. */
+export interface ThinkStep {
+  id: number
+  ts: number
+  wake?: number
+  tickN?: number
+  kind: string
+  tokens?: number
+  promptTokens?: number
+  completionTokens?: number
+  title?: string
+  framework?: string
+  taskId?: string
+  ok?: boolean
+  verdict?: string
+  detail?: string
+  actions?: { type: string; title: string }[]
 }
 
 export interface CycleAction {
@@ -200,12 +228,17 @@ export type ServerFrame =
   | { t: 'hello'; state: StateSnapshot }
   | { t: 'chat_out'; from: 'user' | 'jex' | 'system'; text: string; ts: number }
   | { t: 'tasks'; tasks: Task[] }
-  | { t: 'cycle'; wake: number; tickN?: number; cost: number; actions: CycleAction[] }
+  | { t: 'cycle'; wake: number; tickN?: number; cost: number; actions: CycleAction[]; trace?: ThinkStep[] }
+  | { t: 'think'; step: ThinkStep }
   | ({ t: 'hud' } & HudNotice)
   | { t: 'mode'; mode: Mode }
   | { t: 'budget'; line: string; budget?: Budget }
   | { t: 'gear'; gear: GearId }
   | { t: 'jobs'; jobs: JobInfo[] }
+  /** autonomy policy hot-switch (loop.setPolicy, SPEC-BUTLER §1). Emitted by
+   *  the core since T3 — consumed here so the vocabulary stays aligned (an
+   *  unlisted frame used to blank the whole app; see t_34df9d82). */
+  | { t: 'policy'; policy: 'butler' | 'conservative' }
 
 /** One background shell job (job_start …): the CommandCenter strip shows what
  *  the butler is running behind the board. state mirrors the core registry;
@@ -231,6 +264,9 @@ export type TranscriptItem =
       cost: number
       actions: CycleAction[]
       ts: number
+      /** T7: the cycle's phase trace (absent on older cores). Its presence
+       *  suppresses the legacy frame-derived ThinkingStream summary. */
+      trace?: ThinkStep[]
     }
   | { kind: 'toast'; id: number; tone: 'info' | 'success' | 'warn' | 'error'; text: string; ts: number }
 

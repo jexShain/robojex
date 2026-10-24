@@ -153,6 +153,10 @@ export class SchedulerLoop {
   // steps across cycles for late joiners (hello.state.thinking).
   private cycleTrace: Record<string, unknown>[] = [];
   private thinkingRing: Record<string, unknown>[] = [];
+  // T7 wire ids are backend-authoritative: the live think frame, the cycle
+  // frame's trace and the hello ring all carry the SAME step id — the client
+  // deduplicates on it, so reconnect replay can never double-append.
+  private thinkSeqN = 0;
   private timer: NodeJS.Timeout | undefined;
   private debounce: NodeJS.Timeout | undefined;
   private wakeN = 0;
@@ -186,9 +190,16 @@ export class SchedulerLoop {
   recentThinking(): Record<string, unknown>[] { return this.thinkingRing.slice(); }
 
   /** T7: append one phase step to the in-flight cycle trace. Every step
-   *  carries its own timestamp; callers add the phase's token numbers. */
+   *  carries a backend id, the owning wake and a timestamp; callers add the
+   *  phase's token numbers. The step is ALSO broadcast immediately as a
+   *  `think` frame — the operator UI sees each phase the moment it happens,
+   *  long before the cycle frame ships at the end. */
   private tracePhase(step: Record<string, unknown>): void {
-    this.cycleTrace.push({ ts: Date.now(), ...step });
+    const s = { id: ++this.thinkSeqN, ts: Date.now(), wake: this.wakeN, ...step };
+    this.cycleTrace.push(s);
+    this.thinkingRing.push(s);
+    if (this.thinkingRing.length > 160) this.thinkingRing.splice(0, this.thinkingRing.length - 160);
+    this.d.outlet?.frame({ t: "think", step: s });
   }
 
   // takeover mode as last reported by takeoverd; observe is the safe default
@@ -611,6 +622,9 @@ export class SchedulerLoop {
       const parts = (events ?? eventSummary.split(";")).map((s) => s.trim()).filter(Boolean);
       this.currentEventParts = parts;
       traceEvents = parts.slice(0, 8).map((s) => s.slice(0, 200)); // bounded: an event body can be long
+      // T7: the wake itself is the first live step — the UI shows what jex is
+      // reacting to while patrol and decide are still in flight
+      this.tracePhase({ kind: "wake", tickN: this.tickCount, detail: traceEvents.join("\n") });
       const pureTick = parts.length > 0 && parts.every((p) => p === "tick");
       if (pureTick && gdef.patrolEvery > 0 && this.tickCount % gdef.patrolEvery !== 0) return;
       // R72 quiet skip: nothing about the world changed since the last cycle
@@ -769,6 +783,20 @@ export class SchedulerLoop {
         this.lastCycleActed = kinds.length > 0; // R72: an acted cycle keeps the next tick awake
         if (this.recentCycles.length > 5) this.recentCycles.splice(0, this.recentCycles.length - 5);
       }
+
+      // T7: the action plan becomes visible the moment decide returns — the
+      // stream lists every planned action before the cycle starts executing
+      // it, and the step carries the decide pass's own token bill.
+      this.tracePhase({
+        kind: "decide",
+        promptTokens: dec.usage.promptTokens,
+        completionTokens: dec.usage.completionTokens,
+        tokens: dec.usage.promptTokens + dec.usage.completionTokens,
+        actions: (actions as any[]).map((x: any) => ({
+          type: typeof x?.type === "string" ? x.type : "?",
+          title: String(x?.title ?? x?.text ?? x?.goal ?? "").slice(0, 80),
+        })),
+      });
 
       const toolNames = new Set(this.d.builtinTools?.names() ?? []);
       for (let a of actions as any[]) {
@@ -1096,6 +1124,7 @@ export class SchedulerLoop {
           const reason = e instanceof Error ? e.message : String(e);
           console.error(`[ceo] action failed: ${reason}`);
           this.push(`action failed: ${reason}`);
+          this.tracePhase({ kind: "error", detail: reason.slice(0, 200) }); // T7: failed actions surface live
           if (reason.includes("verify action")) {
             this.push(`verify failed: ${reason}`);
           }
@@ -1117,7 +1146,10 @@ export class SchedulerLoop {
       throw e; // the original contract (runOnceQueue logs it) is untouched
     } finally {
       // every cycle ends on the wire: the heartbeat frame plus the fresh budget line
-      this.d.outlet?.frame({ t: "cycle", wake: this.wakeN, tickN: this.tickCount, cost, actions });
+      // T7: the frame ships this cycle's full phase trace — the live think
+      // frames already streamed it step by step; the trace lets a reloaded
+      // UI rebuild the cycle whole (client dedups on the shared step ids)
+      this.d.outlet?.frame({ t: "cycle", wake: this.wakeN, tickN: this.tickCount, cost, actions, trace: this.cycleTrace.slice() });
       // full snapshot (not just the line) so clients' progress bars advance
       // live; the line stays for one-line CLI summaries
       this.d.outlet?.frame({ t: "budget", line: this.d.budget.line(), budget: this.d.budget.snapshot() });
@@ -1369,6 +1401,8 @@ A pass without an evidence note is refused. After a tool result you MUST answer 
   }
 
   private launchSpawn(taskId: string, framework: string, title: string, rawPrompt: string, brief: string, attempt: number): void {
+    const myWake = this.wakeN; // T7: the settlement trace belongs to the wake that dispatched it, not whatever cycle is live at exit time
+    this.tracePhase({ kind: "spawn", taskId, title, framework, detail: rawPrompt.slice(0, 200) });
     this.d.board.update(taskId, { status: "running", attempts: attempt });
     this.emitTasks();
     // butler briefing: the user asked to be kept told — every dispatch earns
@@ -1394,6 +1428,13 @@ A pass without an evidence note is refused. After a tool result you MUST answer 
       const hasAccept = (card?.acceptance ?? "") !== "";
       const verdictOk = !hasAccept || (card?.verdict === "pass");
       const ok = r.exitCode === 0 && !r.summary.startsWith("FAIL") && verdictOk;
+      // T7: sub-agent settlement is a live timeline event — outcome, token
+      // bill of the summarising pass, and the one-line summary the auditor sees
+      this.tracePhase({
+        kind: "spawn_done", wake: myWake, taskId, title, ok,
+        tokens: r.summaryUsage ? r.summaryUsage.promptTokens + r.summaryUsage.completionTokens : 0,
+        detail: r.summary.slice(0, 300),
+      });
       this.d.board.update(taskId, {
         status: ok ? "done" : "blocked",
         resultSummary: r.exitCode === 0 && !verdictOk ? `${r.summary} [awaiting acceptance: verify with tools, then {"type":"verify","task_id":"...","verdict":"pass",...}]` : r.summary,
@@ -1406,6 +1447,7 @@ A pass without an evidence note is refused. After a tool result you MUST answer 
       const reason = err instanceof Error ? err.message : String(err);
       console.error(`[ceo] action failed: ${reason}`);
       const summary = `action failed: ${reason}`;
+      this.tracePhase({ kind: "spawn_done", wake: myWake, taskId, title, ok: false, detail: summary.slice(0, 300) });
       this.d.board.update(taskId, { status: "blocked", resultSummary: summary });
       this.emitTasks();
       this.d.outlet?.chatOut("jex", `「${title}」阻塞：${summary.slice(0, 60)}`);
@@ -1574,12 +1616,22 @@ A pass without an evidence note is refused. After a tool result you MUST answer 
     // "wake#N" answers none of them (types only — chat bodies stay out)
     const kinds = this.pendingEventKinds();
     this.d.auditor.record({ contextDigest: `wake#${this.wakeN}${kinds ? ` ${kinds}` : ""}`, actions, cost: booked });
+    // T7: every durable audit row earns a live line — the operator watches
+    // the audit log stream, not just the cycle total
+    this.tracePhase({ kind: "audit", tokens: booked, actions: actions.length, detail: `wake#${this.wakeN}${kinds ? ` ${kinds}` : ""} 已写入审计日志` });
     if (this.d.auditor.due()) {
       const patches = await this.d.auditor.review(this.d.llm);
       this.d.budget.spend(patches.usage); // the review pass itself burns tokens — book them
       booked += patches.usage.promptTokens + patches.usage.completionTokens;
       this.d.auditor.applyPatches(patches);
       this.autoLearnRubric(); // T9: the deterministic task-outcome half of the review — zero token cost
+      // T7: the meta-learning review is its own step — what jex learned,
+      // and what the review itself paid in tokens
+      this.tracePhase({
+        kind: "audit_review",
+        tokens: patches.usage.promptTokens + patches.usage.completionTokens,
+        detail: [`rubric: ${patches.rubricPatch.slice(0, 200) || "(none)"}`, `memory: ${patches.memoryPatch.slice(0, 200) || "(none)"}`, `mission: ${patches.missionNote || "none"}`].join("\n"),
+      });
       if (patches.missionNote && patches.missionNote !== "none") console.log(`[audit] mission note: ${patches.missionNote}`);
     }
     return booked;

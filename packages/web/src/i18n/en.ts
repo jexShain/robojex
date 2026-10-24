@@ -301,6 +301,18 @@ export const en: Record<string, string> = {
   'ts.morning': 'Morning briefing — {text}',
   'ts.awaiting': 'Awaiting acceptance — {text}',
   'ts.stuck': 'Identical-call loop — {text}',
+  /* T7 live thinking stream (backend trace step kinds, ts.* in thinkingModel) */
+  'ts.wake': 'Wake #{n}',
+  'ts.patrolVerdict': 'Patrol verdict {verdict} · {n} tokens',
+  'ts.decisionPlan': 'Decision plan — {n} actions',
+  'ts.doneOk': 'Done — {title}',
+  'ts.doneFail': 'Failed — {title}',
+  'ts.audit': 'Audit log written',
+  'ts.auditReview': 'Self-review — learning patches',
+  'ts.error': 'Action failed',
+  'ts.wakeGroup': 'Wake #{n}',
+  'ts.live': 'thinking…',
+  'ts.stepN': '{n} steps',
 
   /* board view */
   'board.newPlaceholder': '+ New task · try "9:00 check X due 11:00"',

@@ -3114,6 +3114,86 @@ body[data-ds-dark-theme] .chip.full {
   opacity: 0.4;
 }
 
+/* ── T7 live thinking stream: wake-group folding (Vercel build-log idiom) ──
+ * The newest open group reads as "jex is mid-thought": accent rail, pulsing
+ * brain dot, header row carries time · step count · total token bill. */
+.ts-group {
+  margin: 2px 0 2px 12px;
+  border-left: 2px solid var(--dsw-alias-border-l1);
+}
+
+.ts-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 16px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 0 var(--rj-radius-sm, 8px) var(--rj-radius-sm, 8px) 0;
+}
+
+.ts-group-head:hover {
+  background: var(--dsw-alias-surface-secondary);
+}
+
+.ts-group-live {
+  border-left-color: var(--dsw-alias-accent-default);
+  animation: rj-pulse-glow var(--rj-duration-slow, 2s) ease-in-out infinite alternate;
+}
+
+.ts-group-live .ts-icon {
+  color: var(--dsw-alias-accent-default);
+  animation: typing-blink 1.2s steps(2, start) infinite;
+}
+
+.ts-live-text {
+  font-size: 11px;
+  color: var(--dsw-alias-accent-default);
+}
+
+.ts-step-count {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary));
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* token bill badge — ⚡ + compact count, amber mono pill */
+.ts-token {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-family: var(--dsw-alias-font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-state-warn-label);
+  background: var(--dsw-alias-state-warn-tertiary);
+  border-radius: var(--rj-radius-full, 999px);
+  padding: 1px 7px;
+}
+
+.ts-group-body {
+  padding-bottom: 4px;
+}
+
+/* the group body's entries lose their own left rail — the group owns it */
+.ts-group-body .ts-entry {
+  border-left: none;
+  margin-left: 22px;
+}
+
+.ts-embedded-count {
+  padding: 4px 16px 2px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  text-align: right;
+}
+
+/* trace kinds beyond the legacy vocabulary */
+.ts-entry.ts-wake { border-left-color: var(--dsw-alias-border-l2); }
+.ts-entry.ts-done { border-left-color: #22c55e; }
+.ts-entry.ts-audit { border-left-color: #64748b; }
+.ts-entry.ts-auditReview { border-left-color: #a78bfa; }
+.ts-entry.ts-error { border-left-color: var(--dsw-alias-state-error-primary); }
+
 /* ============================================================
    FE-VIEWS: board new-task entry, agenda staged flag, details
    badges + copy buttons, activity skeleton

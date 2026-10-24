@@ -301,6 +301,18 @@ export const zh: Record<string, string> = {
   'ts.morning': '晨报 — {text}',
   'ts.awaiting': '悬置验收 — {text}',
   'ts.stuck': '死循环警告 — {text}',
+  /* T7 live thinking stream (backend trace step kinds, ts.* in thinkingModel) */
+  'ts.wake': '唤醒 #{n}',
+  'ts.patrolVerdict': '巡逻判定 {verdict} · {n} tokens',
+  'ts.decisionPlan': '决策计划 — {n} 个动作',
+  'ts.doneOk': '完成 — {title}',
+  'ts.doneFail': '失败 — {title}',
+  'ts.audit': '审计日志已写入',
+  'ts.auditReview': '自我复盘 — 学习写入',
+  'ts.error': '动作失败',
+  'ts.wakeGroup': '唤醒 #{n}',
+  'ts.live': '思考中…',
+  'ts.stepN': '{n} 步',
 
   /* board view */
   'board.newPlaceholder': '＋ 新任务 · 支持「明天9点 检查X 截止11点」',

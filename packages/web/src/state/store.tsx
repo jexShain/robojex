@@ -47,6 +47,7 @@ import type {
   ServerFrame,
   StreamState,
   Task,
+  ThinkStep,
   TranscriptItem,
 } from './types'
 import { ingestFrame } from '../views/activityModel'
@@ -60,10 +61,17 @@ export interface WebState {
   selectedTaskId: string | null
   budget: Budget | null
   mode: Mode
+  /** WS-fed autonomy policy (hello snapshot + live `policy` frames);
+   *  null = the core predates the butler spec (SPEC-BUTLER §1). */
+  policy: 'butler' | 'conservative' | null
   mission: string
   rubric: string
   memory: string
   transcript: TranscriptItem[]
+  /** T7 thinking stream: backend-authoritative reasoning steps (oldest
+   *  first), fed by hello replay + live `think` frames + cycle-frame traces.
+   *  Deduplicated on the backend step id; bounded window. */
+  thinking: ThinkStep[]
   waiting: boolean
   clockOffset: number
   lastHud: HudNotice | null
@@ -162,6 +170,7 @@ export const initialState: WebState = {
   rubric: '',
   memory: '',
   transcript: [],
+  thinking: [],
   waiting: false,
   clockOffset: 0,
   lastHud: null,
@@ -188,6 +197,20 @@ const nextId = (): string => `local-${Date.now().toString(36)}-${++seq}`
 
 function chatToItem(m: ChatMsg): TranscriptItem {
   return { kind: 'msg', id: seq++, from: m.from, text: m.text, ts: m.ts }
+}
+
+/** T7: merge reasoning steps into the window, deduplicated on the backend
+ *  step id — the same step can arrive three ways (hello ring replay, live
+ *  think frame, cycle-frame trace) and must render exactly once. Keeps the
+ *  list in ascending id order (the core numbers them monotonically). */
+const THINKING_MAX = 500
+function mergeThinking(prev: ThinkStep[], incoming: ThinkStep[]): ThinkStep[] {
+  if (incoming.length === 0) return prev
+  const seen = new Set(prev.map((s) => s.id))
+  const added = incoming.filter((s) => typeof s.id === 'number' && !seen.has(s.id))
+  if (added.length === 0) return prev
+  const all = [...prev, ...added].sort((a, b) => a.id - b.id)
+  return all.length > THINKING_MAX ? all.slice(all.length - THINKING_MAX) : all
 }
 
 /** Map a task status string to a dot/toast tone vocabulary. Core statuses
@@ -598,6 +621,9 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
         waiting: false,
         // Full rebuild on (re)connect — the ring replays recent history.
         transcript: s.chat.map(chatToItem),
+        // T7: the reasoning window replays too; a core without the field
+        // keeps the panel empty rather than stale.
+        thinking: s.thinking ?? [],
       }
     }
     case 'chat_out': {
@@ -621,6 +647,10 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
     case 'cycle':
       return {
         ...state,
+        // T7: the cycle frame's trace backfills anything the live think
+        // frames missed (ids dedup); mergeThinking returns the same array
+        // reference when there is nothing new.
+        thinking: frame.trace ? mergeThinking(state.thinking, frame.trace) : state.thinking,
         transcript: [
           ...state.transcript,
           {
@@ -629,10 +659,13 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
             wake: frame.wake,
             cost: frame.cost,
             actions: frame.actions,
+            trace: frame.trace,
             ts: Date.now(),
           },
         ],
       }
+    case 'think':
+      return { ...state, thinking: mergeThinking(state.thinking, [frame.step]) }
     case 'hud':
       return { ...state, lastHud: { kind: frame.kind, taskId: frame.taskId, ts: frame.ts } }
     case 'mode':
@@ -646,6 +679,10 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
     }
     case 'gear':
       return state.gear === frame.gear ? state : { ...state, gear: frame.gear }
+    default:
+      // vocabulary drift (e.g. {t:'policy'} from the core): never let an
+      // unknown frame replace state with undefined and blank the app.
+      return state
   }
 }
 
