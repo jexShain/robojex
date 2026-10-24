@@ -166,6 +166,7 @@ export const initialState: WebState = {
   selectedTaskId: null,
   budget: null,
   mode: 'observe',
+  policy: null,
   mission: '',
   rubric: '',
   memory: '',
@@ -617,6 +618,7 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
         rubric: s.rubric,
         memory: s.memory,
         gear: s.gear ?? state.gear,
+        policy: s.policy ?? null,
         clockOffset: typeof s.now === 'number' ? s.now - Date.now() : 0,
         waiting: false,
         // Full rebuild on (re)connect — the ring replays recent history.
@@ -679,10 +681,16 @@ function applyFrame(state: WebState, frame: ServerFrame): WebState {
     }
     case 'gear':
       return state.gear === frame.gear ? state : { ...state, gear: frame.gear }
-    default:
-      // vocabulary drift (e.g. {t:'policy'} from the core): never let an
-      // unknown frame replace state with undefined and blank the app.
+    case 'policy':
+      return state.policy === frame.policy ? state : { ...state, policy: frame.policy }
+    default: {
+      // vocabulary drift (a frame the core sends that web has never listed,
+      // e.g. {t:'tick'}): fall through untouched — silently returning
+      // `undefined` here once replaced the whole app state and blanked the
+      // page until the next full hello replay (t_34df9d82).
+      console.warn(`[ws] unknown ServerFrame t=${JSON.stringify((frame as { t: unknown }).t)}; ignored`)
       return state
+    }
   }
 }
 

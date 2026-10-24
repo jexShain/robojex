@@ -75,6 +75,9 @@ export interface StateSnapshot {
   now?: number
   tickN?: number
   gear?: GearId
+  /** autonomy policy (SPEC-BUTLER §1): the core has sent this since T3 —
+   *  optional so older cores / readers tolerate its absence. */
+  policy?: 'butler' | 'conservative'
   /** T7 late-joiner replay: recent thinking-trace steps (oldest first).
    *  Optional: cores predating the thinking stream omit the field. */
   thinking?: ThinkStep[]
