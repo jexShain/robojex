@@ -31,6 +31,7 @@ import { fill, LANG_EVENT, langSnapshot, setLangPref, translate } from '../i18n/
 import { setThemePref, themeSnapshot } from './theme'
 import { readVoiceReport, speak } from './voice'
 import { pushTrayStatus, trayStatusFor } from './desktop'
+import { diffTaskTransitions, snapshotStatuses } from './taskTransitions'
 import { gearDisplayName } from '../views/gearDefs'
 import type {
   Budget,
@@ -744,6 +745,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   /** conversation the most recent /jex was dispatched from; later jex
    * chat_out frames render as 'agent-notice' cards there. Session-local. */
   const agentConvRef = useRef<string | null>(null)
+  /** last tasks-snapshot status map (T8 toast diff). null until the first
+   * frame arrives — the baseline snapshot must never toast the board. */
+  const prevTaskStatusRef = useRef<Record<string, string> | null>(null)
   /** the dedicated「管家报告」conversation auto-created for briefings that
    * arrive with no /jex context and no open conversation — reused from then
    * on so unprompted jex chatter never spawns a conversation per briefing.
@@ -795,8 +799,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       onFrame: (frame) => {
         dispatch({ type: 'frame', frame })
         setActivityItems((prev) => ingestFrame(frame as unknown as Record<string, unknown>, prev))
+        // T8: task done / blocked jumps earn an OS toast (desktop shell;
+        // browser no-op). diffed against the last snapshot so reconnects
+        // never re-toast the whole board; same gate + hide-clip as briefings.
+        const f = frame as { t: string; from?: string; text?: string; tasks?: unknown }
+        if (f.t === 'tasks') {
+          const events = diffTaskTransitions(prevTaskStatusRef.current, f.tasks)
+          prevTaskStatusRef.current = snapshotStatuses(f.tasks)
+          if (api.readNotifySys()) {
+            for (const ev of events) {
+              sysNotify(
+                translate(ev.kind === 'done' ? 'act.done' : 'act.blocked'),
+                (ev.title || translate(ev.kind === 'done' ? 'act.done' : 'act.blocked')) +
+                  (ev.kind === 'done' && ev.detail ? ` — ${ev.detail}` : ''),
+              )
+            }
+          }
+        }
         // route jex briefings into a conversation so they are never lost
-        const f = frame as { t: string; from?: string; text?: string }
         if (f.t === 'chat_out' && f.from === 'jex' && f.text) {
           const text = f.text
           const st = stateRef.current

@@ -7,6 +7,7 @@
 //   platform                       process.platform ('win32'|'linux'|'darwin')
 //   versions                       { electron, chrome, node }
 //   window.{minimize,maximizeToggle,close,isMaximized}
+//   window.{setOntop,isOntop}      widget-mode pin (T8), resolves OS truth
 //   window.onMaximizedChanged(cb)  -> unsubscribe fn
 //   onAction(cb)                   {type:'new-chat'} | {type:'set-gear', gear}
 //                                  | {type:'voice-readback'}  (Ctrl+Alt+R)
@@ -44,6 +45,9 @@ contextBridge.exposeInMainWorld('robojex', {
     close: () => ipcRenderer.invoke('window:close'),
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
     onMaximizedChanged: (cb) => subscribe('robojex:maximized-changed', cb),
+    // widget mode (T8): pin above everything; resolves the post-write OS truth
+    setOntop: (onTop) => ipcRenderer.invoke('window:set-ontop', !!onTop),
+    isOntop: () => ipcRenderer.invoke('window:is-ontop'),
   },
 
   // one unified subscription for tray / native-menu actions

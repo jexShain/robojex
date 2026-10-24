@@ -3,7 +3,7 @@
 // the graceful no-op path when window.robojex is absent (plain browser).
 import { describe, expect, test } from 'vitest'
 import type { GearDef } from '../src/state/types'
-import { trayStatusFor, pushTrayStatus, hasAutostartBridge, readAutostart, writeAutostart } from '../src/state/desktop'
+import { trayStatusFor, pushTrayStatus, hasAutostartBridge, readAutostart, writeAutostart, hasOntopBridge, readOntop, writeOntop } from '../src/state/desktop'
 
 const gears: GearDef[] = [
   { id: 'eco', level: 1, name: '省电', emoji: '🌱', tickMs: 300_000, decideMaxTokens: 2048, patrolEvery: 5, desc: '', cost: '' },
@@ -34,11 +34,42 @@ describe('trayStatusFor', () => {
 describe('bridge absence (plain browser / node test env)', () => {
   test('no window.robojex: every call is a silent no-op, never a throw', () => {
     expect(hasAutostartBridge()).toBe(false)
+    expect(hasOntopBridge()).toBe(false)
     expect(() => pushTrayStatus({ gear: 2, label: '⚖️ 均衡', connected: true })).not.toThrow()
   })
 
   test('autostart read/write resolve null instead of rejecting', async () => {
     await expect(readAutostart()).resolves.toBeNull()
     await expect(writeAutostart(true)).resolves.toBeNull()
+  })
+
+  test('widget-pin read/write resolve null instead of rejecting', async () => {
+    await expect(readOntop()).resolves.toBeNull()
+    await expect(writeOntop(true)).resolves.toBeNull()
+  })
+})
+
+describe('widget-pin bridge (fake shell)', () => {
+  test('read/write pass through the OS truth the shell returns', async () => {
+    let pinned = false
+    ;(globalThis as { window?: unknown }).window = {
+      robojex: {
+        window: {
+          isOntop: () => Promise.resolve(pinned),
+          setOntop: (v: boolean) => {
+            pinned = !!v
+            return Promise.resolve(pinned)
+          },
+        },
+      },
+    }
+    try {
+      expect(hasOntopBridge()).toBe(true)
+      await expect(readOntop()).resolves.toBe(false)
+      await expect(writeOntop(true)).resolves.toBe(true)
+      await expect(readOntop()).resolves.toBe(true)
+    } finally {
+      delete (globalThis as { window?: unknown }).window
+    }
   })
 })

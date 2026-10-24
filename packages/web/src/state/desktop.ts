@@ -35,6 +35,10 @@ interface DesktopBridge {
       get?: () => Promise<boolean>
       set?: (enabled: boolean) => Promise<boolean>
     }
+    window?: {
+      setOntop?: (onTop: boolean) => Promise<boolean>
+      isOntop?: () => Promise<boolean>
+    }
   }
 }
 
@@ -70,6 +74,33 @@ export function readAutostart(): Promise<boolean | null> {
 export function writeAutostart(enabled: boolean): Promise<boolean | null> {
   if (!hasAutostartBridge()) return Promise.resolve(null)
   return bridge()!.autostart!.set!(enabled).then(
+    (v) => (typeof v === 'boolean' ? v : null),
+    () => null,
+  )
+}
+
+/* ── widget-mode pin (T8): main window always-on-top, owned by main ── */
+
+/** Does this shell expose the window pin? Gates the settings row between a
+ *  live toggle and the read-only badge display (same shape as autostart). */
+export function hasOntopBridge(): boolean {
+  const w = bridge()?.window
+  return typeof w?.isOntop === 'function' && typeof w?.setOntop === 'function'
+}
+
+/** Read the live pin state; null = unavailable or failed. */
+export function readOntop(): Promise<boolean | null> {
+  if (!hasOntopBridge()) return Promise.resolve(null)
+  return bridge()!.window!.isOntop!().then(
+    (v) => (typeof v === 'boolean' ? v : null),
+    () => null,
+  )
+}
+
+/** Apply the pin; resolves the post-write OS truth, null on failure. */
+export function writeOntop(onTop: boolean): Promise<boolean | null> {
+  if (!hasOntopBridge()) return Promise.resolve(null)
+  return bridge()!.window!.setOntop!(onTop).then(
     (v) => (typeof v === 'boolean' ? v : null),
     () => null,
   )

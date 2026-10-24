@@ -146,7 +146,7 @@ Electron App (packages/electron)
   - 单实例锁（second-instance → 聚焦已有窗口）
   - 窗口状态持久化（electron-store 或自写 JSON：x/y/w/maximized）
   - 托盘：菜单（显示/隐藏、新建对话、挡位快切、退出）、关闭行为可选（托盘 or 退出）
-  - 全局快捷键：`Alt+Space` 快速提问小窗（mini widget，复用 WidgetApp）、`Ctrl+Shift+J` 显示主窗
+  - 全局快捷键：`Alt+Space` 快速提问小窗（mini widget，复用 WidgetApp）、`Ctrl+Shift+J` 呼出/隐藏主窗（T8：已显示且聚焦时再按隐藏到托盘）
   - 原生菜单（macOS 必需）：File/Edit/View/Window/Help
   - 启动流程：app.ready → 起内嵌 ceo-core（或连外部）→ 起 UI；状态页（后端启动中/失败重试）
   - 安全：contextIsolation、sandbox、CSP、禁用 navigation、permission handler

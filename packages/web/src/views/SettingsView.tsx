@@ -21,6 +21,7 @@ import { gearsOrFallback } from './gearDefs'
 import { trapTab } from '../ui/focusTrap'
 import { setThemePref, themeSnapshot, THEME_EVENT } from '../state/theme'
 import type { ThemePref } from '../state/theme'
+import { hasAutostartBridge, hasOntopBridge, readAutostart, readOntop, writeAutostart, writeOntop } from '../state/desktop'
 import { useT } from '../i18n'
 import '../styles/settings.css'
 
@@ -76,6 +77,11 @@ const SZH = {
     'settings.general.autostart.on': '已启用',
     'settings.general.autostart.off': '未启用',
     'settings.general.autostart.failed': '开机自启设置失败',
+    'settings.general.onTop': '窗口置顶（小部件模式）',
+    'settings.general.onTop.v': '未置顶',
+    'settings.general.onTop.on': '已置顶 · 窗口浮在所有应用之上',
+    'settings.general.onTop.off': '未置顶 · 普通窗口层级',
+    'settings.general.onTop.failed': '窗口置顶设置失败',
     'settings.general.closeBehavior': '关闭按钮',
     'settings.general.closeBehavior.v': '隐藏到托盘',
 
@@ -268,6 +274,11 @@ const SEN: Record<SKey, string> = {
   'settings.general.autostart.on': 'On',
   'settings.general.autostart.off': 'Off',
   'settings.general.autostart.failed': 'Failed to set launch-at-login',
+  'settings.general.onTop': 'Pin window (widget mode)',
+  'settings.general.onTop.v': 'Unpinned',
+  'settings.general.onTop.on': 'Pinned · the window floats above everything',
+  'settings.general.onTop.off': 'Unpinned · normal window layer',
+  'settings.general.onTop.failed': 'Failed to set window pin',
   'settings.general.closeBehavior': 'Close button',
   'settings.general.closeBehavior.v': 'Hide to tray',
 
@@ -604,6 +615,10 @@ export function SettingsView({ onClose }: { onClose(): void }) {
   const [voiceHealth, setVoiceHealth] = useState<VoiceHealth | null>(null)
   const [voiceDl, setVoiceDl] = useState<'idle' | 'running' | 'done' | 'failed'>('idle')
   const [themePref, setThemePrefState] = useState<ThemePref>(() => themeSnapshot().pref)
+  // desktop-shell truth (T8): null = no bridge / read failed → the row keeps
+  // the static badge display; a boolean = live toggle backed by the OS
+  const [autostartOn, setAutostartOn] = useState<boolean | null>(null)
+  const [pinOn, setPinOn] = useState<boolean | null>(null)
 
   /* data-section state */
   const [clearArmed, setClearArmed] = useState(false)
@@ -666,6 +681,15 @@ export function SettingsView({ onClose }: { onClose(): void }) {
   // top-bar toggles that happened while the modal was closed.
   useEffect(() => {
     if (sec === 'appearance') setThemePrefState(themeSnapshot().pref)
+  }, [sec])
+
+  // The desktop rows always show the live OS truth when this shell exposes
+  // it (T8): re-read every time the general section opens — autostart can
+  // flip from the tray-less world, the pin from the tray checkbox.
+  useEffect(() => {
+    if (sec !== 'general') return
+    void readAutostart().then(setAutostartOn)
+    void readOntop().then(setPinOn)
   }, [sec])
 
   const modalRef = useRef<HTMLDivElement | null>(null)
@@ -785,6 +809,20 @@ export function SettingsView({ onClose }: { onClose(): void }) {
     setVoiceReport(next)
     writeVoiceReport(next)
     if (!next) stopSpeaking() // toggling off also silences a clip mid-air
+  }
+  // desktop-shell toggles (T8): write through main, re-render with the OS
+  // truth it returns — never optimistic on a flag we cannot own
+  const toggleAutostart = (): void => {
+    void writeAutostart(!(autostartOn ?? false)).then((v) => {
+      if (v === null) showToast('err', s('settings.general.autostart.failed'))
+      else setAutostartOn(v)
+    })
+  }
+  const togglePin = (): void => {
+    void writeOntop(!(pinOn ?? false)).then((v) => {
+      if (v === null) showToast('err', s('settings.general.onTop.failed'))
+      else setPinOn(v)
+    })
   }
 
   // probe the voice daemon on mount (the modal only lives while open; the
@@ -987,13 +1025,52 @@ export function SettingsView({ onClose }: { onClose(): void }) {
                   </div>
                 </Card>
                 <Card title={s('settings.general.desktop')} desc={s('settings.general.desktopHint')}>
-                  <div className="st-kv">
-                    <span className="k">
-                      {s('settings.general.autostart')}
-                      <span className="st-badge">{s('settings.desktopBadge')}</span>
-                    </span>
-                    <span className="v">{s('settings.general.autostart.v')}</span>
-                  </div>
+                  {hasAutostartBridge() ? (
+                    <div className="st-kv">
+                      <span className="k">{s('settings.general.autostart')}</span>
+                      <button
+                        type="button"
+                        className={`st-switch${autostartOn ? ' on' : ''}`}
+                        role="switch"
+                        aria-checked={!!autostartOn}
+                        data-testid="settings-autostart"
+                        onClick={toggleAutostart}
+                      >
+                        <span className="st-switch-knob" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="st-kv">
+                      <span className="k">
+                        {s('settings.general.autostart')}
+                        <span className="st-badge">{s('settings.desktopBadge')}</span>
+                      </span>
+                      <span className="v">{s('settings.general.autostart.v')}</span>
+                    </div>
+                  )}
+                  {hasOntopBridge() ? (
+                    <div className="st-kv">
+                      <span className="k">{s('settings.general.onTop')}</span>
+                      <button
+                        type="button"
+                        className={`st-switch${pinOn ? ' on' : ''}`}
+                        role="switch"
+                        aria-checked={!!pinOn}
+                        data-testid="settings-window-ontop"
+                        onClick={togglePin}
+                      >
+                        <span className="st-switch-knob" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="st-kv">
+                      <span className="k">
+                        {s('settings.general.onTop')}
+                        <span className="st-badge">{s('settings.desktopBadge')}</span>
+                      </span>
+                      <span className="v">{s('settings.general.onTop.v')}</span>
+                    </div>
+                  )}
                   <div className="st-kv">
                     <span className="k">
                       {s('settings.general.closeBehavior')}

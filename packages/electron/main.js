@@ -9,7 +9,8 @@
 //     top, hides on blur)
 //   - tray (programmatic 16x16 gradient icon, zero new deps): show/hide, new
 //     chat, 5-gear quick switch, quit
-//   - global shortcuts: Alt+Space widget, Ctrl+Shift+J main window
+//   - global shortcuts: Alt+Space widget, Ctrl+Shift+J main window (T8:
+//     toggles recall/hide — focused press hides to tray)
 //   - Chinese native menu (required on macOS, set on all platforms)
 //   - embedded ceo-core boot (dynamic import of the ESM dist) with graceful
 //     degradation: ROBOJEX_EXTERNAL=1 or a busy :7620 skips embed; import
@@ -120,16 +121,16 @@ function loadWindowState() {
       x + w > area.x + 80 &&
       y + h > area.y + 80;
     if (!overlaps) return null;
-    return { x, y, width: w, height: h, maximized: st.maximized === true };
+    return { x, y, width: w, height: h, maximized: st.maximized === true, onTop: st.onTop === true };
   } catch {
     return null;
   }
 }
 
-function saveWindowState(win) {
+function saveWindowState(win, extra = {}) {
   try {
     if (!win || win.isDestroyed()) return;
-    const st = { ...win.getNormalBounds(), maximized: win.isMaximized() };
+    const st = { ...win.getNormalBounds(), maximized: win.isMaximized(), ...extra };
     fs.mkdirSync(path.dirname(windowStatePath()), { recursive: true });
     fs.writeFileSync(windowStatePath(), JSON.stringify(st, null, 2));
   } catch { /* best-effort: a lost geometry save must never break quitting */ }
@@ -263,6 +264,8 @@ function createMainWindow() {
     y: st?.y,
     minWidth: 940,
     minHeight: 600,
+    // widget mode (T8): the pin rides the saved state across restarts
+    alwaysOnTop: st?.onTop === true,
     ...(icon ? { icon } : {}),
   }));
   if (st?.maximized) mainWindow.maximize();
@@ -271,7 +274,7 @@ function createMainWindow() {
   mainWindow.once('ready-to-show', () => mainWindow?.show());
 
   mainWindow.on('close', (event) => {
-    saveWindowState(mainWindow);
+    saveWindowState(mainWindow, { onTop: mainWindow.isAlwaysOnTop() });
     // tray mode: closing hides to tray instead of quitting (not on macOS,
     // where closing to the dock is the native idiom)
     if (!isQuitting && tray && process.platform !== 'darwin') {
@@ -522,10 +525,28 @@ function sendAction(type, payload = {}) {
   mainWindow?.webContents.send('robojex:action', action);
 }
 
+/* widget mode (T8): pin the main window above everything, tray-widget
+ * style. The flip persists into window-state.json so the pin survives
+ * restarts; the tray checkbox and the renderer action share one path. */
+function toggleMainOnTop() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const next = !mainWindow.isAlwaysOnTop();
+  mainWindow.setAlwaysOnTop(next, 'floating');
+  saveWindowState(mainWindow, { onTop: next });
+  if (tray && !tray.isDestroyed()) tray.setContextMenu(buildTrayMenu());
+  return next;
+}
+
 function buildTrayMenu() {
   const visible = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible();
   return Menu.buildFromTemplate([
     { label: visible ? '隐藏主窗口' : '显示主窗口', click: () => toggleMainWindow() },
+    {
+      label: '窗口置顶（小部件模式）',
+      type: 'checkbox',
+      checked: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isAlwaysOnTop(),
+      click: () => toggleMainOnTop(),
+    },
     { type: 'separator' },
     { label: '新对话', click: () => sendAction('new-chat') },
     {
@@ -673,7 +694,8 @@ function setupAppMenu() {
 function registerShortcuts() {
   const ok1 = globalShortcut.register('Alt+Space', () => toggleWidget());
   if (!ok1) console.warn('[robojex] Alt+Space 注册失败（可能被其他应用占用）');
-  const ok2 = globalShortcut.register('Ctrl+Shift+J', () => focusMainWindow());
+  // T8 呼出/隐藏: shown+focused → hide (tray-resident), any other state → recall.
+  const ok2 = globalShortcut.register('Ctrl+Shift+J', () => toggleMainWindow());
   if (!ok2) console.warn('[robojex] Ctrl+Shift+J 注册失败（可能被其他应用占用）');
   const ok3 = globalShortcut.register('Ctrl+Alt+V', () => { void toggleVoiceTalk(); });
   if (!ok3) console.warn('[robojex] Ctrl+Alt+V 注册失败（可能被其他应用占用）');
@@ -974,6 +996,18 @@ function registerIpc() {
   });
   ipcMain.handle('window:close', (e) => { from(e)?.close(); });
   ipcMain.handle('window:is-maximized', (e) => from(e)?.isMaximized() ?? false);
+  // widget mode (T8): the renderer owns the toggle (settings row / action),
+  // main owns the OS truth + the persistence next to the geometry
+  ipcMain.handle('window:set-ontop', (e, onTop) => {
+    const w = from(e);
+    if (!w) return false;
+    const next = !!onTop;
+    w.setAlwaysOnTop(next, 'floating');
+    if (w === mainWindow) saveWindowState(w, { onTop: next });
+    if (tray && !tray.isDestroyed()) tray.setContextMenu(buildTrayMenu());
+    return w.isAlwaysOnTop();
+  });
+  ipcMain.handle('window:is-ontop', (e) => from(e)?.isAlwaysOnTop() ?? false);
   // butler briefings as native toasts — dispatched by the renderer when a
   // jex report lands outside the open conversation or the app is hidden;
   // clicking the toast recalls the window that raised it
